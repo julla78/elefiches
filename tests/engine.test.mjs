@@ -2,15 +2,16 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { check, variants, findSpans, clozes, clozeParts } from '../js/match.js';
-import { parseCSV, deckFromCSV, DEMO_CSV, serialize, prepare, demoDeck, MODELS, safeUrl, deckToJSON, deckFromJSON } from '../js/deck.js';
+import { parseCSV, deckFromCSV, DEMO_CSV, serialize, prepare, demoDeck, MODELS, safeUrl, deckToJSON, deckFromJSON, mergeDecks, decode } from '../js/deck.js';
 import { review, isDue, inHerd, summary, stageOf } from '../js/scheduler.js';
 import { guessLevel } from '../js/deck.js';
-import { Session, Challenge, Tour, pickNew, buildActivity, meaning, gloss, chunks, judge, hintOf } from '../js/session.js';
-import { diffParts } from '../js/match.js';
+import { Session, Challenge, Tour, pickNew, buildActivity, meaning, gloss, chunks, judge, hintOf, roomFor } from '../js/session.js';
+import { diffParts, spoken, slug } from '../js/match.js';
 import { SPEC, WRITING } from '../js/levels.js';
 import { unzip } from '../js/zip.js';
 import { buildPrompts } from '../js/prompts.js';
-import { levelIn, looksJSON } from '../js/deck.js';
+import { levelIn, looksJSON, deckFromAnki } from '../js/deck.js';
+import { openSqlite } from '../js/sqlite.js';
 import { execFileSync } from 'node:child_process';
 
 let n = 0; const t = (name, fn) => { fn(); n++; };
@@ -205,7 +206,7 @@ t('paquet donné par une IA : bloc de code, planches, niveau', () => {
   assert.equal(deckFromJSON(json).cards[0].id, deckFromJSON(json.replace('"cards":[', '"cards":[{"word":"Un bail neuf","definition":"d"},')).cards[1].id, 'l’identifiant d’une fiche ne dépend pas de sa place');
   assert.equal(deckFromJSON(json, '', 'C1').level, 'C1', 'le niveau choisi par l’enseignant l’emporte');
   assert.ok(deckFromCSV(DEMO_CSV, 'Travail').levelGuessed, 'niveau absent : à demander');
-  assert.ok(!deckFromCSV(DEMO_CSV, 'Travail (B1)').levelGuessed); assert.equal(levelIn('Travail (B1)'), 'B1'); assert.equal(levelIn('Travail'), '');
+  assert.ok(!deckFromCSV(DEMO_CSV, 'Travail (B1)').levelGuessed); assert.equal(levelIn('Travail (B1)'), 'B1'); assert.equal(levelIn('Travail'), ''); assert.equal(levelIn('d8fada29-A1SQ2_Week-end.apkg'), 'A1'); assert.equal(levelIn('BA12'), '');
   const csv = deckFromCSV('Mot;Définition;Exemple 1;Situation;Distracteurs\nUn loyer;a b;Je paie un loyer.;Fin du mois.;bail | garage\nUn bail;c d;Je signe un bail.;;\nUne caution;e f;Je verse une caution.;;', 'x (A2)');
   assert.equal(csv.cards[0].situation, 'Fin du mois.'); assert.deepEqual(csv.cards[0].distractors, ['bail', 'garage']);
 });
@@ -218,7 +219,9 @@ t('prompts : langue, niveau, traductions, grille', () => {
   assert.ok(b2.cards.includes('une phrase en anglais, à la deuxième personne')); assert.ok(b2.cards.includes('paquet de 2 fiches')); assert.ok(b2.cards.includes('- to hand in'));
   assert.ok(b2.cards.includes('"P1-90"') && b2.sheet.includes('10 colonnes et 9 rangées, soit 90 cases')); assert.ok(b2.cards.includes(WRITING.B2.traps));
   assert.ok(buildPrompts({ lang: 'fr', level: 'A1' }).cards.includes('"translations":{}'));
-  for (const k of ['cards', 'sheet', 'next', 'zip']) assert.ok(es[k].length > 40);
+  for (const k of ['file', 'cards', 'sheet', 'next']) assert.ok(es[k].length > 40);
+  assert.ok(es.file.includes('UN SEUL fichier ZIP') && es.file.includes('"images/loyer.png"') && !es.file.includes('P1-1'), 'fichier complet : une image par mot, pas de planche');
+  assert.ok(buildPrompts({ lang: 'fr', level: 'A1', count: 250 }).file.includes('paquet de 250 fiches'), 'aucune limite au nombre de fiches');
 });
 t('session complète', () => {
   let now = Date.UTC(2026, 0, 1), seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
@@ -346,6 +349,124 @@ t('anti-hasard : un mot nouveau ne monte pas sur une seule réussite', () => {
   }
   for (const id of s.today) { assert.equal(P[id].box, 1); assert.ok(P[id].fsrs && P[id].lastOk === false); }
   assert.equal(s.tamed.length, 0); assert.equal(s.stats.up.length, 0);
+});
+
+t('révisions d’abord : pas de nouveaux mots quand les révisions s’accumulent', () => {
+  const now = Date.UTC(2026, 0, 1), big = prepare({ id: 'k', name: 'k (A2)', lang: 'fr', cards: Array.from({ length: 40 }, (_, i) => ({ id: 'c' + i, word: 'mot' + i + 'xx', definition: 'définition numéro ' + i, examples: [] })) });
+  const due = n => Object.fromEntries(big.cards.slice(0, n).map(c => [c.id, { seen: true, box: 2, fsrs: { due: now - 1000 } }]));
+  const few = new Session(big, due(4), { maxNew: 5, now }); assert.equal(few.today.length, 5); assert.ok(!few.held);
+  const some = new Session(big, due(12), { maxNew: 5, now }); assert.equal(some.today.length, 2); assert.ok(some.held);
+  const many = new Session(big, due(25), { maxNew: 5, now }); assert.equal(many.today.length, 0); assert.ok(many.held);
+  assert.equal(many.queue.filter(i => i.kind === 'quiz').length, 25);
+  // « J'en veux quand même » : l'étudiant lève le frein pour la session
+  const forced = new Session(big, due(25), { maxNew: 5, now, force: true }); assert.equal(forced.today.length, 5); assert.ok(!forced.held);
+  assert.deepEqual([roomFor(0, 5), roomFor(9, 5), roomFor(10, 5), roomFor(19, 8), roomFor(20, 8)], [5, 5, 2, 2, 0]);
+});
+
+t('voix : ce qui est lu à voix haute', () => {
+  assert.equal(spoken('Minuscule / minuscule').toLowerCase(), 'minuscule');   // une seule fois
+  assert.equal(spoken('Petit / petite'), 'Petit, petite');
+  assert.equal(spoken('Un loyer (mensuel)'), 'Un loyer');
+  assert.equal(spoken('De... à...'), 'De à');
+  assert.equal(spoken('Depuis…'), 'Depuis');
+  assert.equal(spoken('To look for'), 'To look for');
+});
+
+t('nom de fichier d’un paquet partagé', () => {
+  assert.equal(slug('Week-end à Londres'), 'week-end-a-londres');
+  assert.equal(slug('chercher un logement (A2)'), 'chercher-un-logement-a2');
+  assert.equal(slug('  ¿Qué tal? — España  '), 'que-tal-espana');
+});
+
+const apkg = '/tmp/elefiches-test.apkg';
+execFileSync('python3', ['-c', `import sqlite3, zipfile, json, os
+p = '/tmp/elefiches-test.anki21'
+if os.path.exists(p): os.remove(p)
+c = sqlite3.connect(p)
+c.execute('create table col (id integer primary key, crt integer, mod integer, scm integer, ver integer, dty integer, usn integer, ls integer, conf text, models text, decks text, dconf text, tags text)')
+c.execute('create table notes (id integer primary key, guid text, mid integer, mod integer, usn integer, tags text, flds text, sfld text, csum integer, flags integer, data text)')
+models = {'1730000000000': {'name': 'Vocabulaire', 'flds': [{'name': n, 'ord': i} for i, n in enumerate(['Word', 'Image', 'Definition', 'Example', 'Category'])], 'pad': 'x' * 9000}}
+c.execute('insert into col values (1,0,0,0,11,0,0,0,?,?,?,?,?)', ('{}', json.dumps(models), json.dumps({'1': {'name': 'Default'}, '2': {'name': 'Week-end (A1)'}}), '{}', '{}'))
+rows = [('Sale / sale', '<img src="card_001.png">', "Qui n'est pas propre.", 'La salle de bains est sale.', 'Hôtel'), ('Un oreiller', '<img src="card_002.png">', 'On pose la t&ecirc;te dessus pour dormir.'.replace('&ecirc;', 'ê'), "<div>Je voudrais un oreiller, s'il vous pla&icirc;t.</div>".replace('&icirc;', 'î'), 'Hôtel'), ('Une valise', '', 'Un grand sac rigide pour voyager.', 'Ma valise est &amp; reste trop lourde.', 'Voyage')]
+for i, r in enumerate(rows * 60): c.execute('insert into notes values (?,?,?,0,0,?,?,?,0,0,?)', (i + 1, 'g%d' % i, 1730000000000, '', chr(31).join(r) + ('' if i < 3 else ' %d' % i), r[0], ''))
+c.commit(); c.close()
+z = zipfile.ZipFile('${apkg}', 'w', zipfile.ZIP_DEFLATED)
+z.write(p, 'collection.anki21'); z.writestr('media', json.dumps({'0': 'card_001.png', '1': 'card_002.png'})); z.writestr('0', b'\\x89PNG0'); z.writestr('1', b'\\x89PNG1'); z.close()`]);
+const ankiFiles = await unzip(fs.readFileSync(apkg));
+const ankiDb = openSqlite(await ankiFiles.find(f => f.name === 'collection.anki21').blob.arrayBuffer());
+t('paquet Anki : base lue sans bibliothèque, champs reconnus à leur nom', () => {
+  assert.deepEqual(ankiDb.tables, ['col', 'notes']); assert.equal(ankiDb.table('notes').length, 180, 'table sur plusieurs pages');
+  const d = deckFromAnki(ankiDb, '', 'fr', '');
+  assert.equal(d.name, 'Week-end (A1)'); assert.equal(d.level, 'A1'); assert.ok(!d.levelGuessed);
+  const [sale, oreiller, valise] = d.cards;
+  assert.equal(sale.image, 'card_001.png'); assert.equal(sale.definition, "Qui n'est pas propre."); assert.equal(sale.theme, 'Hôtel'); assert.equal(sale.clozes[0].answer, 'sale');
+  assert.equal(oreiller.examples[0], "Je voudrais un oreiller, s'il vous plaît."); assert.ok(!valise.image); assert.equal(valise.examples[0], 'Ma valise est & reste trop lourde.');
+  assert.throws(() => openSqlite(new Uint8Array(200).buffer), /sqlite/);
+});
+
+// Fabrique un paquet Anki d'essai à partir d'une description : modèles, paquets, notes et cartes.
+async function makeAnki(spec) {
+  const out = '/tmp/elefiches-any.apkg';
+  execFileSync('python3', ['-c', `import sqlite3, zipfile, json, os, sys
+spec = json.loads(sys.argv[1]); p = '/tmp/elefiches-any.anki2'
+if os.path.exists(p): os.remove(p)
+c = sqlite3.connect(p)
+c.execute('create table col (id integer primary key, crt integer, mod integer, scm integer, ver integer, dty integer, usn integer, ls integer, conf text, models text, decks text, dconf text, tags text)')
+c.execute('create table notes (id integer primary key, guid text, mid integer, mod integer, usn integer, tags text, flds text, sfld text, csum integer, flags integer, data text)')
+c.execute('create table cards (id integer primary key, nid integer, did integer, ord integer, mod integer, usn integer, type integer, queue integer, due integer, ivl integer, factor integer, reps integer, lapses integer, left integer, odue integer, odid integer, flags integer, data text)')
+c.execute('insert into col values (1,0,0,0,11,0,0,0,?,?,?,?,?)', ('{}', json.dumps(spec['models']), json.dumps(spec['decks']), '{}', '{}'))
+for i, n in enumerate(spec['notes']):
+    c.execute('insert into notes values (?,?,?,0,0,?,?,?,0,0,?)', (i + 1, 'g%d' % i, n['mid'], n.get('tags', ''), chr(31).join(n['f']), n['f'][0], ''))
+    c.execute('insert into cards values (?,?,?,0,0,0,0,0,0,0,0,0,0,0,0,0,0,?)', (i + 1, i + 1, n.get('did', 1), ''))
+c.commit(); c.close()
+z = zipfile.ZipFile('${out}', 'w', zipfile.ZIP_DEFLATED); z.write(p, 'collection.anki2'); z.writestr('media', '{}'); z.close()`, JSON.stringify(spec)]);
+  const files = await unzip(fs.readFileSync(out));
+  return openSqlite(await files.find(f => f.name === 'collection.anki2').blob.arrayBuffer());
+}
+const fl = (...names) => names.map((name, ord) => ({ name, ord }));
+
+// Le paquet de Julie : champs « Picture, Expression, Definition, Category », sans phrase d'exemple.
+const dbExpr = await makeAnki({ models: { 11: { id: 11, name: 'Vocabulaire illustré A1', flds: fl('Picture', 'Expression', 'Definition', 'Category') } }, decks: { 1: { name: 'Default' }, 5: { name: 'À boire et à manger – A1' } },
+  notes: [['<img src="food_01.jpg">', 'Une pomme', 'Un fruit rond, souvent rouge, vert ou jaune.', 'Les fruits'], ['<img src="food_02.jpg">', 'Un champignon', 'Un aliment qui pousse dans la terre.', 'Les légumes'], ['<img src="food_03.jpg">', 'Un citron', 'Un fruit jaune, au goût très acide.', 'Les fruits']].map(f => ({ mid: 11, did: 5, tags: ' A1 Les_fruits ', f })) });
+// Champs sans nom reconnu, apostrophes codées par l'outil qui a fabriqué le paquet, exemples réunis par des puces.
+const dbOdd = await makeAnki({ models: { 12: { id: 12, name: 'Mon modèle', sortf: 1, flds: fl('Champ A', 'Champ B', 'Champ C', 'Champ D') } }, decks: { 1: { name: 'Default' }, 6: { name: 'Temps::Durée' }, 7: { name: 'Temps::Limite' } },
+  notes: [{ did: 6, f: ['<img src="a.png">', 'En', 'Indique le temps n&#x27;&eacute;cessaire pour finir une action.'.replace('n&#x27;&eacute;', 'n&eacute;'), '• J&#x27;ai terminé cet exercice en vingt minutes. • Elle lit ce livre en deux jours.'] },
+    { did: 7, f: ['[sound:b.mp3]<img src="b.png">', 'Jusqu&#x27;à', 'Indique la limite d&#39;une durée.', '<ul><li>La bibliothèque est ouverte jusqu&#x27;à 19 heures.</li><li>Je reste à Paris jusqu&#x27;à vendredi.</li></ul>'] },
+    { did: 6, f: ['', 'Pendant', 'Indique la durée d&apos;une action &amp; rien d&rsquo;autre.', 'Il a dormi pendant deux heures.<br>Nous avons parlé pendant le dîner.'] }].map(n => ({ mid: 12, ...n })) });
+// Types de notes d'Anki : « Basique » (Recto, Verso) et « Texte à trous », dans le même paquet.
+const dbMix = await makeAnki({ models: { 13: { id: 13, name: 'Basique', flds: fl('Recto', 'Verso') }, 14: { id: 14, name: 'Texte à trous', type: 1, flds: fl('Texte', 'Verso supplémentaire') } }, decks: { 1: { name: 'Default' }, 8: { name: 'Mélange B1' } },
+  notes: [{ mid: 13, f: ['Un bail', 'Contrat entre le propriétaire et le locataire.<br><img src="bail.jpg">'] }, { mid: 13, f: ['Un garant', '<div>Personne qui promet de payer à ta place.</div>'] }, { mid: 13, f: ['Un préavis', 'Délai à respecter avant de partir.'] },
+    { mid: 14, f: ['Je paie mon {{c1::loyer}} le premier du mois.', 'Argent payé chaque mois pour un logement.'] }, { mid: 14, f: ['Elle a {{c1::déménagé::changer de logement}} hier.', ''] }].map(n => ({ did: 8, ...n })) });
+t('paquet Anki : n’importe quels champs, apostrophes codées, puces, sous-paquets, texte à trous', () => {
+  const a = deckFromAnki(dbExpr, '', 'fr', '');
+  assert.equal(a.name, 'À boire et à manger – A1'); assert.equal(a.level, 'A1'); assert.ok(!a.levelGuessed); assert.equal(a.cards.length, 3);
+  assert.deepEqual([a.cards[0].word, a.cards[0].definition, a.cards[0].theme, a.cards[0].image], ['Une pomme', 'Un fruit rond, souvent rouge, vert ou jaune.', 'Les fruits', 'food_01.jpg']);
+  const b = deckFromAnki(dbOdd, '', 'fr', 'A2'), [en, jusqu, pendant] = b.cards;
+  assert.equal(b.name, 'Temps'); assert.equal(en.word, 'En'); assert.equal(en.image, 'a.png'); assert.equal(en.theme, 'Durée'); assert.equal(jusqu.theme, 'Limite');
+  assert.deepEqual(en.examples, ["J'ai terminé cet exercice en vingt minutes.", 'Elle lit ce livre en deux jours.']);
+  assert.equal(jusqu.word, "Jusqu'à"); assert.equal(jusqu.definition, "Indique la limite d'une durée."); assert.equal(jusqu.audio, 'b.mp3'); assert.equal(jusqu.image, 'b.png');
+  assert.deepEqual(jusqu.examples, ["La bibliothèque est ouverte jusqu'à 19 heures.", "Je reste à Paris jusqu'à vendredi."]);
+  assert.equal(jusqu.clozes[0].answer.toLowerCase(), "jusqu'à", 'le mot entier est retrouvé dans la phrase');
+  assert.equal(pendant.definition, "Indique la durée d'une action & rien d’autre."); assert.equal(pendant.examples.length, 2);
+  assert.ok(!JSON.stringify(b.cards).includes('&#'), 'plus aucun code HTML dans les fiches');
+  const c = deckFromAnki(dbMix, '', 'fr', ''), by = Object.fromEntries(c.cards.map(x => [x.word, x]));
+  assert.equal(c.level, 'B1'); assert.equal(c.cards.length, 5);
+  assert.equal(by['Un bail'].definition, 'Contrat entre le propriétaire et le locataire.'); assert.equal(by['Un bail'].image, 'bail.jpg');
+  assert.equal(by.loyer.definition, 'Argent payé chaque mois pour un logement.'); assert.equal(by.loyer.examples[0], 'Je paie mon loyer le premier du mois.'); assert.equal(by.loyer.clozes[0].answer, 'loyer');
+  assert.equal(by['déménagé'].definition, 'changer de logement');
+  const m = mergeDecks([a, c, a], 'Tout');
+  assert.equal(m.cards.length, 8, 'les doublons ne sont gardés qu’une fois'); assert.ok(m.levelGuessed, 'niveaux différents : l’enseignant devra choisir'); assert.equal(m.name, 'Tout');
+});
+
+t('codes HTML : décodés à l’import et dans les paquets déjà enregistrés', () => {
+  assert.equal(decode('J&#x27;ai fini &amp; caf&eacute; &Agrave; jusqu&#39;&agrave; &laquo;&nbsp;oui&nbsp;&raquo; &amp;#x27; R&D &inconnu;'), "J'ai fini & café À jusqu'à « oui » ' R&D &inconnu;");
+  const stored = prepare({ id: 'x', name: 'Vieux (A2)', lang: 'fr', cards: [{ id: 'c1', word: 'Jusqu&#x27;à', definition: 'Limite d&#x27;une durée.', examples: ['Je reste jusqu&#x27;à vendredi.'], distractors: ['d&#x27;ici'], translations: { en: 'until &amp; up to' } }] });
+  const k = stored.cards[0];
+  assert.deepEqual([k.word, k.definition, k.examples[0], k.distractors[0], k.translations.en, k.id], ["Jusqu'à", "Limite d'une durée.", "Je reste jusqu'à vendredi.", "d'ici", 'until & up to', 'c1']);
+  const csv = deckFromCSV('Expression;Definition;Picture\n"Un caf&eacute;";"Boisson d&#x27;adulte.";\nUn thé;Boisson chaude.;\nUn jus;Boisson de fruits.;', 'Essai', 'fr', 'A1');
+  assert.equal(csv.cards[0].word, 'Un café'); assert.equal(csv.cards[0].definition, "Boisson d'adulte.");
+  const js = deckFromJSON(JSON.stringify({ name: 'J', level: 'A1', cards: [1, 2, 3].map(i => ({ word: 'mot' + i, definition: 'J&#x27;ai le sens ' + i, examples: ['C&#x27;est [mot' + i + '] ici.'] })) }));
+  assert.equal(js.cards[0].definition, "J'ai le sens 1"); assert.equal(js.cards[0].examples[0], "C'est mot1 ici."); assert.equal(js.cards[0].clozes[0].answer, 'mot1');
 });
 
 const zipFile = '/tmp/elefiches-test.zip';

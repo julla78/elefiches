@@ -1,8 +1,10 @@
-# Test de bout en bout : python3 tests/browser_test.py <url> <csv> <dossier de captures>
+# Test de bout en bout : python3 tests/browser_test.py <url de enseignant.html#accueil> <csv> <dossier de captures>
+# L'interface enseignant sert au parcours complet ; l'interface étudiant (index.html) est vérifiée à part.
 import sys, re
 from playwright.sync_api import sync_playwright
 
 url, csv, out = sys.argv[1], sys.argv[2], sys.argv[3]
+student = url.split('enseignant.html')[0] + 'index.html'
 from PIL import Image
 png = out + '/_test.png'; Image.new('RGB', (1200, 800), (255, 122, 89)).save(png)
 errors = []
@@ -12,7 +14,7 @@ COLORS = [(230, 60, 60), (60, 200, 80), (60, 90, 230), (240, 220, 40), (150, 60,
 sheet = out + '/_planche1.png'; im = Image.new('RGB', (900, 900), (255, 255, 255))
 for i, col in enumerate(COLORS): im.paste(Image.new('RGB', (280, 280), col), (i % 3 * 300 + 10, i // 3 * 300 + 10))
 im.save(sheet)
-import json, zipfile
+import json, zipfile, os
 PACKET = json.dumps({"elefiches": 1, "name": "Logement (B1)", "lang": "fr", "level": "B1", "cards": [
     {"word": "Un " + w, "definition": d, "translations": {}, "examples": ["Je paie un [" + w + "] chaque mois ici.", "Le [" + w + "] est sur la table."], "situation": s, "distractors": ["garage", "voisin", "placard"], "theme": "Logement", "register": "courant", "image": im_}
     for w, d, s, im_ in [("loyer", "Argent payé chaque mois pour habiter un logement.", "On est le premier du mois.", "P1-1"), ("bail", "Contrat entre le propriétaire et la personne qui loue.", "Tu signes un papier avec le propriétaire.", "P1-5"),
@@ -108,14 +110,14 @@ with sync_playwright() as p:
     assert page.locator('.deck').first.locator('.prairie .ele').count() == 3, 'trois éléphanteaux attendus après la première session'
 
     # espace enseignant : tutoriel, modèles, import du CSV réel
-    page.click('[data-action=teacher]'); page.wait_for_selector('form[data-builder]')
+    page.click('[data-action=teacher]'); page.wait_for_selector('[data-b=level]')
     # le prompt n'apparaît qu'une fois le niveau choisi, puis suit ce que l'enseignant décrit
-    assert 'Choisis d’abord le niveau' in page.inner_text('pre[data-prompt=cards]')
-    page.select_option('form[data-builder] select[name=lang]', 'en'); page.select_option('form[data-builder] select[name=level]', 'B2')
-    page.fill('form[data-builder] input[name=topic]', 'Job interviews')
-    pr = page.inner_text('pre[data-prompt=cards]')
+    assert 'Choisis d’abord le niveau' in page.inner_text('pre[data-prompt=file]')
+    page.select_option('[data-b=lang]', 'en'); page.select_option('[data-b=level]', 'B2')
+    page.fill('[data-b=topic]', 'Job interviews'); page.fill('[data-b=count]', '120')
+    pr = page.inner_text('pre[data-prompt=file]'); assert 'paquet de 120 fiches' in pr and 'UN SEUL fichier ZIP' in pr
     assert 'niveau B2' in pr and 'Job interviews' in pr and '"lang":"en","level":"B2"' in pr and '"translations":{"fr":""}' in pr, pr[:200]
-    assert page.input_value('form[data-builder] input[name=topic]') == 'Job interviews'
+    assert page.input_value('[data-b=topic]') == 'Job interviews'
     page.screenshot(path=f'{out}/teacher.png', full_page=True)
     page.click('details.card.more > summary'); page.wait_for_selector('.models')
     page.locator('[data-action=try][data-model=es]').click(); page.wait_for_selector('.deck')
@@ -154,6 +156,7 @@ with sync_playwright() as p:
     assert st == ['Levantarse muy pronto.', 'data:image/', 5, 1], st
     # paquet collé + planche : les dessins sont découpés et posés sur les bonnes fiches
     page.click('[data-action=teacher]')
+    page.evaluate("document.querySelectorAll('form[data-submit=import] details').forEach(d => { d.open = true; })")
     page.fill('form[data-submit=import] textarea[name=text]', '```json\n' + PACKET + '\n```\nPlanche 1 : …')
     page.set_input_files('input[name=files]', sheet)
     page.click('form[data-submit=import] button.primary'); page.wait_for_selector('.imggrid')
@@ -170,21 +173,41 @@ with sync_playwright() as p:
     assert page.locator('.imgtile img').count() == 3, 'archive : trois dessins attendus'
     page.click('button.primary[data-action=teacher]')
     # image isolée, sans nom reconnaissable : l'enseignant touche le mot qu'elle illustre
+    page.evaluate("document.querySelectorAll('form[data-submit=import] details').forEach(d => { d.open = true; })")
     page.fill('form[data-submit=import] textarea[name=text]', PACKET.replace('Logement (B1)', 'Logement libre (B1)').replace('"P1-', '"'))
     page.set_input_files('input[name=files]', png); page.click('form[data-submit=import] button.primary'); page.wait_for_selector('.loose')
     page.locator('.imgtile').nth(1).click(); assert page.locator('.imgtile img').count() == 1 and not page.locator('.loose').count()
     page.click('button.primary[data-action=teacher]')
+    # paquet Anki (.apkg) : un seul fichier, fiches et images comprises
+    import sqlite3
+    dbp = out + '/_c.anki21'
+    if os.path.exists(dbp): os.remove(dbp)
+    c = sqlite3.connect(dbp)
+    c.execute('create table col (id integer primary key, crt integer, mod integer, scm integer, ver integer, dty integer, usn integer, ls integer, conf text, models text, decks text, dconf text, tags text)')
+    c.execute('create table notes (id integer primary key, guid text, mid integer, mod integer, usn integer, tags text, flds text, sfld text, csum integer, flags integer, data text)')
+    c.execute('insert into col values (1,0,0,0,11,0,0,0,?,?,?,?,?)', ('{}', json.dumps({'1730000000000': {'name': 'Voc', 'flds': [{'name': n, 'ord': i} for i, n in enumerate(['Word', 'Image', 'Definition', 'Example', 'Category'])]}}), json.dumps({'1': {'name': 'Default'}, '2': {'name': 'Week-end à Londres'}}), '{}', '{}'))
+    for i, r in enumerate([('Sale / sale', '<img src="card_001.png">', "Qui n'est pas propre.", 'La salle de bains est sale.', 'Hôtel'), ('Un oreiller', '<img src="card_002.png">', 'On pose la tête dessus pour dormir.', 'Je voudrais un oreiller en plus.', 'Hôtel'), ('Une valise', '', 'Un grand sac rigide pour voyager.', 'Ma valise est trop lourde.', 'Voyage'), ('Un ascenseur', '', 'Il monte et descend dans un immeuble.', "L'ascenseur de l'hôtel est en panne.", 'Hôtel')]):
+        c.execute('insert into notes values (?,?,?,0,0,?,?,?,0,0,?)', (i + 1, 'g%d' % i, 1730000000000, '', chr(31).join(r), r[0], ''))
+    c.commit(); c.close()
+    apath = out + '/_A1SQ2_Week-end.apkg'
+    with zipfile.ZipFile(apath, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.write(dbp, 'collection.anki21'); z.writestr('media', json.dumps({'0': 'card_001.png', '1': 'card_002.png'})); z.write(png, '0'); z.write(sheet, '1')
+    page.set_input_files('input[name=files]', apath); page.click('form[data-submit=import] button.primary'); page.wait_for_selector('.imggrid')   # un fichier complet ouvre la vérification des images
+    assert page.locator('.imggrid img').count() == 2
+    ank = page.evaluate("(d => [d.level, d.cards.length, d.cards.filter(c => (c.image || '').startsWith('data:image/')).length, d.cards[0].clozes.length])(window.__elefiches.state.decks.find(d => d.name === 'Week-end à Londres'))")
+    assert ank == ['A1', 4, 2, 1], ank
+    page.click('[data-action=teacher]')
     # fichier CSV : le niveau doit être choisi, il n'est jamais deviné en silence
-    page.click('form[data-submit=import] details summary')
+    page.evaluate("document.querySelectorAll('form[data-submit=import] details').forEach(d => { d.open = true; })")
     page.fill('form[data-submit=import] input[name=name]', 'Sans niveau'); page.set_input_files('input[name=files]', csv)
     page.click('form[data-submit=import] button.primary'); page.wait_for_selector('.banner.warn')
     assert 'niveau' in page.inner_text('.banner.warn')
-    page.click('form[data-submit=import] details summary')
+    page.evaluate("document.querySelectorAll('form[data-submit=import] details').forEach(d => { d.open = true; })")
     page.fill('form[data-submit=import] input[name=name]', 'A2+ test'); page.set_input_files('input[name=files]', csv)
     page.click('form[data-submit=import] button.primary')
     page.wait_for_selector('.deck')
     print('IMPORT:', page.locator('.banner.good').inner_text())
-    N = page.locator('.deck').count() - 1; assert N == 5, N
+    N = page.locator('.deck').count() - 1; assert N == 6, N
     page.locator('.deck').nth(N).locator('[data-action=start]').click()
     k2 = play(page, right=True, shots=shots)
     page.screenshot(path=f'{out}/done_win.png')
@@ -267,16 +290,19 @@ with sync_playwright() as p:
     try:
         ctx = b.new_context(viewport={'width': 420, 'height': 860}); p2 = ctx.new_page()
         p2.on('pageerror', lambda e: errors.append(str(e)))
-        p2.goto(url + '?paquet=_test'); p2.wait_for_selector('.deck')
+        p2.goto(student + '?paquet=_test'); p2.wait_for_selector('.deck')
+        assert not p2.locator('[data-action=teacher]').count(), 'interface étudiant : aucun accès à l’éditeur'
+        p3 = b.new_context().new_page(); p3.goto(url.split('#')[0]); p3.wait_for_selector('[data-b=level]')   # enseignant.html s'ouvre sur l'éditeur
+        assert 'index.html' not in p3.inner_text('.studenturl') and p3.inner_text('.studenturl').strip().endswith('/'); p3.close()
         assert p2.locator('.deck').count() == 1 and 'Logement (B1)' in p2.inner_text('.deck') and 'est prêt' in p2.inner_text('.banner.good'), p2.inner_text('body')[:300]
         assert '?' not in p2.url
         p2.screenshot(path=f'{out}/student_link.png', full_page=True)
         p2.set_input_files('input[data-file=packet]', zpath); p2.wait_for_function("document.querySelectorAll('.deck').length === 2")
         assert p2.locator('.deck').nth(1).locator('.prairie').count() == 1
-        p2.goto(url + '?paquet=absent'); p2.wait_for_selector('.banner.warn'); assert 'lien' in p2.inner_text('.banner.warn')
+        p2.goto(student + '?paquet=absent'); p2.wait_for_selector('.banner.warn'); assert 'lien' in p2.inner_text('.banner.warn')
         ctx.close()
     finally:
-        os.remove(os.path.join(pk, '_test.json')); os.rmdir(pk)
+        os.remove(os.path.join(pk, '_test.json'))
     b.close()
 
 print('ERREURS CONSOLE:', errors or 'aucune')

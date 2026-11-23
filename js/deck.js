@@ -30,10 +30,10 @@ export function parseCSV(text) {
 
 // Noms de colonnes reconnus, en français, anglais et espagnol.
 const COLUMNS = [
-  [/^(word|mot|terme|term|palabra)$/, 'word'],
+  [/^(word|mot|terme|term|palabra|expression|vocabulaire|vocabulary)$/, 'word'],
   [/^(definition|définition|definicion|definición)$/, 'definition'],
   [/^(example|exemple|ejemplo|phrase|sentence)\s*\d*$/, 'example'],
-  [/^(image|imagen)$/, 'image'],
+  [/^(image|imagen|picture|photo|illustration)$/, 'image'],
   [/^(audio|son|sound)$/, 'audio'],
   [/^(ipa|api|prononciation|pronunciation)$/, 'ipa'],
   [/^(category|catégorie|categorie|categoria|categoría)$/, 'category'],
@@ -50,6 +50,35 @@ const TR = /^(?:translation|traduction|traduccion|traducción|trad)\.?\s*(?:[-�
 const LANGS = { fr: 'fr', francais: 'fr', french: 'fr', frances: 'fr', en: 'en', anglais: 'en', english: 'en', ingles: 'en', es: 'es', espagnol: 'es', spanish: 'es', espanol: 'es' };
 const plain = s => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
+// Un texte venu d'Anki, d'un tableur ou d'une IA peut contenir des codes HTML à la place des caractères
+// (« J&#x27;ai », « caf&eacute; », « &amp; ») : on rend le vrai caractère, partout.
+const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', laquo: '«', raquo: '»', hellip: '…', rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”', ndash: '–', mdash: '—', bull: '•', middot: '·', euro: '€', deg: '°',
+  oelig: 'œ', OElig: 'Œ', aelig: 'æ', AElig: 'Æ', szlig: 'ß', ccedil: 'ç', Ccedil: 'Ç', ntilde: 'ñ', Ntilde: 'Ñ', iquest: '¿', iexcl: '¡' };
+const ACC = { acute: '́', grave: '̀', circ: '̂', uml: '̈', tilde: '̃', ring: '̊' };
+export function decode(text) {
+  let s = String(text ?? '');
+  for (let pass = 0; pass < 2 && s.includes('&'); pass++) {            // deux passes : « &amp;#x27; » existe aussi
+    s = s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+\d*);/gi, (m, e) => {
+      if (e[0] === '#') { const n = /^#x/i.test(e) ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10); try { return n ? String.fromCodePoint(n) : m; } catch { return m; } }
+      if (ENT[e] !== undefined) return ENT[e];
+      const a = e.match(/^([a-z])(acute|grave|circ|uml|tilde|ring)$/i);        // &eacute; &Agrave; &ntilde;…
+      return a ? (a[1] + ACC[a[2].toLowerCase()]).normalize('NFC') : m;
+    });
+  }
+  return s;
+}
+const TEXTS = ['word', 'definition', 'situation', 'theme', 'register', 'family', 'ipa', 'pos'];
+// Nettoie une fiche déjà enregistrée ou tout juste importée. Les positions du mot dans les exemples (marks) sont
+// oubliées si un exemple change de longueur : elles seront retrouvées d'après le mot.
+function tidyCard(c) {
+  const fix = v => (typeof v === 'string' && v.includes('&') ? decode(v) : v);
+  for (const k of TEXTS) if (c[k]) c[k] = fix(c[k]);
+  if (Array.isArray(c.examples)) { const before = c.examples.join('\n'); c.examples = c.examples.map(fix); if (c.marks && c.examples.join('\n') !== before) delete c.marks; }
+  if (Array.isArray(c.distractors)) c.distractors = c.distractors.map(fix);
+  if (c.translations) for (const k of Object.keys(c.translations)) c.translations[k] = fix(c.translations[k]);
+  if (c.translation) c.translation = fix(c.translation);
+}
+
 // N'accepte comme image ou son qu'un lien web, une image intégrée ou un chemin relatif.
 export function safeUrl(u) {
   u = String(u || '').trim();
@@ -59,11 +88,13 @@ export function safeUrl(u) {
 
 // Niveau du paquet (A1 à C2) : il décide de la langue des consignes et du feedback.
 export const LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
-export const levelIn = name => (String(name).toUpperCase().match(/(?<![A-Z0-9])([ABC][12])(?![A-Z0-9])/) || [])[1] || '';
+export const levelIn = name => (String(name).toUpperCase().match(/(?<![A-Z0-9])([ABC][12])(?![0-9])/) || [])[1] || '';      // « Logement (A2) », « A1SQ2_Londres »
 export const guessLevel = name => (String(name).toUpperCase().match(/(?<![A-Z0-9])([ABC][12])(?![A-Z0-9])/) || [])[1] || 'A2';
 
-export function deckFromCSV(text, name, lang = 'fr', level) {
-  const rows = parseCSV(text);
+export const deckFromCSV = (text, name, lang = 'fr', level) => deckFromRows(parseCSV(text), name, lang, level);
+
+// Paquet construit à partir d'un tableau : première ligne = noms des colonnes.
+export function deckFromRows(rows, name, lang = 'fr', level) {
   if (rows.length < 2) throw new Error('empty');
   const cols = rows[0].map(h => {
     const k = h.trim().toLowerCase();
@@ -102,10 +133,132 @@ export function deckFromCSV(text, name, lang = 'fr', level) {
   return prepare({ id: 'd' + hash(norm(name)), name, lang, level: LEVELS.includes(level) ? level : '', cards, skipped, fields: [...new Set(cols)] });
 }
 
+// ---------- Paquets Anki (.apkg) ----------
+// N'importe quel paquet Anki : chaque type de note est lu à part. Le rôle d'un champ se reconnaît d'abord à son nom
+// (« Expression », « Front », « Picture », « Exemple »…), sinon à ce qu'il contient (une image, un son, un mot court,
+// une phrase). Les notes « texte à trous » deviennent des fiches dont le mot est la partie cachée.
+const ROLES = [
+  ['word', /^(word|words|mot|mots|terme?|expressions?|vocab|vocabulary|vocabulaire|front|recto|anverso|vorderseite|question|pregunta|palabra|wort|parola|headword|lemma|lemme|entr[ée]e|entry|item|target|kanji|hanzi|simplified|hangul)$/],
+  ['definition', /^(d[ée]finitions?|definici[oó]n|meaning|sens|signification|significado|explication|explanation|back|verso|reverso|r[üu]ckseite|answer|r[ée]ponse|respuesta|gloss|glose|description)$/],
+  ['example', /^(examples?|exemples?|ejemplos?|sentences?|phrases?|frases?|contextes?|usage|beispiele?|satz)\s*\d*$/],
+  ['image', /^(images?|pictures?|pics?|photos?|illustrations?|dessins?|imagen|img|visuel|bild|foto)$/],
+  ['audio', /^(audio|sound|sons?|voix|voice|mp3|pronunciation audio|audio du mot)$/],
+  ['ipa', /^(ipa|api|prononciation|pronunciation|phon[ée]tique|phonetics?|transcription|pinyin|reading|lecture)$/],
+  ['category', /^(cat[ée]gor(y|ie|ies|ia|ía)|th[èe]mes?|temas?|topics?|sujet|rubrique|domaine|champ lexical|chapitre|chapter|le[cç]on|lesson|unit|unité)$/],
+  ['pos', /^(pos|nature|part of speech|classe grammaticale|cat[ée]gorie grammaticale)$/],
+  ['register', /^(register|registre|registro)$/],
+  ['situation', /^(situation|situaci[oó]n)$/],
+  ['distractors', /^(distracteurs?|distractors?|distractores?|mots pi[eè]ges?|pi[eè]ges?)$/],
+  ['extra', /^(extra|verso suppl[ée]mentaire|back extra|notes?|remarques?|hint|indice|comment(aire)?s?|tags?)$/],
+];
+const TR_NAMES = { fr: /^(fran[cç]ais|french|franc[eé]s|fr)$/, en: /^(anglais|english|ingl[eé]s|en)$/, es: /^(espagnol|spanish|espa[nñ]ol|es)$/ };
+const BREAK = /<br\s*\/?>|<\/(div|p|li|tr|h\d)>|\r?\n/gi;
+const strip = html => decode(String(html).replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ').replace(/\[sound:[^\]]+\]/g, ' ').replace(BREAK, ' ').replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
+const imgOf = html => { const m = String(html).match(/<img[^>]+src\s*=\s*["']?([^"'>\s]+)/i); return m ? decode(m[1]) : ''; };
+const sndOf = html => { const m = String(html).match(/\[sound:([^\]]+)\]/); return m ? decode(m[1]) : ''; };
+// Un champ d'exemples peut en réunir plusieurs : lignes, puces « • », éléments de liste.
+const lines = html => String(html).replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ').split(/<br\s*\/?>|<\/(?:div|p|li|tr)>|\r?\n|\s[•▪◦‣·]\s|^\s*[•▪◦‣]\s*/gi)
+  .map(x => strip(x || '').replace(/^[-–—•▪◦‣*]\s+|^\d+[.)]\s+/, '')).filter(Boolean);
+const wordsIn = t => (t ? t.split(/\s+/).length : 0);
+
+function ankiRoles(model, notes) {
+  const flds = [...(model.flds || [])].sort((a, b) => a.ord - b.ord), n = Math.max(1, notes.length);
+  const stat = flds.map((f, i) => {
+    const raw = notes.map(x => x.f[i] || ''), txt = raw.map(strip), filled = txt.filter(Boolean);
+    return { img: raw.filter(r => /<img/i.test(r)).length / n, snd: raw.filter(r => /\[sound:/.test(r)).length / n, text: filled.length / n,
+      len: filled.reduce((a, t) => a + wordsIn(t), 0) / Math.max(1, filled.length), sent: filled.filter(t => /[.!?…。]["»”)]?$/.test(t)).length / Math.max(1, filled.length) };
+  });
+  const role = flds.map(f => {
+    const k = plain(f.name.trim()).replace(/[_-]+/g, ' '), tr = k.match(TR) || null;
+    const lang = Object.keys(TR_NAMES).find(l => TR_NAMES[l].test(k));
+    if (lang) return 'tr:' + lang;
+    if (tr) return 'tr:' + (LANGS[plain(tr[1])] || plain(tr[1]) || '*');
+    const hit = ROLES.find(([, re]) => re.test(k) || re.test(f.name.trim().toLowerCase()));
+    return hit ? hit[0] : '';
+  });
+  const free = i => !role[i], has = r => role.some(x => x === r || (r === 'tr' && x.startsWith('tr:')));
+  // Champs sans nom reconnu : d'abord ceux qui ne contiennent qu'une image ou qu'un son.
+  stat.forEach((s, i) => { if (free(i) && s.text < 0.2 && s.img >= 0.3 && !has('image')) role[i] = 'image'; else if (free(i) && s.text < 0.2 && s.snd >= 0.3 && !has('audio')) role[i] = 'audio'; });
+  const texty = i => free(i) && stat[i].text >= 0.5;
+  if (!has('word')) {                      // le champ de tri d'Anki est le plus souvent le mot ; sinon le premier champ de texte court
+    const sortf = model.sortf ?? 0, pick = texty(sortf) ? sortf : stat.findIndex((s, i) => texty(i) && s.len <= 8);
+    const any = pick >= 0 ? pick : stat.findIndex((s, i) => texty(i));
+    if (any >= 0) role[any] = 'word';
+  }
+  if (!has('definition') && !has('tr')) {  // le premier autre champ de texte donne le sens
+    const d = stat.findIndex((s, i) => texty(i));
+    if (d >= 0) role[d] = 'definition';
+  }
+  stat.forEach((s, i) => { if (texty(i)) role[i] = s.len >= 4 && s.sent >= 0.5 ? 'example' : 'extra'; });
+  return role;
+}
+
+// Note « texte à trous » : {{c1::mot::indice}} dans une phrase.
+function clozeCard(text, extra) {
+  const all = [...String(text).matchAll(/\{\{c(\d+)::([\s\S]*?)(?:::([\s\S]*?))?\}\}/g)];
+  if (!all.length) return null;
+  const first = all[0], word = strip(first[2]), open = t => t.replace(/\{\{c\d+::([\s\S]*?)(?:::[\s\S]*?)?\}\}/g, '$1');
+  const marked = strip(open(String(text).replace(first[0], '\u0001' + first[2] + '\u0002'))).replace('\u0001', '[').replace('\u0002', ']');
+  const holed = strip(open(String(text).replace(first[0], '\u0001'))).replace('\u0001', '…');
+  return { word, example: marked, definition: strip(extra || '') || strip(first[3] || '') || `Le mot qui manque dans : « ${holed} »` };
+}
+
+export function deckFromAnki(db, name, lang = 'fr', level) {
+  const col = db.table('col')[0] || [];
+  let models = {}, decks = {};
+  try { models = JSON.parse(col[9] || '{}'); decks = JSON.parse(col[10] || '{}'); } catch { /* base d'un autre format */ }
+  const notes = db.table('notes').map(n => ({ id: String(n[0]), mid: String(n[2]), tags: String(n[5] || '').trim().split(/\s+/).filter(Boolean), f: String(n[6] ?? '').split('\x1f') }));
+  if (!notes.length || !Object.keys(models).length) throw new Error('anki-new');
+  // Sous-paquets : le nom du sous-paquet d'une note sert de thème quand la note n'en a pas.
+  const deckName = id => String(decks[id]?.name || '').split('::').pop().trim();
+  const used = {}; try { for (const c of db.table('cards')) used[String(c[1])] ??= String(c[2]); } catch { /* table absente */ }
+  const real = (Object.keys(used).length ? [...new Set(Object.values(used))] : Object.keys(decks)).filter(id => deckName(id) && deckName(id) !== 'Default' && deckName(id) !== 'Par défaut');
+  const levelTag = t => LEVELS.includes(t.toUpperCase());
+  const maxEx = 4, header = ['Word', 'Definition', 'Translation', 'Translation FR', 'Translation EN', 'Translation ES', ...Array.from({ length: maxEx }, (_, i) => 'Example ' + (i + 1)), 'Image', 'Audio', 'Category', 'IPA', 'POS', 'Register', 'Situation', 'Distracteurs'];
+  const rows = [header]; let tagLevel = '';
+  for (const mid of Object.keys(models)) {
+    const mine = notes.filter(n => n.mid === mid); if (!mine.length) continue;
+    const model = models[mid], flds = [...(model.flds || [])].sort((a, b) => a.ord - b.ord), isCloze = model.type === 1 || mine.some(n => /\{\{c\d+::/.test(n.f.join(' ')));
+    const role = ankiRoles(model, mine), at = r => role.indexOf(r);
+    for (const n of mine) {
+      const get = r => (at(r) >= 0 ? strip(n.f[at(r)] || '') : ''), c = { ex: [] };
+      tagLevel ||= n.tags.find(levelTag) || '';
+      if (isCloze) {
+        const ti = n.f.findIndex(x => /\{\{c\d+::/.test(x)), z = ti >= 0 ? clozeCard(n.f[ti], n.f.filter((_, i) => i !== ti && !/<img|\[sound:/.test(n.f[i])).map(strip).filter(Boolean).join(' — ')) : null;
+        if (!z) continue;
+        Object.assign(c, { word: z.word, definition: z.definition }); c.ex.push(z.example);
+      } else {
+        c.word = get('word'); c.definition = get('definition');
+        role.forEach((r, i) => { if (r === 'example') c.ex.push(...lines(n.f[i] || '')); else if (r.startsWith('tr:')) c[r] = strip(n.f[i] || ''); });
+      }
+      c.image = (at('image') >= 0 && (imgOf(n.f[at('image')]) || (/\.(png|jpe?g|gif|webp|svg)$/i.test(get('image')) ? get('image') : ''))) || imgOf(n.f.join(' '));
+      c.audio = (at('audio') >= 0 && sndOf(n.f[at('audio')])) || sndOf(n.f.join(' '));
+      const tag = n.tags.find(t => !levelTag(t) && !/^(leech|marked)$/i.test(t));
+      c.category = get('category') || (real.length > 1 ? deckName(used[n.id]) : '') || (tag ? tag.replace(/::/g, ' · ').replace(/_/g, ' ') : '');
+      rows.push([c.word, c.definition, c['tr:*'] || '', c['tr:fr'] || '', c['tr:en'] || '', c['tr:es'] || '', ...Array.from({ length: maxEx }, (_, i) => c.ex[i] || ''), c.image, c.audio, c.category, get('ipa'), get('pos'), get('register'), get('situation'), get('distractors')]);
+    }
+  }
+  const own = real.map(id => String(decks[id].name)).sort((a, b) => a.length - b.length)[0]?.split('::')[0];
+  const first = models[Object.keys(models).find(mid => notes.some(n => n.mid === mid))];
+  const deck = deckFromRows(rows, name || own || first?.name || 'Paquet Anki', lang, level || tagLevel.toUpperCase());
+  deck.fields = [];
+  return deck;
+}
+
+// Plusieurs paquets réunis en un seul : les fiches en double (même mot, même sens) ne sont gardées qu'une fois.
+export function mergeDecks(decks, name) {
+  const seen = new Set(), cards = [];
+  for (const d of decks) for (const c of d.cards) { if (seen.has(c.id)) continue; seen.add(c.id); cards.push(c); }
+  const nm = name || decks.map(d => d.name).join(' + '), first = decks[0];
+  const level = decks.every(d => d.level === first.level && !d.levelGuessed) ? first.level : '';
+  return prepare({ id: 'd' + hash(norm(nm)), name: nm, lang: first.lang, level, grid: first.grid, cards, skipped: decks.reduce((a, d) => a + (d.skipped || 0), 0), fields: [] });
+}
+
 // Calcule ce qui se déduit des fiches : phrases à trous et fiches « voisines » (sens proche).
 export function prepare(deck) {
   // Niveau absent : on le lit dans le nom (« Logement (A2) ») ; sinon A2 par défaut, et l'import demande de le choisir.
   if (!LEVELS.includes(deck.level)) { deck.levelGuessed = !levelIn(deck.name); deck.level = guessLevel(deck.name); }
+  deck.cards.forEach(tidyCard);
   const tokSet = s => new Set(noAcc(norm(s || '')).split(/[^\p{L}\p{N}]+/u).filter(Boolean));
   const info = deck.cards.map(c => ({
     heads: heads(c.word).map(noAcc).filter(h => !h.includes(' ') && h.length >= 4),

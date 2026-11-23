@@ -173,15 +173,23 @@ function bankStep(deck, ids, pool, rnd) {
   return { card: deck.byId[ids[0]], activity: { type: 'bank', multi: true, items, bank: shuffle([...answers, ...extra], rnd) } };
 }
 
+// Nombre de nouveaux mots admis selon le nombre de révisions dues.
+export const roomFor = (due, maxNew) => (due >= 20 ? 0 : due >= 10 ? Math.min(maxNew, 2) : maxNew);
+
 export class Session {
-  constructor(deck, progress, { minutes = 5, maxNew = 3, now = Date.now(), rnd = Math.random } = {}) {
+  constructor(deck, progress, { minutes = 5, maxNew = 3, now = Date.now(), rnd = Math.random, force = false } = {}) {
     Object.assign(this, { deck, progress, rnd, startedAt: now, endAt: now + minutes * 60000 });
     this.stats = { answered: 0, ok: 0, fresh: 0, up: [], again: [], herd: [], streak: 0, best: 0 };
     this.served = 0; this.today = []; this.tamed = []; this.waiting = new Set();
     const due = deck.cards.filter(c => isDue(progress[c.id], now))
       .sort((a, b) => (progress[a.id].fsrs?.due ?? 0) - (progress[b.id].fsrs?.due ?? 0));
     const reviews = due.map(c => ({ id: c.id, kind: 'quiz' }));
-    const fresh = pickNew(deck, progress, maxNew);
+    // Principe de Leitner : les révisions passent avant les nouveautés. Introduire trop de mots nouveaux quand les
+    // révisions s'accumulent fait s'effondrer l'apprentissage (Reddy et al., 2016) ; les seuils (10 et 20) sont un choix pratique.
+    // L'étudiant garde la main : « J'en veux quand même » (force) lève ce frein pour la session.
+    const room = force ? maxNew : roomFor(due.length, maxNew);
+    const fresh = pickNew(deck, progress, room);
+    this.held = room < maxNew && pickNew(deck, progress, maxNew).length > fresh.length;
     this.today = fresh.map(c => c.id);
     // Une question posée juste après la découverte est trop facile pour servir la mémoire (le mot est encore
     // « sous les yeux »). On découvre donc trois mots d'affilée, puis découvertes et premières questions alternent :

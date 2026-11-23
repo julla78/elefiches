@@ -3,13 +3,15 @@
 Application web pour mémoriser le vocabulaire d'une langue : répétition espacée, activités variées, et un troupeau d'éléphants qui grandit avec la mémoire.
 
 - Aucun compte, aucun serveur : la progression reste dans le navigateur.
-- Toutes les questions se répondent par un choix : aucune saisie, sauf les nombres en chiffres.
-- Paquets de fiches produits par une IA à partir d'un prompt fourni par l'espace enseignant, puis collés ou déposés (texte, fichier `.json`, `.csv` ou archive `.zip` avec ses images).
-- Interface en français, anglais et espagnol.
+- Les exercices suivent la solidité du souvenir : choisir le sens, compléter une phrase, écrire le mot, reconstruire une phrase, retrouver le mot en situation.
+- Chaque mot est lu à voix haute dans la langue apprise, par la voix de synthèse de l'appareil ou par un fichier son joint à la fiche.
+- Un paquet de fiches est un seul fichier, fabriqué par une IA à partir d'un prompt fourni par l'espace enseignant : archive `.zip` (fiches et images), paquet Anki `.apkg`, `.json` ou `.csv`.
+- Un paquet rangé dans le dossier `paquets/` s'ouvre par un lien : `…/?paquet=nom-du-fichier`.
+- Interface en français, anglais et espagnol ; niveaux du CECRL de A1 à C2.
 
 ## État
 
-Version de travail, en cours de construction. Elle n'a pas encore été testée sur téléphone.
+Version 9, en cours d'essai. Elle n'a pas encore été essayée avec des étudiants, ni sur tous les téléphones.
 
 ## Essayer en local
 

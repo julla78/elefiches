@@ -1,16 +1,20 @@
 // Éléfiches — interface : accueil, espace enseignant, session, bilan.
 import * as store from './store.js';
-import { deckFromCSV, deckFromJSON, deckToJSON, looksJSON, levelIn, prepare, serialize, hash, demoDeck, MODELS, safeUrl, LEVELS } from './deck.js';
+import { deckFromCSV, deckFromJSON, deckFromAnki, mergeDecks, deckToJSON, looksJSON, levelIn, prepare, serialize, hash, demoDeck, MODELS, safeUrl, LEVELS } from './deck.js';
 import { summary, boxOf, dueInDays, isNew, stageOf, HERD_BOX } from './scheduler.js';
-import { Session, Challenge, Tour, meaning, gloss, pickNew, judge } from './session.js';
-import { clozeParts, norm, noAcc, noArt, diffParts, remark } from './match.js';
+import { Session, Challenge, Tour, meaning, gloss, pickNew, judge, roomFor } from './session.js';
+import { clozeParts, norm, noAcc, noArt, diffParts, remark, spoken, slug } from './match.js';
 import { unzip, typeOf } from './zip.js';
-import { buildPrompts, GRIDS, AIS, gridOf } from './prompts.js';
+import { buildPrompts, GRIDS, gridOf } from './prompts.js';
+import { openSqlite } from './sqlite.js';
 import { STR, LANG_NAMES } from './i18n.js';
 
 const app = document.getElementById('app');
+// Deux interfaces sur le même code : index.html pour les étudiants (jouer), enseignant.html pour créer et modifier les paquets.
+const TEACHER = document.body.dataset.mode === 'teacher';
+const siteBase = () => location.origin + location.pathname.replace(/[^/]*\.html$/, '');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const S = { lang: 'auto', minutes: 5, maxNew: 3, help: 'fr', sound: true, decks: [], progress: {}, view: 'home', notice: null, toast: null, confirmReset: null, confirmDel: null, editId: null, cardId: null, draft: {}, local: null, gate: false, builder: { lang: 'fr', level: '', topic: '', count: 20, words: '', grid: '3x3', ai: 'chatgpt' }, sheets: [], loose: [], perm: 0 };
+const S = { lang: 'auto', minutes: 5, maxNew: 3, help: 'fr', sound: true, voice: true, decks: [], progress: {}, view: 'home', notice: null, toast: null, confirmReset: null, confirmDel: null, editId: null, cardId: null, draft: {}, local: null, gate: false, builder: { lang: 'fr', level: '', topic: '', count: 20, words: '', grid: '3x3' }, sheets: [], loose: [], perm: 0 };
 // Langue des consignes et du feedback. En mode automatique : français jusqu'au niveau B1,
 // langue apprise à partir de B2 (règle fixée par Julie). L'étudiant peut toujours choisir lui-même.
 function uiLang() {
@@ -65,6 +69,8 @@ const head = (cls = '') => `<svg class="head ${cls}" width="46" height="44" view
 // Une seule cacahuète, dessinée pour Éléfiches : elle marque l'arrivée, au bout de la trompe.
 const NUT = '<svg class="nut" width="32" height="20" viewBox="0 0 40 24" aria-hidden="true"><path d="M11 2C5 2 1 6.500 1 12s4 10 10 10c3 0 5-1.500 9-1.500s6 1.500 9 1.500c6 0 10-4.500 10-10S35 2 29 2c-3 0-5 1.500-9 1.500S14 2 11 2z" fill="#e6bf82" stroke="#a8782f" stroke-width="1.5"/><path d="M8 8l4 8M14 7l3 9M24 8l3 8M30 7l3 8" stroke="#bf9150" stroke-width="1.2" stroke-linecap="round"/></svg>';
 // Empreinte d'éléphant : bouton des règles du jeu.
+// Paire de défenses : la récompense d'un défi d'étape réussi.
+const tusks = (size = 30, on = true) => `<svg class="tusks${on ? '' : ' off'}" width="${size}" height="${Math.round(size * 0.8)}" viewBox="0 0 40 32" aria-hidden="true"><path d="M12 3c-7 3-10 12-6 19 3 5 9 7 13 6-5-2-8-6-8-11 0-5 1-9 4-13z"/><path d="M28 3c7 3 10 12 6 19-3 5-9 7-13 6 5-2 8-6 8-11 0-5-1-9-4-13z"/></svg>`;
 const FOOT = '<svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><ellipse cx="13" cy="15" rx="9" ry="8.500" fill="currentColor"/><ellipse cx="5.500" cy="6.500" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="10.500" cy="3.800" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="15.800" cy="3.800" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="20.700" cy="6.500" rx="2.300" ry="2.800" fill="currentColor"/></svg>';
 // Barre de progression : la trompe s'allonge de la tête vers la cacahuète.
 const trunkBar = (pct, cls, label) => `<div class="trunk" role="progressbar" aria-label="${esc(label)}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">${head(cls)}<div class="track"><span style="width:${pct}%"></span></div>${NUT}</div>`;
@@ -73,32 +79,47 @@ const trunkBar = (pct, cls, label) => `<div class="trunk" role="progressbar" ari
 
 let voices = [], audioCtx = null;
 const loadVoices = () => { try { voices = speechSynthesis.getVoices(); } catch { voices = []; } };
-try { loadVoices(); speechSynthesis.addEventListener('voiceschanged', loadVoices); } catch { /* pas de synthèse vocale */ }
+try { loadVoices(); speechSynthesis.addEventListener('voiceschanged', () => { loadVoices(); if (S.view === 'home' && !S.session) render(); }); } catch { /* pas de synthèse vocale */ }
+
+// Choix de la voix : la langue du paquet d'abord (variante attendue, sinon une autre variante de la même langue),
+// puis les voix de bonne qualité ; les voix fantaisie de certains systèmes sont écartées.
+const ODD = /albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|deranged|hysterical|junior|ralph|fred|eddy|flo\b|grandma|grandpa|reed|rocko|sandy|shelley/i;
+const FINE = /google|microsoft|natural|neural|enhanced|premium|siri|online/i;
+const vlang = v => (v.lang || '').replace('_', '-').toLowerCase();
+function voiceFor(lang) {
+  const code = (VOICES[lang] || lang).toLowerCase();
+  const score = v => (vlang(v) === code ? 8 : 0) + (FINE.test(v.name) ? 2 : 0) + (v.default ? 1 : 0) - (ODD.test(v.name) ? 6 : 0);
+  return voices.filter(v => vlang(v) === code || vlang(v).startsWith(lang + '-') || vlang(v) === lang).sort((a, b) => score(b) - score(a))[0] || null;
+}
 
 function toast(text) { S.toast = text; render(); setTimeout(() => { if (S.toast === text) { S.toast = null; render(); } }, 4000); }
 
 // Lit le mot : fichier audio de la fiche s'il existe, sinon voix de l'appareil dans la langue du paquet.
-function speak(card, lang) {
+function speak(card, lang, { auto = false } = {}) {
+  const say = text => { if (!auto) toast(text); };            // la lecture automatique reste discrète si la voix manque
   const tts = () => {
     try {
       if (!voices.length) loadVoices();
-      const code = VOICES[lang] || lang;
-      const u = new SpeechSynthesisUtterance(card.word.replace(/\s*\([^)]*\)/g, '').replace(/\(([^)\s]+)\)/g, '').replace(/…/g, ' ').replace(/\s\/\s/g, ', '));
-      const v = voices.find(x => x.lang === code) || voices.find(x => x.lang?.toLowerCase().startsWith(lang));
+      const code = VOICES[lang] || lang, v = voiceFor(lang);
+      const u = new SpeechSynthesisUtterance(spoken(card.word));
       if (v) u.voice = v;
-      u.lang = v?.lang || code; u.rate = 0.9;
+      u.lang = v?.lang?.replace('_', '-') || code; u.rate = 0.9;
       let started = false;
       u.onstart = () => { started = true; };
-      u.onerror = e => { started = true; if (e.error !== 'interrupted' && e.error !== 'canceled') toast(t('ttsSilent')); };
-      setTimeout(() => { if (!started) toast(t('ttsSilent')); }, 2500);   // certains cadres bloquent la voix sans le dire
-      if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
+      u.onerror = e => { started = true; if (e.error !== 'interrupted' && e.error !== 'canceled') say(t('ttsSilent')); };
+      setTimeout(() => { if (!started) say(t('ttsSilent')); }, 2500);   // certains cadres bloquent la voix sans le dire
       speechSynthesis.resume?.();
-      setTimeout(() => speechSynthesis.speak(u), 80);      // Chrome reste muet si « speak » suit « cancel » sans délai
-      if (voices.length && !v) toast(t('noVoice', LANG_NAMES[lang] || lang));
-    } catch { toast(t('noVoice', LANG_NAMES[lang] || lang)); }
+      if (speechSynthesis.speaking || speechSynthesis.pending) {
+        speechSynthesis.cancel();
+        setTimeout(() => speechSynthesis.speak(u), 80);      // Chrome reste muet si « speak » suit « cancel » sans délai
+      } else speechSynthesis.speak(u);                       // sans délai : iOS n'accepte la voix que dans le geste de l'utilisateur
+      if (voices.length && !v) say(t('noVoice', LANG_NAMES[lang] || lang));
+    } catch { say(t('noVoice', LANG_NAMES[lang] || lang)); }
   };
   if (card.audio) { try { new Audio(card.audio).play().catch(tts); } catch { tts(); } } else tts();
 }
+// Chaque mot s'entend sans rien demander : à sa découverte, puis après chaque réponse (réglage « Prononciation automatique »).
+function autoSpeak() { const c = S.step?.card; if (!S.voice || !c || !S.session || S.spoke === S.step) return; S.spoke = S.step; speak(c, S.session.deck.lang, { auto: true }); }
 
 function sfx(kind) {
   if (!S.sound) return;
@@ -127,7 +148,7 @@ function sfx(kind) {
 
 async function load() {
   const set = (await store.get('settings')) || {};
-  Object.assign(S, { lang: set.lang || 'auto', minutes: set.minutes || 5, maxNew: set.maxNew || 3, help: set.help || 'fr', sound: set.sound ?? true });
+  Object.assign(S, { lang: set.lang || 'auto', minutes: set.minutes || 5, maxNew: set.maxNew || 3, help: set.help || 'fr', sound: set.sound ?? true, voice: set.voice ?? true });
   const saved = (await store.get('decks')) || [];
   S.decks = saved.map(prepare);
   if (!S.decks.length) { S.decks = [demoDeck()]; await saveDecks(); }
@@ -137,7 +158,9 @@ async function load() {
   const ref = new URLSearchParams(location.search).get('paquet');
   if (ref) {
     try {
-      const res = await fetch(/^https?:\/\//i.test(ref) ? ref : `paquets/${ref.replace(/[^\w.-]/g, '')}.json`);
+      const plain = ref.replace(/\.json$/i, '').replace(/[^\w.-]/g, '');
+      let res = await fetch(/^https?:\/\//i.test(ref) ? ref : `paquets/${plain}.json`);
+      if (!res.ok && slug(ref.replace(/\.json$/i, '')) !== plain) res = await fetch(`paquets/${slug(ref.replace(/\.json$/i, ''))}.json`);   // lien tapé avec des accents ou des majuscules
       if (!res.ok) throw new Error('link');
       const deck = deckFromJSON(await res.text());
       S.decks = [...S.decks.filter(d => d.id !== deck.id && !(d.demo && !Object.keys(S.progress[d.id] || {}).length)), deck];
@@ -146,9 +169,10 @@ async function load() {
       history.replaceState(null, '', location.pathname);
     } catch { S.notice = { bad: true, text: t('errLink') }; }
   }
+  if (TEACHER && location.hash !== '#accueil') S.view = 'teacher';
 }
 const saveDecks = () => store.set('decks', S.decks.map(serialize));
-const saveSettings = () => store.set('settings', { lang: S.lang, minutes: S.minutes, maxNew: S.maxNew, help: S.help, sound: S.sound });
+const saveSettings = () => store.set('settings', { lang: S.lang, minutes: S.minutes, maxNew: S.maxNew, help: S.help, sound: S.sound, voice: S.voice });
 const saveProgress = id => store.set('progress:' + id, S.progress[id]);
 
 // Langue des traductions affichées pour un paquet, selon le réglage de l'étudiant et ce que le paquet contient.
@@ -170,6 +194,18 @@ function prairie(d, s, hop = [], sleeping = false) {
 
 // Défi d'étape : proposé quand tous les mots d'une étape ont été découverts un jour précédent.
 // C'est une révision espacée : le jour même de la découverte, il serait trop facile pour servir la mémoire.
+// Où en est le défi : ouvert, ou ce qu'il manque pour l'ouvrir. Le but reste toujours visible.
+function challengeLine(d, P) {
+  const st = stageOf(d, P), done = P._stages || {}, won = Object.keys(done).length, open = pendingStage(d, P);
+  const next = Array.from({ length: st.count }, (_, i) => i + 1).find(i => !done[i]);
+  let line = '';
+  if (open) line = `<button class="secondary challenge" data-action="challenge" data-id="${d.id}" data-stage="${open}">${tusks(26)}<span>${t('challengeBtn', open)}</span></button>`;
+  else if (next) {
+    const [a, b] = st.bounds[next - 1], left = d.cards.slice(a, b).filter(c => isNew(P[c.id])).length;
+    line = `<p class="chlock">${tusks(22, false)}<span>${left ? t('chLockedNew', next, left) : t('chLockedNight', next)}</span></p>`;
+  }
+  return `${line}${won ? `<p class="tuskrow" aria-label="${t('tusksLine', won, st.count)}">${Array.from({ length: Math.min(won, 12) }, () => tusks(20)).join('')}<span>${t('tusksLine', won, st.count)}</span></p>` : ''}`;
+}
 function pendingStage(d, P) {
   const st = stageOf(d, P), done = P._stages || {}, today = new Date(Date.now()).setHours(0, 0, 0, 0);
   for (let i = 0; i < st.count; i++) {
@@ -184,12 +220,16 @@ function deckCard(d) {
   const P = S.progress[d.id], s = summary(d, P), canStart = s.due + pickNew(d, P, S.maxNew).length > 0;
   const nextDays = Math.min(...d.cards.map(c => dueInDays(P[c.id])).filter(n => n > 0), 999);
   const pct = Math.round(100 * s.stage.seen / s.stage.size);
+  const held = pickNew(d, P, S.maxNew).length > roomFor(s.due, S.maxNew);
+  const mute = voices.length && !voiceFor(d.lang) && d.cards.some(c => !c.audio);
   return `<article class="deck card" style="--th:${hue(d.cards[0].theme || d.name)}">
     <div><h2 lang="${d.lang}">${esc(d.name)}</h2><p class="meta">${LANG_NAMES[d.lang] || d.lang} · ${d.level}${d.demo ? ' · ' + t('demo') : ''}</p></div>
     ${prairie(d, s, [], !canStart)}
     <div class="stagebar"><span>${t('stageN', s.stage.index)}</span>${trunkBar(pct, 'idle', t('stageAria', s.stage.index, s.stage.count, s.stage.seen, s.stage.size))}</div>
     ${canStart ? `<button class="primary" data-action="start" data-id="${d.id}">${t('start', S.minutes)}</button>` : `<p class="rest">${t('nothing', nextDays)}</p>`}
-    ${pendingStage(d, P) ? `<button class="secondary" data-action="challenge" data-id="${d.id}" data-stage="${pendingStage(d, P)}">${t('challengeBtn', pendingStage(d, P))}</button>` : ''}
+    ${held ? `<p class="heldline">${t('heldHome')} <button class="link" data-action="start-force" data-id="${d.id}">${t('heldForce')}</button></p>` : ''}
+    ${mute ? `<p class="banner warn">${t('noVoiceDeck', LANG_NAMES[d.lang] || d.lang)}</p>` : ''}
+    ${challengeLine(d, P)}
     <button class="link" data-action="herd" data-id="${d.id}">${t('herdBtn', s.animals.length)}</button>
   </article>`;
 }
@@ -200,7 +240,7 @@ function herdView() {
   const stages = s.stage.bounds.map(([a, b], i) => {
     const cards = d.cards.slice(a, b), seen = cards.filter(c => boxOf(P[c.id]) > 0);
     if (!seen.length && i > s.stage.index - 1) return '';
-    return `<section class="card"><h2>${t('stageN', i + 1)}</h2><ul class="herdlist">${seen.map(c => `<li>${mascot(54, 'idle', boxOf(P[c.id]))}<b lang="${d.lang}">${esc(c.bare)}</b><span class="meta">${ages[boxOf(P[c.id]) - 1]}</span></li>`).join('')}</ul>
+    return `<section class="card"><h2>${t('stageN', i + 1)} ${(P._stages || {})[i + 1] ? tusks(26) : ''}</h2><ul class="herdlist">${seen.map(c => `<li>${mascot(54, 'idle', boxOf(P[c.id]))}<b lang="${d.lang}">${esc(c.bare)}</b><span class="vh">${ages[boxOf(P[c.id]) - 1]}</span></li>`).join('')}</ul>
       ${cards.length > seen.length ? `<p class="meta">${t('toDiscover', cards.length - seen.length)}</p>` : ''}</section>`;
   }).join('');
   return `<button class="link" data-action="home">← ${t('back')}</button>
@@ -228,7 +268,7 @@ const banners = () => `${store.isPersistent() ? '' : `<p class="banner warn">${t
   ${S.notice ? `<p class="banner ${S.notice.bad ? 'warn' : 'good'}" role="status">${esc(S.notice.text)}</p>` : ''}`;
 
 function home() {
-  return `<header class="top">${mascot(64, 'idle', 2)}<div class="brand"><h1>Éléfiches</h1><p>${t('tagline')}</p></div>
+  return `${TEACHER ? `<button class="link" data-action="teacher">← ${t('eBack')}</button>` : ''}<header class="top">${mascot(64, 'idle', 2)}<div class="brand"><h1>Éléfiches</h1><p>${t('tagline')}</p></div>
       <button class="rulesbtn" data-action="rules">${FOOT}<span>${t('rules')}</span></button></header>
     ${banners()}
     <div class="appetite"><span class="aplabel">${NUT}${t('appetite')}</span>${seg('maxNew', S.maxNew, [[3, t('ap1')], [5, t('ap2')], [8, t('ap3')]])}</div>
@@ -239,9 +279,11 @@ function home() {
       ${setrow('help', seg('help', S.help, [['none', t('helpNone')], ...Object.entries(LANG_NAMES)]))}
       ${setrow('duration', seg('minutes', S.minutes, [3, 5, 10, 15].map(m => [m, t('min', m)])))}
       ${setrow('sound', seg('sound', S.sound ? '1' : '0', [['1', t('on')], ['0', t('off')]]))}
+      ${setrow('voiceAuto', seg('voice', S.voice ? '1' : '0', [['1', t('onF')], ['0', t('offF')]]))}
+      <p class="sethint">${t('voiceHint')}</p>
     </details>
-    <label class="link filelabel">${t('openPacket')}<input type="file" class="vh" data-file="packet" accept=".json,.zip,application/json,application/zip"></label>
-    <button class="secondary" data-action="teacher">${t('teacher')}</button>`;
+    <label class="link filelabel">${t('openPacket')}<input type="file" class="vh" data-file="packet" accept=".json,.zip,.apkg,application/json,application/zip"></label>
+    ${TEACHER ? `<button class="secondary" data-action="teacher">${t('teacher')}</button>` : ''}`;
 }
 
 // ---------- Espace enseignant ----------
@@ -253,7 +295,6 @@ const promptBox = (k, label) => `<div class="promptbox"><p class="label">${t(lab
 function refreshPrompts() {
   const p = prompts();
   for (const el of app.querySelectorAll('[data-prompt]')) el.textContent = S.builder.level ? p[el.dataset.prompt] : t('pickLevel');
-  const note = app.querySelector('[data-ainote]'); if (note) note.textContent = t('ai_' + S.builder.ai);
 }
 
 function teacherView() {
@@ -264,8 +305,9 @@ function teacherView() {
     <button class="secondary small" data-action="try" data-model="${k}">${t('tryIt')}</button></span></li>`;
   const row = (name, need, what) => `<tr><th scope="row">${name}</th><td>${t(need)}</td><td>${t(what)}</td></tr>`;
   const levels = cur => `<option value="">${t('choose')}</option>${LEVELS.map(l => opt(l, cur, l)).join('')}`;
-  return `<button class="link" data-action="home">← ${t('back')}</button>
+  return `<button class="link" data-action="home">${t('asStudent')} →</button>
     <h1>${t('tTitle')}</h1><p class="lead">${t('tIntro')}</p>
+    <p class="studenturl">${t('studentUrl')} <b>${esc(siteBase())}</b></p>
     ${banners()}
     <section class="card"><h2>${t('myDecks')}</h2><ul class="decklist">${S.decks.map(d => `<li>
       <span><b lang="${d.lang}">${esc(d.name)}</b><br><span class="meta">${t('nCards', d.cards.length)} · ${LANG_NAMES[d.lang] || d.lang} · ${d.level}</span></span>
@@ -276,22 +318,25 @@ function teacherView() {
       ${S.confirmDel === d.id ? `<button class="link danger" data-action="del-yes" data-id="${d.id}">${t('delSure')}</button>` : `<button class="link" data-action="del" data-id="${d.id}">${t('del')}</button>`}</span></li>`).join('')}</ul></section>
     <h2 class="sec">${t('tNew')}</h2>
     <section class="card import"><h2>${t('b1')}</h2>
-      <form data-builder>
-        <label>${t('bLang')} <select name="lang">${langOpts(B.lang)}</select></label>
-        <label>${t('bLevel')} <select name="level" required>${levels(B.level)}</select></label>
-        <label>${t('bTopic')} <input name="topic" value="${esc(B.topic)}" placeholder="${t('bTopicPh')}" autocomplete="off"></label>
-        <label>${t('bCount')} <select name="count">${[10, 20, 30].map(n => opt(n, B.count, n)).join('')}</select></label>
-        <label>${t('bWords')} <textarea name="words" rows="3">${esc(B.words)}</textarea><span class="sethint">${t('bWordsHint')}</span></label>
-        <label>${t('bGrid')} <select name="grid">${GRIDS.map(g => opt(g, B.grid, t('gridOpt', gridOf(g).n, gridOf(g).cols, gridOf(g).rows))).join('')}</select></label>
-        <label>${t('bAi')} <select name="ai">${AIS.map(a => opt(a, B.ai, t('aiName_' + a))).join('')}</select></label>
-      </form></section>
-    <section class="card"><h2>${t('b2')}</h2><p>${t('b2Intro')}</p><p class="banner" data-ainote>${t('ai_' + B.ai)}</p>
-      ${promptBox('cards', 'pCards')}${promptBox('sheet', 'pSheet')}${promptBox('next', 'pNext')}
-      <details class="more"><summary>${t('pZip')}</summary><p class="sethint">${t('pZipHint')}</p>${promptBox('zip', 'pZip')}</details></section>
+      <div class="fields">
+        <label>${t('bLang')} <select data-b="lang">${langOpts(B.lang)}</select></label>
+        <label>${t('bLevel')} <select data-b="level">${levels(B.level)}</select></label>
+        <label>${t('bTopic')} <input data-b="topic" value="${esc(B.topic)}" placeholder="${t('bTopicPh')}" autocomplete="off"></label>
+        <label>${t('bCount')} <input data-b="count" type="number" min="3" max="500" inputmode="numeric" value="${B.count}"><span class="sethint">${t('bCountHint')}</span></label>
+        <details class="more"${B.words ? ' open' : ''}><summary>${t('bWordsSum')}</summary>
+          <label>${t('bWords')} <textarea data-b="words" rows="4">${esc(B.words)}</textarea><span class="sethint">${t('bWordsHint')}</span></label></details>
+      </div></section>
+    <section class="card"><h2>${t('b2')}</h2><p>${t('b2Intro')}</p>
+      ${promptBox('file', 'pFile')}
+      <details class="more"><summary>${t('noFile')}</summary><p>${t('noFileHint')}</p>
+        ${promptBox('cards', 'pCards')}
+        <label class="inline">${t('bGrid')} <select data-b="grid">${GRIDS.map(g => opt(g, B.grid, t('gridOpt', gridOf(g).n, gridOf(g).cols, gridOf(g).rows))).join('')}</select></label>
+        ${promptBox('sheet', 'pSheet')}${promptBox('next', 'pNext')}</details></section>
     <section class="card import"><h2>${t('b3')}</h2>
       <form data-submit="import">
-        <label>${t('pasteLabel')} <textarea name="text" rows="4" spellcheck="false"></textarea></label>
-        <label>${t('filesLabel')} <input name="files" type="file" multiple accept=".zip,.json,.csv,.tsv,.txt,image/*,audio/*"><span class="sethint">${t('filesHint')}</span></label>
+        <label>${t('filesLabel')} <input name="files" type="file" multiple accept=".zip,.apkg,.json,.csv,.tsv,.txt,image/*,audio/*"><span class="sethint">${t('filesHint')}</span></label>
+        <details class="more"><summary>${t('pasteSum')}</summary>
+          <label>${t('pasteLabel')} <textarea name="text" rows="4" spellcheck="false"></textarea></label></details>
         <details class="more"><summary>${t('csvOpts')}</summary>
           <label>${t('deckName')} <input name="name" autocomplete="off"></label>
           <label>${t('deckLang')} <select name="lang">${langOpts('fr')}</select></label>
@@ -324,7 +369,7 @@ async function addDeck(text, name, lang, json = false, level) {
   }
   render();
 }
-const ERR = { 'no-word-column': 'errNoWord', 'too-few': 'errFew', 'bad-json': 'errJson', 'no-level': 'errLevel', 'no-name': 'errName', nothing: 'errNothing' };
+const ERR = { 'anki-new': 'errAnki', sqlite: 'errAnki', 'no-word-column': 'errNoWord', 'too-few': 'errFew', 'bad-json': 'errJson', 'no-level': 'errLevel', 'no-name': 'errName', nothing: 'errNothing' };
 
 // Import : un texte collé ou un fichier de paquet (.json, .csv), accompagné ou non d'images, de sons et de planches,
 // le tout éventuellement réuni dans une archive .zip. Rien n'est envoyé nulle part : tout est lu sur l'appareil.
@@ -333,12 +378,26 @@ async function importPacket({ files = [], text = '', name = '', lang = 'fr', lev
     files = files.map(f => ({ name: f.name, blob: f }));
     for (const z of files.filter(f => /\.zip$/i.test(f.name))) files.push(...await unzip(await z.blob.arrayBuffer()));
     files = files.filter(f => !/\.zip$/i.test(f.name));
+    // Paquet Anki (.apkg) : une archive qui contient une base de notes et des médias numérotés.
+    let anki = null; const ankis = [];
+    for (const a of files.filter(f => /\.(apkg|colpkg)$/i.test(f.name))) {
+      const inside = await unzip(await a.blob.arrayBuffer()), get = n => inside.find(f => f.name === n);
+      const base = get('collection.anki21') || get('collection.anki2');
+      if (!base) throw new Error('anki-new');
+      let names = {}; try { names = JSON.parse(await get('media').blob.text()); } catch { /* table des médias absente ou d'un autre format */ }
+      for (const f of inside) if (names[f.name]) files.push({ name: names[f.name], blob: new Blob([f.blob], { type: typeOf(names[f.name]) }) });
+      anki = { db: openSqlite(await base.blob.arrayBuffer()), file: a.name }; ankis.push(anki);
+    }
+    files = files.filter(f => !/\.(apkg|colpkg)$/i.test(f.name));
     const packet = files.find(f => /\.json$/i.test(f.name)) || files.find(f => /\.(csv|tsv|txt)$/i.test(f.name));
-    text = text.trim() || (packet ? await packet.blob.text() : '');
-    if (!text) throw new Error('nothing');
-    if (!looksJSON(text) && !name) throw new Error('no-name');
-    const deck = looksJSON(text) ? deckFromJSON(text, name, level) : deckFromCSV(text, name, lang, level || levelIn(name));
-    if (deck.levelGuessed) throw new Error('no-level');
+    text = anki ? '' : text.trim() || (packet ? await packet.blob.text() : '');
+    if (!text && !anki) throw new Error('nothing');
+    if (!anki && !looksJSON(text) && !name) throw new Error('no-name');
+    // Plusieurs paquets Anki choisis ensemble : ils sont réunis en un seul paquet.
+    const fromAnki = k => { const d = deckFromAnki(k.db, ankis.length > 1 ? '' : name, lang, level || levelIn(name) || levelIn(k.file)); if (d.levelGuessed && levelIn(d.name)) d.levelGuessed = false; return d; };
+    const deck = ankis.length > 1 ? mergeDecks(ankis.map(fromAnki), name) : anki ? fromAnki(anki)
+      : looksJSON(text) ? deckFromJSON(text, name, level) : deckFromCSV(text, name, lang, level || levelIn(name));
+    if (deck.levelGuessed && !home) throw new Error('no-level');      // l'enseignant choisit le niveau ; un paquet reçu par un étudiant s'ouvre quand même
     const media = files.filter(f => f !== packet), kind = f => (f.blob.type || typeOf(f.name)).split('/')[0];
     const base = n => n.split('/').pop().toLowerCase(), stem = n => base(n).replace(/\.\w+$/, '');
     const find = (k, ref) => media.find(f => kind(f) === k && base(f.name) === base(ref)) || media.find(f => kind(f) === k && stem(f.name) === stem(ref));
@@ -362,7 +421,7 @@ async function importPacket({ files = [], text = '', name = '', lang = 'fr', lev
     S.progress[deck.id] ??= (await store.get('progress:' + deck.id)) || {};
     await saveDecks();
     S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped) };
-    const toCheck = S.sheets.length || S.loose.length || deck.cards.some(c => c.sheet && !c.image);
+    const toCheck = S.sheets.length || S.loose.length || deck.cards.some(c => c.image || c.sheet);   // toute image se vérifie d'un coup d'œil
     S.imgId = deck.id; S.view = toCheck && !home ? 'images' : 'home';
   } catch (e) {
     S.notice = { bad: true, text: t(ERR[e.message] || 'errEmpty') };
@@ -534,13 +593,14 @@ function download(name, text, bom = true) {
 }
 // ---------- Session ----------
 
-function startSession(id) {
+function startSession(id, force = false) {
   const deck = S.decks.find(d => d.id === id);
   deck.help = helpFor(deck);
   S.stageBefore = summary(deck, S.progress[id]).stage;
-  S.session = new Session(deck, S.progress[id], { minutes: S.minutes, maxNew: S.maxNew });
+  S.session = new Session(deck, S.progress[id], { minutes: S.minutes, maxNew: S.maxNew, force });
   S.view = 'session'; S.notice = null;
   advance();
+  if (S.session?.held) toast(t('heldNew'));
 }
 
 function startChallenge(id, stage) {
@@ -566,9 +626,9 @@ function advance() {
   S.step = S.session.next();
   if (!S.step) {
     const id = S.session.deck.id;
-    if (S.session.challenge && !S.session.tour) (S.progress[id]._stages ??= {})[S.chStage] = Date.now();
+    if (S.session.challenge && !S.session.tour) { S.chWon = S.session.stats.answered - S.session.stats.ok <= 1; if (S.chWon) (S.progress[id]._stages ??= {})[S.chStage] = Date.now(); }
     S.view = 'done'; saveProgress(id); sfx(S.session.challenge ? 'trumpet' : 'birds');
-  } else if (S.step.intro) saveProgress(S.session.deck.id);
+  } else if (S.step.intro) { saveProgress(S.session.deck.id); autoSpeak(); }
   render();
 }
 
@@ -712,7 +772,7 @@ function ask(result, extra = {}) {
   if (S.session.challenge) { cheer(commit(result, extra)); return render(); }
   const box = boxOf(S.session.progress[S.step.card.id]);
   S.feedback = { ...result, ...extra, ask: true, retry: true, boxBefore: box, boxAfter: box, days: 0, n: S.session.served };
-  sfx('pop'); render();
+  sfx('pop'); autoSpeak(); render();
 }
 
 function commit(result, extra = {}) {
@@ -721,7 +781,7 @@ function commit(result, extra = {}) {
   const after = boxOf(st), retry = !!s.challenge || (!!step.item.retry && after === before);
   S.feedback = { ...result, ...extra, retry, boxBefore: before, boxAfter: after, days: dueInDays(st), n: s.served,
     tamed: s.lastTamed, joined: before < HERD_BOX && after >= HERD_BOX, pun: !result.ok && !step.activity.multi && (S.errors = (S.errors || 0) + 1) % 3 === 1 };
-  saveProgress(s.deck.id);
+  saveProgress(s.deck.id); autoSpeak();
   return S.feedback;
 }
 const cheer = fb => sfx(!fb.ok ? 'steps' : fb.tamed || fb.joined ? 'trumpet' : 'pop');
@@ -781,12 +841,13 @@ function doneView() {
     const { stats, deck } = S.session;
     return `<div class="card done">
       <div class="rain" aria-hidden="true">${Array.from({ length: 16 }, (_, i) => `<i style="left:${(i * 37 + 11) % 96}%;animation-delay:${(i * 0.13).toFixed(2)}s;font-size:${1 + (i % 3) * 0.3}rem">🥜</i>`).join('')}</div>
-      ${mascot(104, 'joy', 5)}
-      <h2>${t('chDone', S.chStage)}</h2>
+      ${mascot(104, S.chWon ? 'joy' : 'idle', 5)}
+      <h2>${t(S.chWon ? 'chDone' : 'chTried', S.chStage)}</h2>
+      <p class="win tuskwin">${tusks(44, S.chWon)}<span>${t(S.chWon ? 'chWon' : 'chAlmost')}</span></p>
       <p>${t('chStats', stats.ok, stats.answered)}</p>
       ${stats.missed.length ? `<p><span class="label">${t('doneAgain')}</span><br>${stats.missed.map(id => `<span class="chip" lang="${deck.lang}">${esc(deck.byId[id].word)}</span>`).join(' ')}</p>` : ''}
       <p class="quip">${t('chNote')}</p>
-      <div class="row"><button class="primary" data-action="home" autofocus>${t('home')}</button></div>
+      <div class="row">${S.chWon ? '' : `<button class="secondary" data-action="challenge" data-id="${deck.id}" data-stage="${S.chStage}">${t('chRetry')}</button>`}<button class="primary" data-action="home" autofocus>${t('home')}</button></div>
     </div>`;
   }
   const { stats, deck, tamed, today } = S.session, P = S.progress[deck.id];
@@ -798,13 +859,14 @@ function doneView() {
     <div class="rain" aria-hidden="true">${Array.from({ length: 16 }, (_, i) => `<i style="left:${(i * 37 + 11) % 96}%;animation-delay:${(i * 0.13).toFixed(2)}s;font-size:${1 + (i % 3) * 0.3}rem">🥜</i>`).join('')}</div>
     ${mascot(104, 'joy', Math.min(5, 1 + Math.floor(summary(deck, P).memory * 5)))}
     <h2>${t('doneTitle')}</h2>
-    ${today.length ? `<p class="big">${t('doneTamed', tamed.length)}</p>` : ''}
+    ${tamed.length ? `<p class="big">${t('doneTamed', tamed.length)}</p>` : ''}
     <p>${stats.answered ? t('doneStats', stats.ok, stats.answered) : t('doneNone')}${stats.best >= 3 ? ' ' + t('doneBest', stats.best) : ''}</p>
     ${stageDone ? `<p class="win">${mascot(44, 'joy', 3)}<span>${t('stageDone', S.stageBefore.index)}</span></p>` : ''}
     <p class="label">${t('herdCount', s.animals.length)}</p>
     ${prairie(deck, s, [...today, ...stats.up])}
     <p class="quip">${t('quips')[(stats.answered + s.animals.length) % t('quips').length]}</p>
     ${line('doneHerd', stats.herd)}${line('doneUp', stats.up)}${line('doneAgain', stats.again)}
+    ${S.session.held ? `<p class="heldline">${t('heldDone')} <button class="link" data-action="start-force" data-id="${deck.id}">${t('heldForce')}</button></p>` : ''}
     <div class="row">${more ? `<button class="secondary" data-action="start" data-id="${deck.id}">${t('again')}</button>` : ''}<button class="primary" data-action="home" autofocus>${t('home')}</button></div>
     <button class="link" data-action="share">${t('share')}</button>
   </div>`;
@@ -828,9 +890,10 @@ app.addEventListener('click', e => {
   const b = e.target.closest('[data-action]'); if (!b) return;
   const { action, id, model } = b.dataset;
   if (action === 'start') startSession(id);
+  else if (action === 'start-force') startSession(id, true);
   else if (action === 'next') advance();
   else if (action === 'home' || action === 'quit') { if (S.session) saveProgress(S.session.deck.id); S.view = 'home'; S.session = null; window.scrollTo?.(0, 0); render(); }
-  else if (action === 'teacher') { if (S.session) S.session = null; S.view = 'teacher'; S.notice = null; S.confirmDel = null; window.scrollTo?.(0, 0); render(); }
+  else if (action === 'teacher') { if (!TEACHER) return; if (S.session) S.session = null; S.view = 'teacher'; S.notice = null; S.confirmDel = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'set') applySetting(b.dataset.key, b.dataset.value);
   else if (action === 'rules') { S.view = 'rules'; window.scrollTo?.(0, 0); render(); }
   else if (action === 'herd') { S.herdId = id; S.view = 'herd'; S.confirmReset = null; window.scrollTo?.(0, 0); render(); }
@@ -840,7 +903,11 @@ app.addEventListener('click', e => {
   else if (action === 'clear') { S.draft[b.dataset.key] = undefined; const u = b.closest('form')[b.dataset.key + 'Url']; if (u) u.value = ''; showDraft(); }
   else if (action === 'test-audio') { const f = b.closest('form'), src = safeUrl(f.audioUrl.value) || S.draft.audio; speak({ word: f.word.value, audio: src }, editing().lang); }
   else if (action === 'del-card') { const d = editing(); d.cards = d.cards.filter(c => c.id !== S.cardId); prepare(d); saveDecks(); S.view = 'edit'; render(); }
-  else if (action === 'export') { const d = S.decks.find(x => x.id === id); download(d.name.replace(/[^\p{L}\p{N}]+/gu, '-') + '.json', deckToJSON(d), false); }
+  else if (action === 'export') {
+    const d = S.decks.find(x => x.id === id), lv = (d.level || '').toLowerCase(), base = slug(d.name), name = lv && !base.split('-').includes(lv) ? `${base}-${lv}` : base;
+    download(name + '.json', deckToJSON(d), false);
+    S.notice = { text: t('exported', name + '.json', siteBase() + '?paquet=' + name) }; render();
+  }
   else if (action === 'del') { S.confirmDel = id; render(); }
   else if (action === 'del-yes') { S.decks = S.decks.filter(d => d.id !== id); S.confirmDel = null; saveDecks(); render(); }
   else if (action === 'speak') speak(S.session.deck.byId[id], S.session.deck.lang);
@@ -916,7 +983,7 @@ app.addEventListener('submit', e => {
   else if (kind === 'typed' && !S.feedback) submitTyped(e.target.answer.value);
 });
 function applySetting(k, v) {
-  S[k] = k === 'minutes' || k === 'maxNew' ? +v : k === 'sound' ? v === '1' : v;
+  S[k] = k === 'minutes' || k === 'maxNew' ? +v : k === 'sound' || k === 'voice' ? v === '1' : v;
   saveSettings(); render();
   if (k === 'sound' && S.sound) sfx('pop');
 }
@@ -929,8 +996,8 @@ app.addEventListener('change', e => {
   }
 });
 app.addEventListener('input', e => {
-  const f = e.target.closest?.('form[data-builder]');
-  if (f) { S.builder = { lang: f.lang.value, level: f.level.value, topic: f.topic.value, count: +f.count.value, words: f.words.value, grid: f.grid.value, ai: f.ai.value }; return refreshPrompts(); }
+  const k = e.target.dataset?.b;
+  if (k) { S.builder[k] = k === 'count' ? Math.min(500, Math.max(3, Math.round(+e.target.value) || 20)) : e.target.value; return refreshPrompts(); }
   if (e.target.dataset.input !== 'search') return;
   const q = e.target.value.trim().toLowerCase();
   for (const li of app.querySelectorAll('.cardlist li')) li.hidden = !!q && !li.dataset.text.includes(q);

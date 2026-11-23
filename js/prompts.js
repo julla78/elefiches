@@ -18,8 +18,7 @@ export function buildPrompts({ lang = 'fr', level = 'A2', topic = '', count = 20
   const theme = topic.trim() || '(à préciser)', title = `${topic.trim() || 'Thème'} (${level})`;
   const trJson = tr.length ? '{' + tr.map(k => `"${k}":""`).join(',') + '}' : '{}';
   const shape = `{"elefiches":1,"name":"${title}","lang":"${lang}","level":"${level}","grid":"${grid}","cards":[\n{"word":"","definition":"","translations":${trJson},"pos":"","examples":["",""],"situation":"","distractors":["","",""],"theme":"","register":"","family":"","ipa":"","image":""}\n]}`;
-  return {
-    cards: `Tu es enseignant ${de}${target} langue étrangère à l'université et concepteur de tests de langue. Crée un paquet de ${n} fiches de vocabulaire pour l'application Éléfiches.
+  const head = `Tu es enseignant ${de}${target} langue étrangère à l'université et concepteur de tests de langue. Crée un paquet de ${n} fiches de vocabulaire pour l'application Éléfiches.
 
 PUBLIC
 Étudiants d'université, jeunes adultes, francophones ou vivant en France. Niveau ${level} du CECRL.
@@ -39,10 +38,8 @@ CHAQUE FICHE
 - "theme" : le sous-thème, en deux ou trois mots, en ${sitLang}.
 - "register" : courant, familier ou soutenu${sitLang === 'français' ? '' : ' (écris-le en ' + target + ')'}.
 - "family" : le même mot-clé pour deux fiches de sens très proche (elles ne seront pas apprises le même jour) ; sinon "".
-- "ipa" : la transcription phonétique du mot seul, sans son article, entre barres obliques.
-- "image" : si le mot désigne un objet, un lieu, une personne ou une action que l'on reconnaît sur un dessin sans légende, écris "P1-1", "P1-2"… jusqu'à "P1-${G.n}" (planche 1, cases 1 à ${G.n}), puis "P2-1"… Sinon "". N'illustre pas les mots abstraits ou grammaticaux.
-
-RÈGLES DES MOTS PIÈGES ("distractors")
+- "ipa" : la transcription phonétique du mot seul, sans son article, entre barres obliques.`;
+  const rules = `RÈGLES DES MOTS PIÈGES ("distractors")
 Ce sont des mots qui existent en ${target}, correctement orthographiés. Jamais de faute d'orthographe, jamais de mot inventé.
 1. Chaque mot piège s'écrit exactement comme il apparaîtrait à la place des crochets de la première phrase d'exemple : sans article si l'article est hors des crochets, à la même forme conjuguée ou accordée, avec le même nombre de mots autant que possible. La phrase reste grammaticalement correcte : même nature, même genre, même nombre, même construction.
 2. Avec le mot piège, la phrase ne correspond plus à la définition : il n'existe qu'une seule bonne réponse. Écarte tout synonyme et tout mot qui conviendrait aussi.
@@ -52,12 +49,37 @@ Ce sont des mots qui existent en ${target}, correctement orthographiés. Jamais 
 6. Les trois mots pièges d'une fiche sont différents les uns des autres, et classés du plus trompeur au moins trompeur.
 
 MÉTHODE
-Travaille en deux temps, sans montrer ton brouillon. D'abord, rédige toutes les fiches. Ensuite, relis-les une à une comme un relecteur exigeant et corrige : le mot figure entre crochets dans ses deux exemples ; la définition ne contient pas le mot ; les phrases respectent le format du niveau ${level} ; chaque mot piège respecte les six règles (remplace-le mentalement dans la phrase pour vérifier) ; chaque situation ne convient qu'à sa fiche.
+Travaille en deux temps, sans montrer ton brouillon. D'abord, rédige toutes les fiches. Ensuite, relis-les une à une comme un relecteur exigeant et corrige : le mot figure entre crochets dans ses deux exemples ; la définition ne contient pas le mot ; les phrases respectent le format du niveau ${level} ; chaque mot piège respecte les six règles (remplace-le mentalement dans la phrase pour vérifier) ; chaque situation ne convient qu'à sa fiche.`;
+  const json = `Règles du JSON : guillemets droits doubles pour les clés et les valeurs ; à l'intérieur d'un texte, n'utilise jamais de guillemet droit (écris « » ou une apostrophe) ; pas de commentaire ; pas de virgule après la dernière fiche.`;
+  const drawable = `si le mot désigne un objet, un lieu, une personne ou une action que l'on reconnaît sur un dessin sans légende`;
+  return {
+    // Le chemin le plus simple : l'IA fabrique un seul fichier, avec les fiches et leurs images.
+    file: `${head}
+- "image" : ${drawable}, le nom de son fichier image, par exemple "images/loyer.png" (voir IMAGES). Sinon "". N'illustre pas les mots abstraits ou grammaticaux.
+
+${rules}
+
+IMAGES
+Pour chaque fiche qui a une image, crée un fichier PNG carré de 512 pixels : un seul dessin, simple et centré, sur un fond uni clair, sans texte, sans lettre et sans chiffre, dans le même style pour tout le paquet. Le dessin montre le sens du mot lui-même, pas un objet vaguement lié. Nomme le fichier d'après le mot, en minuscules, sans accent ni espace : images/salle-de-bains.png.
+
+RÉPONSE ATTENDUE
+Fabrique UN SEUL fichier ZIP, nommé d'après le thème et le niveau, qui contient :
+- paquet.json : le paquet, en JSON valide, exactement sous cette forme :
+${shape}
+- le dossier images, avec les fichiers cités dans les fiches.
+${json}
+Écris toutes les fiches, même si elles sont nombreuses : travaille par lots si nécessaire, mais livre un seul fichier.
+Donne-moi le lien de téléchargement du fichier. Dans la conversation, écris seulement : le nombre de fiches, le nombre d'images et la liste des mots sans image.
+Si tu ne peux pas créer de fichier, dis-le en une phrase et donne à la place le paquet dans un seul bloc de code JSON, avec "image" vide.`,
+    cards: `${head}
+- "image" : ${drawable}, écris "P1-1", "P1-2"… jusqu'à "P1-${G.n}" (planche 1, cases 1 à ${G.n}), puis "P2-1"… Sinon "". N'illustre pas les mots abstraits ou grammaticaux.
+
+${rules}
 
 RÉPONSE ATTENDUE
 1. Le paquet, dans UN SEUL bloc de code, en JSON valide, une fiche par ligne, exactement sous cette forme :
 ${shape}
-Règles du JSON : guillemets droits doubles pour les clés et les valeurs ; à l'intérieur d'un texte, n'utilise jamais de guillemet droit (écris « » ou une apostrophe) ; pas de commentaire ; pas de virgule après la dernière fiche.
+${json}
 2. Sous le bloc, la liste des planches d'images : pour chaque planche, les cases 1 à ${G.n} dans l'ordre, avec pour chacune le mot et la description du dessin en une dizaine de mots (ce que l'on voit, sans texte).
 N'ajoute rien d'autre : ni introduction, ni commentaire sur tes vérifications. Si ta réponse risque d'être coupée, arrête-toi à la fin d'une fiche, ferme le JSON, et propose de donner la suite dans un second bloc de même forme.`,
     sheet: `Dessine la planche 1 de la liste ci-dessus, en UNE SEULE image carrée.
@@ -67,9 +89,6 @@ Style, identique pour toutes les cases : illustration plate, contours simples, c
 Interdits : texte, lettres, chiffres, numéros de case, légendes, cadres, logos.
 Laisse blanches les cases qui n'ont pas de dessin.`,
     next: `Dessine maintenant la planche 2, avec exactement la même grille et le même style.`,
-    zip: `Range dans une archive ZIP le paquet (un fichier nommé paquet.json) et les planches (planche1.png, planche2.png…), puis donne-moi le lien de téléchargement.`,
   };
 }
 
-// Ce que chaque IA sait faire, pour guider l'enseignant (état connu en novembre 2026 ; ces produits changent vite).
-export const AIS = ['chatgpt', 'gemini', 'claude', 'autre'];

@@ -187,3 +187,10 @@ export function diffParts(right, wrong) {
   if (to <= from) { from = Math.max(0, from - 1); to = Math.min(right.length, to + 1); }   // lettre en trop : on montre l'endroit
   return [right.slice(0, from), right.slice(from, to), right.slice(to)];
 }
+
+// Ce que la voix doit dire : le mot sans ses précisions entre parenthèses ; « Petit / petite » se lit en deux temps,
+// « Minuscule / minuscule » une seule fois.
+export const spoken = word => [...new Map(word.replace(/\s*\([^)]*\)/g, '').replace(/…|\.{2,}/g, ' ').split(/\s\/\s/).map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean).map(x => [x.toLowerCase(), x])).values()].join(', ');
+
+// Nom de fichier sûr pour un lien : minuscules, sans accent, chiffres et tirets (« Week-end à Londres » → « week-end-a-londres »).
+export const slug = text => noAcc(String(text).toLowerCase()).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
