@@ -1,5 +1,5 @@
 // Éléfiches — lecture des paquets de fiches (CSV) et modèle de données.
-import { norm, noAcc, heads, clozes } from './match.js';
+import { norm, noAcc, heads, clozes, unmark } from './match.js';
 
 export function hash(s) {
   let h = 5381;
@@ -41,6 +41,8 @@ const COLUMNS = [
   [/^(register|registre|registro)$/, 'register'],
   [/^(family|famille|familia)$/, 'family'],
   [/^(pos|nature|catégorie grammaticale)$/, 'pos'],
+  [/^(situation|contexte|context|situación|situacion)$/, 'situation'],
+  [/^(distracteurs?|distractors?|distractores?|mots pi[eè]ges?|pi[eè]ges?)$/, 'distractors'],
 ];
 
 // « Traduction FR », « Translation (EN) », « Trad. español »… : une colonne par langue de traduction.
@@ -57,6 +59,7 @@ export function safeUrl(u) {
 
 // Niveau du paquet (A1 à C2) : il décide de la langue des consignes et du feedback.
 export const LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+export const levelIn = name => (String(name).toUpperCase().match(/(?<![A-Z0-9])([ABC][12])(?![A-Z0-9])/) || [])[1] || '';
 export const guessLevel = name => (String(name).toUpperCase().match(/(?<![A-Z0-9])([ABC][12])(?![A-Z0-9])/) || [])[1] || 'A2';
 
 export function deckFromCSV(text, name, lang = 'fr', level) {
@@ -79,6 +82,7 @@ export function deckFromCSV(text, name, lang = 'fr', level) {
       if (col === 'example') c.examples.push(v);
       else if (col.startsWith('tr:')) c.translations[col.slice(3)] = v;
       else if (col === 'image' || col === 'audio') { const u = safeUrl(v); if (u) c[col] = u; }
+      else if (col === 'distractors') c.distractors = v.split('|').map(x => x.trim()).filter(Boolean);
       else if (col.startsWith('extra:')) c.extra[col.slice(6)] = v;
       else c[col] = v;
     });
@@ -95,12 +99,13 @@ export function deckFromCSV(text, name, lang = 'fr', level) {
     cards.push(c);
   }
   if (cards.length < 3) throw new Error('too-few');
-  return prepare({ id: 'd' + hash(norm(name)), name, lang, level: LEVELS.includes(level) ? level : guessLevel(name), cards, skipped, fields: [...new Set(cols)] });
+  return prepare({ id: 'd' + hash(norm(name)), name, lang, level: LEVELS.includes(level) ? level : '', cards, skipped, fields: [...new Set(cols)] });
 }
 
 // Calcule ce qui se déduit des fiches : phrases à trous et fiches « voisines » (sens proche).
 export function prepare(deck) {
-  if (!LEVELS.includes(deck.level)) deck.level = guessLevel(deck.name);
+  // Niveau absent : on le lit dans le nom (« Logement (A2) ») ; sinon A2 par défaut, et l'import demande de le choisir.
+  if (!LEVELS.includes(deck.level)) { deck.levelGuessed = !levelIn(deck.name); deck.level = guessLevel(deck.name); }
   const tokSet = s => new Set(noAcc(norm(s || '')).split(/[^\p{L}\p{N}]+/u).filter(Boolean));
   const info = deck.cards.map(c => ({
     heads: heads(c.word).map(noAcc).filter(h => !h.includes(' ') && h.length >= 4),
@@ -109,6 +114,11 @@ export function prepare(deck) {
   deck.cards.forEach((c, i) => {
     c.translations ??= c.translation ? { '*': c.translation } : {};
     c.examples ??= [];
+    // Mot marqué entre crochets dans un exemple : on retient sa place et on retire les crochets.
+    if (c.examples.some(e => /\[[^\]]+\]/.test(e))) { const u = c.examples.map(unmark); c.examples = u.map(x => x[0]); c.marks = u.map(x => x[1]); }
+    else if (c.marks && c.marks.length !== c.examples.length) delete c.marks;
+    // « P1-3 » : le dessin de cette fiche est la case 3 de la planche 1, découpée à l'import des planches.
+    if (/^P\d+-\d+$/i.test(c.image || '')) { c.sheet = c.image.toUpperCase(); delete c.image; }
     // « Au (siècle) » : la glose entre parenthèses aide l'enseignant, mais donnerait la réponse dans une question.
     c.bare = c.word.replace(/\s\([^)]*\)/g, '').trim() || c.word;
     c.key = noAcc(norm(c.bare));
@@ -129,6 +139,7 @@ export function prepare(deck) {
   for (const c of deck.cards) seen.set(c.key, (seen.get(c.key) || 0) + 1);
   deck.homographs = new Set([...seen].filter(([, n]) => n > 1).map(([k]) => k));   // deux fiches « En »
   deck.helpLangs = [...new Set(deck.cards.flatMap(c => Object.keys(c.translations)))];
+  if (!/^\d+x\d+$/.test(deck.grid || '')) deck.grid = '3x3';        // cases d'une planche d'images : colonnes x rangées
   deck.byId = Object.fromEntries(deck.cards.map(c => [c.id, c]));
   return deck;
 }
@@ -136,7 +147,7 @@ export function prepare(deck) {
 // Forme enregistrable d'un paquet (sans les champs calculés).
 export function serialize(deck) {
   return {
-    id: deck.id, name: deck.name, lang: deck.lang, level: deck.level, fields: deck.fields, demo: deck.demo,
+    id: deck.id, name: deck.name, lang: deck.lang, level: deck.level, grid: deck.grid, fields: deck.fields, demo: deck.demo,
     cards: deck.cards.map(({ clozes, neighbours, bare, key, ...c }) => c),   // helpLangs et byId sont recalculés
   };
 }
@@ -145,35 +156,57 @@ export function serialize(deck) {
 export function deckToJSON(deck) {
   return JSON.stringify({ elefiches: 1, ...serialize(deck) }, null, 1);
 }
-export function deckFromJSON(text, name) {
-  const d = JSON.parse(text);
+// Une IA entoure souvent le paquet d'un bloc de code ou d'une phrase : on ne garde que l'objet JSON.
+export const looksJSON = text => /^\s*(```\w*\s*)?\{/.test(text);
+// Si l'IA a répondu en plusieurs fois, plusieurs blocs peuvent être collés à la suite : leurs fiches sont réunies.
+function jsonBlocks(text) {
+  const out = []; let depth = 0, start = -1, str = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (str) { if (ch === '\\') i++; else if (ch === '"') str = false; continue; }
+    if (ch === '"' && depth) str = true;
+    else if (ch === '{') { if (!depth++) start = i; }
+    else if (ch === '}' && depth && !--depth) out.push(text.slice(start, i + 1));
+  }
+  return out;
+}
+export function deckFromJSON(text, name, level) {
+  let d = null;
+  for (const block of jsonBlocks(String(text))) {
+    let x; try { x = JSON.parse(block); } catch { continue; }
+    if (!x || !Array.isArray(x.cards)) continue;
+    if (d) d.cards.push(...x.cards); else d = x;
+  }
+  if (!d) throw new Error('bad-json');
   if (!d || !Array.isArray(d.cards)) throw new Error('empty');
   const str = v => (typeof v === 'string' ? v : '');
-  const cards = d.cards.filter(c => c && str(c.word)).map((c, i) => ({
-    id: str(c.id) || hash(c.word + '|' + i), word: str(c.word), definition: str(c.definition) || undefined,
+  const cards = d.cards.filter(c => c && str(c.word)).map(c => ({
+    id: str(c.id) || hash(c.word + '|' + (str(c.definition) || Object.values(c.translations || {}).find(str) || '')), word: str(c.word), definition: str(c.definition) || undefined,
     translations: Object.fromEntries(Object.entries(c.translations || {}).filter(([, v]) => str(v))),
     examples: (Array.isArray(c.examples) ? c.examples : []).filter(str), theme: str(c.theme) || undefined, register: str(c.register) || undefined,
     family: str(c.family) || undefined, ipa: str(c.ipa) || undefined, image: safeUrl(c.image) || undefined, audio: safeUrl(c.audio) || undefined, extra: {},
+    sheet: /^P\d+-\d+$/i.test(str(c.sheet)) ? c.sheet : undefined, pos: str(c.pos) || undefined,
+    marks: Array.isArray(c.marks) ? c.marks.map(m => (Array.isArray(m) && m.length === 2 ? [+m[0], +m[1]] : null)) : undefined, situation: str(c.situation) || undefined, distractors: (Array.isArray(c.distractors) ? c.distractors : []).filter(str),
   })).filter(c => c.definition || Object.keys(c.translations).length);
   if (cards.length < 3) throw new Error('too-few');
   const nm = name || str(d.name) || 'Paquet';
-  return prepare({ id: 'd' + hash(norm(nm)), name: nm, lang: str(d.lang) || 'fr', level: str(d.level), cards, skipped: d.cards.length - cards.length, fields: d.fields || [] });
+  return prepare({ id: 'd' + hash(norm(nm)), name: nm, lang: str(d.lang) || 'fr', level: LEVELS.includes(level) ? level : str(d.level).toUpperCase(), grid: str(d.grid), cards, skipped: d.cards.length - cards.length, fields: d.fields || [] });
 }
 
 // Paquet de démonstration, écrit pour Éléfiches.
-export const DEMO_CSV = `Word;Definition;Example 1;Example 2;Category;Family
-Un café;Boisson chaude et noire, préparée avec des grains torréfiés.;Je prends un café le matin.;Elle boit son café sans sucre.;Au café · Registre courant;
-Un thé;Boisson chaude préparée avec des feuilles infusées dans l'eau.;Il commande un thé au citron.;Nous buvons du thé l'après-midi.;Au café · Registre courant;
-Commander;Demander un plat ou une boisson dans un café ou un restaurant.;Je voudrais commander un sandwich.;Ils commandent deux jus d'orange.;Au café · Registre courant;
-L'addition;Papier qui indique le prix total à payer au restaurant ou au café.;L'addition, s'il vous plaît !;Le serveur apporte l'addition.;Au café · Registre courant;addition
-La note;Autre mot pour le papier qui indique le prix à payer, au café ou à l'hôtel.;Je demande la note avant de partir.;La note est de douze euros.;Au café · Registre courant;addition
-Un serveur / une serveuse;Personne qui apporte les plats et les boissons aux clients.;La serveuse arrive avec les boissons.;Le serveur est très aimable.;Au café · Registre courant;
-Un pourboire;Petite somme d'argent laissée en plus pour remercier du service.;Nous laissons un pourboire sur la table.;Elle donne un pourboire de deux euros.;Au café · Registre courant;
-Payer;Donner de l'argent pour un produit ou un service.;Je peux payer par carte ?;Vous pouvez payer à la caisse.;Au café · Registre courant;
-Avoir soif;Avoir envie ou besoin de boire.;J'ai soif, je voudrais de l'eau.;Les enfants ont soif après le match.;Au café · Registre courant;
-Avoir faim;Avoir envie ou besoin de manger.;Tu as faim ? Il y a des croissants.;Nous avons faim à midi.;Au café · Registre courant;
-Cher / chère;Qui coûte beaucoup d'argent.;Ce restaurant est trop cher.;La limonade est chère ici.;Au café · Registre courant;
-Une terrasse;Partie d'un café située dehors, avec des tables et des chaises.;Nous nous installons en terrasse.;La terrasse est pleine en été.;Au café · Registre courant;
+export const DEMO_CSV = `Word;Definition;Example 1;Example 2;Category;Family;Situation;Distracteurs
+Un café;Boisson chaude et noire, préparée avec des grains torréfiés.;Je prends un café le matin.;Elle boit son café sans sucre.;Au café · Registre courant;;Le matin, tu as besoin de te réveiller avant le cours.;lait|chocolat
+Un thé;Boisson chaude préparée avec des feuilles infusées dans l'eau.;Il commande un thé au citron.;Nous buvons du thé l'après-midi.;Au café · Registre courant;;Ton ami n'aime pas le café. Que fait-il ?;sirop|gâteau
+Commander;Demander un plat ou une boisson dans un café ou un restaurant.;Je voudrais commander un sandwich.;Ils commandent deux jus d'orange.;Au café · Registre courant;;Le serveur arrive à ta table et attend.;manger|préparer
+L'addition;Papier qui indique le prix total à payer au restaurant ou au café.;L'addition, s'il vous plaît !;Le serveur apporte l'addition.;Au café · Registre courant;addition;Tu as fini de manger et tu veux payer.;
+La note;Autre mot pour le papier qui indique le prix à payer, au café ou à l'hôtel.;Je demande la note avant de partir.;La note est de douze euros.;Au café · Registre courant;addition;Tu quittes l'hôtel et tu veux savoir combien tu dois.;carte|clé
+Un serveur / une serveuse;Personne qui apporte les plats et les boissons aux clients.;La serveuse arrive avec les boissons.;Le serveur est très aimable.;Au café · Registre courant;;Vous attendez vos boissons. Qui arrive ?;cliente|voisine
+Un pourboire;Petite somme d'argent laissée en plus pour remercier du service.;Nous laissons un pourboire sur la table.;Elle donne un pourboire de deux euros.;Au café · Registre courant;;Le service était très bien et vous voulez dire merci.;billet|message
+Payer;Donner de l'argent pour un produit ou un service.;Je peux payer par carte ?;Vous pouvez payer à la caisse.;Au café · Registre courant;;Tu n'as pas d'argent liquide sur toi.;commander|réserver
+Avoir soif;Avoir envie ou besoin de boire.;J'ai soif, je voudrais de l'eau.;Les enfants ont soif après le match.;Au café · Registre courant;;Il fait très chaud et tu n'as rien bu depuis ce matin.;chaud|sommeil
+Avoir faim;Avoir envie ou besoin de manger.;Tu as faim ? Il y a des croissants.;Nous avons faim à midi.;Au café · Registre courant;;Ton amie n'a rien mangé ce matin. Tu lui proposes quelque chose.;froid|peur
+Cher / chère;Qui coûte beaucoup d'argent.;Ce restaurant est trop cher.;La limonade est chère ici.;Au café · Registre courant;;Tu regardes les prix sur la carte et tu préfères partir.;loin|petit
+Une terrasse;Partie d'un café située dehors, avec des tables et des chaises.;Nous nous installons en terrasse.;La terrasse est pleine en été.;Au café · Registre courant;;Il fait beau et vous voulez boire un verre dehors.;cuisine|ville
 `;
 
 // Illustrations du paquet de démonstration, dessinées pour Éléfiches.

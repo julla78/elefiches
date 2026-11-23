@@ -7,35 +7,83 @@ from PIL import Image
 png = out + '/_test.png'; Image.new('RGB', (1200, 800), (255, 122, 89)).save(png)
 errors = []
 
-def play(page, right=True, shots=None):
-    """Joue une session entière. right=True répond juste quand c'est possible."""
+# Planche de test : neuf cases de couleurs différentes, pour vérifier le découpage.
+COLORS = [(230, 60, 60), (60, 200, 80), (60, 90, 230), (240, 220, 40), (150, 60, 200), (40, 200, 210), (250, 140, 30), (120, 120, 120), (240, 120, 180)]
+sheet = out + '/_planche1.png'; im = Image.new('RGB', (900, 900), (255, 255, 255))
+for i, col in enumerate(COLORS): im.paste(Image.new('RGB', (280, 280), col), (i % 3 * 300 + 10, i // 3 * 300 + 10))
+im.save(sheet)
+import json, zipfile
+PACKET = json.dumps({"elefiches": 1, "name": "Logement (B1)", "lang": "fr", "level": "B1", "cards": [
+    {"word": "Un " + w, "definition": d, "translations": {}, "examples": ["Je paie un [" + w + "] chaque mois ici.", "Le [" + w + "] est sur la table."], "situation": s, "distractors": ["garage", "voisin", "placard"], "theme": "Logement", "register": "courant", "image": im_}
+    for w, d, s, im_ in [("loyer", "Argent payé chaque mois pour habiter un logement.", "On est le premier du mois.", "P1-1"), ("bail", "Contrat entre le propriétaire et la personne qui loue.", "Tu signes un papier avec le propriétaire.", "P1-5"),
+                         ("garant", "Personne qui promet de payer si tu ne peux pas.", "Le propriétaire veut une sécurité.", "P1-9"), ("préavis", "Délai à respecter avant de quitter un logement.", "Tu veux partir dans trois mois.", "")]]}, ensure_ascii=False)
+zpath = out + '/_paquet.zip'
+with zipfile.ZipFile(zpath, 'w', zipfile.ZIP_DEFLATED) as z:
+    z.writestr('paquet.json', PACKET.replace('Logement (B1)', 'Logement zip (B1)')); z.write(sheet, 'planche1.png')
+
+def play(page, right=True, shots=None, near=False):
+    """Joue une session ou un défi en entier. right=True répond juste quand c'est possible."""
     kinds = set()
-    for _ in range(200):
+    def shot(name, full=False):
+        if shots is not None and name not in shots: shots[name] = True; page.screenshot(path=f'{out}/{name}.png', full_page=full)
+    for _ in range(300):
         if page.locator('.done').count():
             return kinds
         if page.locator('.intro').count():
             kinds.add('intro'); page.click('[data-action=next]'); continue
         if page.locator('.feedback').count():
-            if shots is not None and 'win' not in shots and page.locator('.win').count(): shots['win'] = True; page.screenshot(path=f'{out}/win.png', full_page=True)
-            page.click('.feedback [data-action=next]'); continue
-        if page.locator('.option').count():
-            kinds.add('choice')
+            if page.locator('.win').count(): shot('win', True)
+            if page.locator('.explain').count(): shot('explain', True)
+            if page.locator('[data-action=felt]').count():
+                kinds.add('felt'); shot('felt', True); page.click('[data-action=felt][data-v=easy]')
+            else: page.click('.feedback [data-action=next]')
+            continue
+        kind = page.evaluate("window.__elefiches.step.activity.type"); kinds.add(kind)
+        if page.locator('[data-action=reveal]').count():
+            kinds.add('gate'); shot('gate'); assert not page.locator('.option').count(), 'les choix restent cachés avant le rappel de tête'
+            page.click('[data-action=reveal]')
+        if kind == 'order':
+            sol = page.evaluate("window.__elefiches.step.activity.solution")
+            if not right: page.click('[data-action=skip]')
+            else:
+                first = True
+                for text in sol:
+                    c = page.locator('.bank .chunk', has_text=re.compile('^' + re.escape(text) + '$')).first
+                    if first and shots is not None and 'drag' not in shots:      # premier morceau : glissé à la souris
+                        shots['drag'] = True; a = c.bounding_box(); z = page.locator('.line').bounding_box()
+                        page.mouse.move(a['x'] + a['width'] / 2, a['y'] + a['height'] / 2); page.mouse.down()
+                        page.mouse.move(z['x'] + 40, z['y'] + 30, steps=8); page.mouse.up()
+                        assert page.locator('.line .chunk').count() == 1, 'le glisser-déposer doit poser le morceau sur la ligne'
+                    else: c.click()
+                    first = False
+                shot('order'); page.click('[data-action=check-order]')
+        elif kind == 'match':
+            shot('match', True)
+            for pid in page.evaluate("window.__elefiches.step.activity.left.map(p => p.id)"):
+                page.click(f'.tile[data-side=l][data-id="{pid}"]'); page.click(f'.tile[data-side=r][data-id="{pid}"]')
+        elif kind == 'bank':
+            for ans in page.evaluate("window.__elefiches.step.activity.items.map(i => i.answer)"):
+                page.locator('.bank .chunk:not(:disabled)', has_text=re.compile('^' + re.escape(ans) + '$')).first.click()
+            shot('bank', True); page.click('[data-action=check-bank]')
+        elif kind in ('cloze-type', 'situation-type', 'type', 'number'):
+            ans = page.evaluate("(a => a.cloze || a.type === 'number' ? a.answer : a.accepted[0])(window.__elefiches.step.activity)")
+            shot(kind)
+            if near and 'near' not in kinds and len(ans) >= 5:        # une lettre en trop : second essai (B1) ou acceptation corrigée (A1, A2)
+                kinds.add('near'); page.fill('input[name=answer]', ans + 'x'); page.press('input[name=answer]', 'Enter')
+                if page.locator('p.again').count(): kinds.add('second-try'); shot('second_try'); page.fill('input[name=answer]', ans); page.press('input[name=answer]', 'Enter')
+                else: assert 'Accepté' in page.inner_text('.feedback'), page.inner_text('.feedback'); kinds.add('accepted'); shot('accepted', True)
+            else:
+                page.fill('input[name=answer]', ans if right else 'zzzz'); page.press('input[name=answer]', 'Enter')
+        else:
             # la bonne réponse est connue du test via l'état interne exposé par la page
             ans = page.evaluate("window.__elefiches.step.activity.answer")
             opts = page.locator('.option')
             texts = [re.sub(r'^\d\s*', '', opts.nth(i).inner_text()).strip() for i in range(opts.count())]
             assert ans in texts, (ans, texts)
             idx = texts.index(ans) if right else (texts.index(ans) + 1) % len(texts)
-            if shots is not None and 'choice' not in shots: shots['choice'] = True; page.screenshot(path=f'{out}/choice.png')
-            if shots is not None and 'cloze' not in shots and page.locator('.sentence').count(): shots['cloze'] = True; page.screenshot(path=f'{out}/cloze.png')
+            shot(kind)
             opts.nth(idx).click()
-        else:
-            kinds.add('typed')
-            acc = page.evaluate("window.__elefiches.step.activity.accepted[0]")
-            if shots is not None and 'typed' not in shots: shots['typed'] = True; page.screenshot(path=f'{out}/typed.png')
-            page.fill('input[name=answer]', acc if right else 'zzz')
-            page.press('input[name=answer]', 'Enter')
-        assert page.locator('.feedback').count() == 1
+        assert page.locator('.feedback').count() == 1, kind
     raise AssertionError('session sans fin')
 
 with sync_playwright() as p:
@@ -51,7 +99,7 @@ with sync_playwright() as p:
     shots = {}
     k1 = play(page, right=False, shots=shots)
     page.screenshot(path=f'{out}/done.png')
-    assert 'intro' in k1 and 'choice' in k1, k1
+    assert 'intro' in k1 and 'qcm' in k1, k1
     page.click('[data-action=home]')
     assert 'Commencer' in page.inner_text('body'), 'interface en français par défaut'
 
@@ -60,8 +108,16 @@ with sync_playwright() as p:
     assert page.locator('.deck').first.locator('.prairie .ele').count() == 3, 'trois éléphanteaux attendus après la première session'
 
     # espace enseignant : tutoriel, modèles, import du CSV réel
-    page.click('[data-action=teacher]'); page.wait_for_selector('.models')
+    page.click('[data-action=teacher]'); page.wait_for_selector('form[data-builder]')
+    # le prompt n'apparaît qu'une fois le niveau choisi, puis suit ce que l'enseignant décrit
+    assert 'Choisis d’abord le niveau' in page.inner_text('pre[data-prompt=cards]')
+    page.select_option('form[data-builder] select[name=lang]', 'en'); page.select_option('form[data-builder] select[name=level]', 'B2')
+    page.fill('form[data-builder] input[name=topic]', 'Job interviews')
+    pr = page.inner_text('pre[data-prompt=cards]')
+    assert 'niveau B2' in pr and 'Job interviews' in pr and '"lang":"en","level":"B2"' in pr and '"translations":{"fr":""}' in pr, pr[:200]
+    assert page.input_value('form[data-builder] input[name=topic]') == 'Job interviews'
     page.screenshot(path=f'{out}/teacher.png', full_page=True)
+    page.click('details.card.more > summary'); page.wait_for_selector('.models')
     page.locator('[data-action=try][data-model=es]').click(); page.wait_for_selector('.deck')
     assert page.locator('.deck').count() == 2
     page.locator('.deck').nth(1).locator('[data-action=start]').click()
@@ -96,14 +152,40 @@ with sync_playwright() as p:
     assert 'Español A2' in page.inner_text('body'), 'le nouveau nom doit survivre au rechargement'
     st = page.evaluate("(() => { const d = window.__elefiches.state.decks[1]; const c = d.cards.find(x => x.word === 'Madrugar'); return [c.definition, (c.image||'').slice(0,11), d.cards.length, d.cards[4].clozes.length]; })()")
     assert st == ['Levantarse muy pronto.', 'data:image/', 5, 1], st
+    # paquet collé + planche : les dessins sont découpés et posés sur les bonnes fiches
     page.click('[data-action=teacher]')
-    page.fill('form[data-submit=import] input[name=name]', 'A2+ test')
-    page.set_input_files('input[name=file]', csv)
-    page.click('.import button.primary')
-    page.wait_for_selector('.banner.good')
+    page.fill('form[data-submit=import] textarea[name=text]', '```json\n' + PACKET + '\n```\nPlanche 1 : …')
+    page.set_input_files('input[name=files]', sheet)
+    page.click('form[data-submit=import] button.primary'); page.wait_for_selector('.imggrid')
+    page.screenshot(path=f'{out}/images.png', full_page=True)
+    px = page.evaluate("""async () => { const d = window.__elefiches.state.decks.find(x => x.name === 'Logement (B1)'); const out = [];
+      for (const c of d.cards) { if (!c.image) { out.push(null); continue; } const im = new Image(); im.src = c.image; await im.decode();
+        const cv = document.createElement('canvas'); cv.width = im.width; cv.height = im.height; const g = cv.getContext('2d'); g.drawImage(im, 0, 0);
+        out.push([...g.getImageData(im.width >> 1, im.height >> 1, 1, 1).data].slice(0, 3)); } return [d.level, out]; }""")
+    assert px[0] == 'B1' and px[1][3] is None, px
+    for got, want in zip(px[1][:3], [COLORS[0], COLORS[4], COLORS[8]]): assert all(abs(a - b) < 30 for a, b in zip(got, want)), (got, want)
+    page.click('button.primary[data-action=teacher]')
+    # le même paquet dans une archive : un seul fichier à déposer
+    page.set_input_files('input[name=files]', zpath); page.click('form[data-submit=import] button.primary'); page.wait_for_selector('.imggrid')
+    assert page.locator('.imgtile img').count() == 3, 'archive : trois dessins attendus'
+    page.click('button.primary[data-action=teacher]')
+    # image isolée, sans nom reconnaissable : l'enseignant touche le mot qu'elle illustre
+    page.fill('form[data-submit=import] textarea[name=text]', PACKET.replace('Logement (B1)', 'Logement libre (B1)').replace('"P1-', '"'))
+    page.set_input_files('input[name=files]', png); page.click('form[data-submit=import] button.primary'); page.wait_for_selector('.loose')
+    page.locator('.imgtile').nth(1).click(); assert page.locator('.imgtile img').count() == 1 and not page.locator('.loose').count()
+    page.click('button.primary[data-action=teacher]')
+    # fichier CSV : le niveau doit être choisi, il n'est jamais deviné en silence
+    page.click('form[data-submit=import] details summary')
+    page.fill('form[data-submit=import] input[name=name]', 'Sans niveau'); page.set_input_files('input[name=files]', csv)
+    page.click('form[data-submit=import] button.primary'); page.wait_for_selector('.banner.warn')
+    assert 'niveau' in page.inner_text('.banner.warn')
+    page.click('form[data-submit=import] details summary')
+    page.fill('form[data-submit=import] input[name=name]', 'A2+ test'); page.set_input_files('input[name=files]', csv)
+    page.click('form[data-submit=import] button.primary')
+    page.wait_for_selector('.deck')
     print('IMPORT:', page.locator('.banner.good').inner_text())
-    assert page.locator('.deck').count() == 3
-    page.locator('.deck').nth(2).locator('[data-action=start]').click()
+    N = page.locator('.deck').count() - 1; assert N == 5, N
+    page.locator('.deck').nth(N).locator('[data-action=start]').click()
     k2 = play(page, right=True, shots=shots)
     page.screenshot(path=f'{out}/done_win.png')
     assert 'apprivois' in page.inner_text('.done')
@@ -111,25 +193,62 @@ with sync_playwright() as p:
 
     # avance de l'horloge pour faire monter les fiches jusqu'aux activités écrites
     kinds = set()
-    for day in range(1, 30):
+    for day in list(range(1, 30)) + list(range(32, 90, 4)):
         page.evaluate(f"(() => {{ const real = Date.now.bind(Date); const off = {day} * 86400000 * 2; if (!window.__realNow) window.__realNow = real; Date.now = () => window.__realNow() + off; }})()")
         page.evaluate("window.__elefiches.rerender()")
-        btn = page.locator('.deck').nth(2).locator('[data-action=start]')
+        btn = page.locator('.deck').nth(N).locator('[data-action=start]')
         if not btn.count(): continue
         btn.click()
         kinds |= play(page, right=True, shots=shots)
         page.click('[data-action=home]')
     print('ACTIVITÉS VUES:', sorted(kinds))
-    assert 'typed' in kinds
+    for k in ['qcm', 'cloze-choice', 'qcm-rev', 'gate', 'cloze-type', 'order', 'match', 'felt']: assert k in kinds, (k, kinds)
+    # défi d'étape : proposé quand les dix mots sont découverts depuis un jour au moins
+    ch = page.locator('.deck').nth(N).locator('[data-action=challenge]'); assert ch.count() == 1, 'défi attendu'
+    page.screenshot(path=f'{out}/home_challenge.png', full_page=True)
+    ch.click(); kc = play(page, right=True, shots=shots); print('DÉFI:', sorted(kc))
+    assert {'match', 'bank', 'order'} <= kc, kc
+    assert 'relevé' in page.inner_text('.done'); page.screenshot(path=f'{out}/challenge_done.png', full_page=True)
+    page.click('[data-action=home]')
+    assert 'Défi de l’étape 1' not in page.locator('.deck').nth(N).inner_text()
     page.screenshot(path=f'{out}/home_after.png', full_page=True)
-    print('PAQUET A2+:', page.locator('.deck').nth(2).inner_text().replace('\n', ' | ')[:300])
+    print('PAQUET A2+:', page.locator('.deck').nth(N).inner_text().replace('\n', ' | ')[:300])
 
+    # aperçu des exercices : tout se voit en deux minutes, sans rien enregistrer
+    page.click('[data-action=teacher]')
+    before = page.evaluate("JSON.stringify(window.__elefiches.state.progress)")
+    page.locator('.decklist [data-action=tour]').first.click()
+    kt = play(page, right=True, shots=shots, near=True); print('APERÇU A1:', sorted(kt))
+    assert {'qcm', 'cloze-choice', 'qcm-rev', 'gate', 'cloze-type', 'order', 'situation-type', 'type', 'match', 'bank', 'accepted'} <= kt and 'felt' not in kt, kt
+    assert 'tous les exercices' in page.inner_text('.done'); page.screenshot(path=f'{out}/tour_done.png')
+    assert page.evaluate("JSON.stringify(window.__elefiches.state.progress)") == before, 'l’aperçu ne doit rien enregistrer'
+    page.click('.done [data-action=teacher]')
+    i_b1 = page.evaluate("window.__elefiches.state.decks.findIndex(d => d.name === 'Logement (B1)')")
+    page.locator('.decklist [data-action=tour]').nth(i_b1).click()
+    kb = play(page, right=True, near=True); assert 'second-try' in kb, kb
+    page.click('.done [data-action=home]')
+    # « Coup de chance » : la bonne réponse n'est pas comptée, le mot revient
+    page.locator('.deck').nth(i_b1).locator('[data-action=start]').click()
+    for _ in range(3): page.click('[data-action=next]')
+    assert page.evaluate("window.__elefiches.step.activity.options.length") == 4, 'B1 : quatre options'
+    ans = page.evaluate("window.__elefiches.step.activity.answer"); cid = page.evaluate("window.__elefiches.step.card.id")
+    page.locator('.option', has_text=ans).click(); page.screenshot(path=f'{out}/felt.png', full_page=True)
+    assert page.locator('[data-action=felt]').count() == 3
+    page.click('[data-action=felt][data-v=lucky]')
+    st = page.evaluate(f"(s => [s.session.progress['{cid}'].box, !!s.session.progress['{cid}'].fsrs, s.session.queue.some(i => i.id === '{cid}' && i.retry)])(window.__elefiches.state)")
+    assert st == [1, True, True], st
+    page.click('[data-action=quit]')
+
+    # règles du jeu et troupeau complet
+    page.click('[data-action=rules]'); page.wait_for_selector('.agelist'); page.screenshot(path=f'{out}/rules.png', full_page=True)
+    page.click('[data-action=home]'); page.locator('.deck').nth(N).locator('[data-action=herd]').click(); page.wait_for_selector('.herdlist')
+    page.screenshot(path=f'{out}/herd.png', full_page=True); page.click('[data-action=home]')
     # langue de l'interface
     page.click('details.settings summary'); page.click('[data-action=set][data-key=lang][data-value=en]')
-    assert 'your herd' in page.inner_text('body').lower()
+    assert 'my herd' in page.inner_text('body').lower()
     # règle de niveau : en mode Auto, un paquet B2 d'anglais donne des consignes en anglais, un paquet A2 en français
     page.click('[data-action=set][data-key=lang][data-value=auto]')
-    page.click('[data-action=teacher]'); page.locator('[data-action=try][data-model=en]').click(); page.wait_for_selector('.deck')
+    page.click('[data-action=teacher]'); page.click('details.card.more > summary'); page.locator('[data-action=try][data-model=en]').click(); page.wait_for_selector('.deck')
     n = page.locator('.deck').count()
     page.locator('.deck').nth(n - 1).locator('[data-action=start]').click(); page.wait_for_selector('.intro')
     assert 'nouveau mot' in page.inner_text('.intro').lower(), 'B1 : français attendu'
@@ -141,6 +260,23 @@ with sync_playwright() as p:
     page.screenshot(path=f'{out}/b2_en.png')
     page.click('[data-action=quit]')
     assert page.evaluate("document.documentElement.lang") == 'fr'
+    # paquet reçu : par un lien (« ?paquet=… ») ou par un fichier ouvert depuis l'accueil, sur un appareil neuf
+    import os
+    pk = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'paquets'); os.makedirs(pk, exist_ok=True)
+    with open(os.path.join(pk, '_test.json'), 'w', encoding='utf-8') as f: f.write(PACKET)
+    try:
+        ctx = b.new_context(viewport={'width': 420, 'height': 860}); p2 = ctx.new_page()
+        p2.on('pageerror', lambda e: errors.append(str(e)))
+        p2.goto(url + '?paquet=_test'); p2.wait_for_selector('.deck')
+        assert p2.locator('.deck').count() == 1 and 'Logement (B1)' in p2.inner_text('.deck') and 'est prêt' in p2.inner_text('.banner.good'), p2.inner_text('body')[:300]
+        assert '?' not in p2.url
+        p2.screenshot(path=f'{out}/student_link.png', full_page=True)
+        p2.set_input_files('input[data-file=packet]', zpath); p2.wait_for_function("document.querySelectorAll('.deck').length === 2")
+        assert p2.locator('.deck').nth(1).locator('.prairie').count() == 1
+        p2.goto(url + '?paquet=absent'); p2.wait_for_selector('.banner.warn'); assert 'lien' in p2.inner_text('.banner.warn')
+        ctx.close()
+    finally:
+        os.remove(os.path.join(pk, '_test.json')); os.rmdir(pk)
     b.close()
 
 print('ERREURS CONSOLE:', errors or 'aucune')

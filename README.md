@@ -3,7 +3,8 @@
 Application web pour mémoriser le vocabulaire d'une langue : répétition espacée, activités variées, et un troupeau d'éléphants qui grandit avec la mémoire.
 
 - Aucun compte, aucun serveur : la progression reste dans le navigateur.
-- Paquets de fiches importés depuis un fichier CSV ou créés dans l'espace enseignant.
+- Toutes les questions se répondent par un choix : aucune saisie, sauf les nombres en chiffres.
+- Paquets de fiches produits par une IA à partir d'un prompt fourni par l'espace enseignant, puis collés ou déposés (texte, fichier `.json`, `.csv` ou archive `.zip` avec ses images).
 - Interface en français, anglais et espagnol.
 
 ## État

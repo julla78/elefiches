@@ -17,7 +17,7 @@ export function review(state, grade, now = Date.now()) {
   const box0 = state?.box ?? 1;
   const box = grade === 'again' ? Math.max(1, box0 - 1) : Math.min(5, box0 + 1);
   return {
-    seen: true, box,
+    seen: true, box, born: state?.born,
     fsrs: { ...card, due: card.due.getTime(), last_review: card.last_review ? card.last_review.getTime() : now },
     lastOk: grade !== 'again',
   };
@@ -40,7 +40,7 @@ export function stageOf(deck, progress) {
     if (deck.cards.slice(a, b).some(c => isNew(progress[c.id]))) { index = i; allSeen = false; break; }
   }
   const [a, b] = bounds(index), cards = deck.cards.slice(a, b);
-  return { index: index + 1, count, size: cards.length, seen: cards.filter(c => !isNew(progress[c.id])).length, allSeen };
+  return { index: index + 1, count, size: cards.length, seen: cards.filter(c => !isNew(progress[c.id])).length, allSeen, bounds: Array.from({ length: count }, (_, i) => bounds(i)) };
 }
 
 // Résumé d'un paquet pour l'écran d'accueil.

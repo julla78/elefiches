@@ -51,7 +51,7 @@ function lev1(a, b) {                       // vrai si la distance d'édition va
 
 // Compare une réponse écrite aux formes acceptées.
 // ok:true + note 'accent' ou 'article' : accepté et signalé, comme décidé au cahier des charges.
-export function check(input, accepted) {
+export function check(input, accepted, minNear = 5) {
   const a = norm(input);
   if (!a) return { ok: false, empty: true };
   const acc = accepted.map(norm);
@@ -60,7 +60,7 @@ export function check(input, accepted) {
   if (acc.some(v => noAcc(v) === a2)) return { ok: true, note: 'accent' };
   const a3 = noArt(a2);
   if (acc.some(v => noArt(noAcc(v)) === a3)) return { ok: true, note: a2 === a ? 'article' : 'accent' };
-  if (acc.some(v => v.length >= 5 && lev1(noAcc(v), a2))) return { ok: false, near: true };
+  if (acc.some(v => v.length >= minNear && lev1(noAcc(v), a2))) return { ok: false, near: true };
   return { ok: false };
 }
 
@@ -145,17 +145,27 @@ export function findSpans(sentence, word) {
 }
 
 // Toutes les phrases à trous possibles pour une fiche.
+// Si le paquet a marqué le mot dans l'exemple (« Mon dossier [stood out] parmi… »), cette marque fait foi :
+// aucune devinette sur les formes conjuguées ou irrégulières. Sinon, le mot est cherché dans la phrase.
 export function clozes(card) {
   const out = [];
-  for (const ex of card.examples || []) {
+  (card.examples || []).forEach((ex, i) => {
+    const s = ex.replace(/[’`´]/g, "'"), m = card.marks?.[i];
+    if (m && m[1] > m[0] && m[1] <= s.length) { out.push({ text: s, spans: [{ start: m[0], end: m[1] }], answer: s.slice(m[0], m[1]), multi: false, n: s.slice(m[0], m[1]).trim().split(/\s+/).length }); return; }
     const f = findSpans(ex, card.word);
-    if (!f) continue;
-    const s = ex.replace(/[’`´]/g, "'");
+    if (!f) return;
     const answer = f.spans.map(sp => s.slice(sp.start, sp.end)).join(' … ');
     out.push({ text: s, spans: f.spans, answer, multi: f.multi, n: f.n });
-  }
+  });
   return out;
 }
+// Retire les crochets d'un exemple et renvoie la place du mot marqué : « Je paie un [loyer]. » → ['Je paie un loyer.', [11, 16]].
+export function unmark(ex) {
+  const m = ex.match(/\[([^\]]+)\]/);
+  return m ? [ex.replace(/[\[\]]/g, ''), [m.index, m.index + m[1].length]] : [ex.replace(/[\[\]]/g, ''), null];
+}
+// Remet les crochets, pour l'éditeur et l'export.
+export const remark = (ex, m) => (m ? ex.slice(0, m[0]) + '[' + ex.slice(m[0], m[1]) + ']' + ex.slice(m[1]) : ex);
 
 // Découpe une phrase à trous en morceaux affichables : [{text}|{blank:true}]
 export function clozeParts(cl) {
@@ -167,4 +177,13 @@ export function clozeParts(cl) {
   }
   if (pos < cl.text.length) parts.push({ text: cl.text.slice(pos) });
   return parts;
+}
+
+// Met en évidence, dans la bonne orthographe, l'endroit où la réponse écrite s'en écartait.
+export function diffParts(right, wrong) {
+  let a = 0; while (a < right.length && a < wrong.length && right[a] === wrong[a]) a++;
+  let b = 0; while (b < right.length - a && b < wrong.length - a && right[right.length - 1 - b] === wrong[wrong.length - 1 - b]) b++;
+  let from = a, to = right.length - b;
+  if (to <= from) { from = Math.max(0, from - 1); to = Math.min(right.length, to + 1); }   // lettre en trop : on montre l'endroit
+  return [right.slice(0, from), right.slice(from, to), right.slice(to)];
 }

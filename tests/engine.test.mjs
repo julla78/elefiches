@@ -5,7 +5,13 @@ import { check, variants, findSpans, clozes, clozeParts } from '../js/match.js';
 import { parseCSV, deckFromCSV, DEMO_CSV, serialize, prepare, demoDeck, MODELS, safeUrl, deckToJSON, deckFromJSON } from '../js/deck.js';
 import { review, isDue, inHerd, summary, stageOf } from '../js/scheduler.js';
 import { guessLevel } from '../js/deck.js';
-import { Session, pickNew, buildActivity, meaning, gloss } from '../js/session.js';
+import { Session, Challenge, Tour, pickNew, buildActivity, meaning, gloss, chunks, judge, hintOf } from '../js/session.js';
+import { diffParts } from '../js/match.js';
+import { SPEC, WRITING } from '../js/levels.js';
+import { unzip } from '../js/zip.js';
+import { buildPrompts } from '../js/prompts.js';
+import { levelIn, looksJSON } from '../js/deck.js';
+import { execFileSync } from 'node:child_process';
 
 let n = 0; const t = (name, fn) => { fn(); n++; };
 const surf = (s, w) => { const f = findSpans(s, w); return f && f.spans.map(p => s.slice(p.start, p.end)).join('|'); };
@@ -86,17 +92,133 @@ t('pickNew sépare les familles', () => {
   p[add.id] = { seen: true, box: 3 };
   assert.ok(pickNew(demo, p, 12).some(c => c.word === 'La note'));
 });
-t('activités', () => {
+t('activités : une forme par boîte, du choix à la réponse écrite', () => {
   let seed = 1; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const want = { 1: 'qcm', 2: 'qcm-rev', 3: 'cloze-type', 4: 'order', 5: 'situation-type' };
   for (const c of demo.cards) for (let box = 1; box <= 5; box++) for (let k = 0; k < 5; k++) {
     const a = buildActivity(demo, c, box, rnd);
+    assert.equal(a.type, want[box], c.word);
     if (a.options) {
       assert.equal(a.options.length, 3, c.word + ' ' + a.type);
       assert.equal(new Set(a.options).size, 3);
       assert.ok(a.options.includes(a.answer));
-    } else for (const v of a.accepted) assert.ok(check(v, a.accepted).ok, c.word);
-    if (box >= 4) assert.equal(a.recognition, false);
+    } else if (a.accepted) {
+      assert.ok(judge(a.answer, a, demo).ok, c.word); assert.equal(a.hint, hintOf(a.answer, 'first'), 'A2 : première lettre');
+    }
+    if (a.type === 'order') {
+      assert.equal(a.solution.join(' '), a.answer); assert.notEqual(a.chunks.map(x => x.text).join(' '), a.answer);
+      assert.ok(a.chunks.length >= 3 && a.chunks.length <= 4, 'niveau A : quatre morceaux au plus');
+    }
+    if (a.type === 'situation-type') { assert.equal(a.cloze.text, c.examples[0].replace(/’/g, "'")); assert.equal(a.situation, c.situation); }
+    assert.equal(a.gated, box === 2, 'rappel de tête avant les choix en boîte 2');
   }
+  const b1 = deckFromCSV(DEMO_CSV, 'Démo', 'fr', 'B1');
+  assert.equal(buildActivity(b1, b1.cards[0], 1, rnd).options.length, 4, 'quatre options à partir de B1');
+  assert.ok(buildActivity(b1, b1.cards[0], 4, rnd).chunks.length > 4, 'morceaux plus petits à partir de B1');
+  assert.equal(buildActivity(b1, b1.cards[0], 3, rnd).hint, '', 'pas d’aide à l’écriture à partir de B1');
+  // Mots pièges écrits pour le premier exemple : ce sont eux les leurres ; le paquet ne complète que s'il en manque.
+  const cafe = demo.cards[0], own = cafe.distractors;
+  assert.deepEqual(own, ['lait', 'chocolat']);
+  for (let k = 0; k < 10; k++) {
+    const a = buildActivity(demo, cafe, 1, rnd, { force: 'cloze-choice' });
+    assert.equal(a.cloze.text, cafe.examples[0]); assert.equal(a.options.filter(o => own.includes(o)).length, 2, 'les mots pièges de la fiche servent de leurres'); assert.equal(a.options.length, 3);
+    const b = buildActivity(b1, b1.cards[0], 1, rnd, { force: 'cloze-choice' });
+    assert.equal(b.options.filter(o => own.includes(o)).length, 2); assert.equal(b.options.length, 4);
+  }
+  // Rattrapage : la bonne réponse face à l'erreur commise, sans rappel de tête.
+  const r2 = buildActivity(demo, cafe, 1, rnd, { force: 'qcm', contrast: { text: meaning(demo.cards[1]), id: demo.cards[1].id } });
+  assert.equal(r2.options.length, 2); assert.equal(r2.from[meaning(demo.cards[1])], demo.cards[1].id); assert.equal(r2.gated, false);
+  // Rattrapage d'une réponse écrite : aide maximale, quel que soit le niveau.
+  assert.equal(buildActivity(b1, b1.cards[0], 3, rnd, { force: 'cloze-type', help: true }).hint, 'c _ _ _');
+  // Sans exemple ni situation, l'échelle se replie sur une forme possible.
+  const bare = prepare({ id: 'b', name: 'b (A2)', lang: 'fr', cards: ['chat', 'chien', 'oiseau', 'poisson'].map((w, i) => ({ id: 'x' + i, word: 'Un ' + w, definition: 'animal numéro ' + i, examples: [] })) });
+  assert.equal(buildActivity(bare, bare.cards[2], 3, rnd).type, 'type'); assert.equal(buildActivity(bare, bare.cards[2], 3, rnd).hint, 'u…');
+  assert.equal(buildActivity(bare, bare.cards[2], 4, rnd).type, 'type');
+  const nums = prepare({ id: 'n', name: 'n (A1)', lang: 'fr', cards: [['quatre-vingt-douze', '92'], ['soixante-dix', '70'], ['seize', '16']].map(([w, d], i) => ({ id: 'n' + i, word: w, definition: d, examples: [] })) });
+  const num = buildActivity(nums, nums.cards[0], 3, rnd); assert.equal(num.type, 'number');
+  assert.ok(judge(' 92 ', num, nums).ok); assert.ok(!judge('93', num, nums).ok); assert.ok(judge('', num, nums).empty);
+});
+t('réponse écrite : tolérance réglée par le niveau du CECRL', () => {
+  const act = { type: 'cloze-type', answer: 'terrasse', accepted: ['terrasse'], lemmas: ['une terrasse'] }, acc = { type: 'cloze-type', answer: 'café', accepted: ['café'], lemmas: ['un café'] };
+  const at = lv => ({ level: lv });
+  // A1 et A2 : une lettre d'écart est acceptée et corrigée ; l'accent oublié aussi.
+  assert.deepEqual(judge('terasse', act, at('A1')), { ok: true, note: 'near' }); assert.deepEqual(judge('caffé', acc, at('A2')), { ok: true, note: 'near' });
+  assert.equal(judge('cafe', acc, at('A2')).note, 'accent'); assert.ok(!judge('tarase', act, at('A1')).ok);
+  // B1 et B2 : accent accepté et signalé ; une lettre d'écart donne droit à un second essai, puis compte comme une erreur.
+  assert.equal(judge('cafe', acc, at('B1')).note, 'accent'); assert.deepEqual(judge('terasse', act, at('B2')), { retry: true, accent: false });
+  assert.deepEqual(judge('terasse', act, at('B2'), true), { ok: false, near: true }); assert.ok(judge('terrasse', act, at('B2'), true).ok);
+  // C1 et C2 : orthographe exacte, accents compris.
+  assert.deepEqual(judge('cafe', acc, at('C1')), { retry: true, accent: true }); assert.deepEqual(judge('cafe', acc, at('C2'), true), { ok: false, near: true });
+  assert.ok(judge('Café ', acc, at('C2')).ok);
+  // La forme de base à la place de la forme de la phrase est acceptée et signalée, à tous les niveaux.
+  assert.equal(judge('une terrasse', act, at('C1')).note, 'article'); assert.ok(judge('', act, at('B1')).empty);
+  assert.equal(judge('bosser', { type: 'cloze-type', answer: 'bosse', accepted: ['bosse'], lemmas: ['bosser'] }, at('B1')).note, 'form');
+  assert.equal(hintOf('café', 'pattern'), 'c _ _ _'); assert.equal(hintOf('il y a', 'pattern'), 'i _   _   _'); assert.equal(hintOf('café', 'first'), 'c…'); assert.equal(hintOf('café', ''), '');
+  for (const lv of ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']) { assert.ok(SPEC[lv].options >= 3); for (const k of ['words', 'def', 'ex', 'traps']) assert.ok(WRITING[lv][k].length > 20); }
+  assert.deepEqual(diffParts('terrasse', 'terasse'), ['ter', 'r', 'asse']);
+  assert.deepEqual(chunks('Tu as faim ? Il y a des croissants.', 4), ['Tu as', 'faim ? Il', 'y a', 'des croissants.']);
+  assert.equal(chunks('Oui merci', 4), null);
+});
+t('session : difficulté ressentie, récapitulatif du jour, aperçu', () => {
+  const now = Date.UTC(2026, 0, 1), P = {}; const s = new Session(demo, P, { now });
+  let step, last = null; const kinds = [];
+  while ((step = s.next(now))) { if (step.intro) continue; kinds.push(step.activity.type); last = step; s.answer(step, true, now, { hesitated: step.item.bonus }); }
+  assert.equal(kinds.at(-1), 'match', 'la session se termine par un tableau des mots du jour'); assert.equal(last.activity.left.length, 3);
+  for (const id of s.today) assert.equal(P[id].box, 2);
+  const P2 = {}, s2 = new Session(demo, P2, { now }); while ((step = s2.next(now))) if (!step.intro) s2.answer(step, true, now);
+  const mean = (Q, ids) => ids.reduce((x, id) => x + Q[id].fsrs.due, 0) / ids.length;
+  assert.ok(mean(P2, s2.today) > mean(P, s.today), '« Facile » espace davantage que « J’ai hésité »');
+  const tour = new Tour(demo, {}); const seen = []; while ((step = tour.next())) { seen.push(step.activity.type); tour.answer(step, true); }
+  assert.deepEqual(seen, ['qcm', 'cloze-choice', 'qcm-rev', 'cloze-type', 'order', 'situation-type', 'type', 'match', 'bank']);
+});
+t("défi d'étape : associer, compléter, employer ; aucune fiche ne bouge", () => {
+  let seed = 5; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const P = Object.fromEntries(demo.cards.map(c => [c.id, { seen: true, box: 2 }])), before = JSON.stringify(P);
+  const ch = new Challenge(demo, P, demo.cards.slice(0, 10), { rnd }); const kinds = []; let step;
+  while ((step = ch.next())) {
+    const a = step.activity; kinds.push(a.type);
+    if (a.type === 'match') { assert.equal(a.left.length, 5); assert.deepEqual(a.left.map(p => p.id).sort(), a.right.map(p => p.id).sort()); }
+    if (a.type === 'bank') { assert.equal(a.items.length, 4); assert.equal(a.bank.length, 6); for (const it of a.items) assert.ok(a.bank.includes(it.answer)); assert.equal(new Set(a.bank).size, 6); }
+    ch.answer(step, a.type !== 'bank', undefined, a.type === 'bank' ? { missed: [a.items[0].id] } : {});
+  }
+  assert.deepEqual(kinds, ['match', 'match', 'bank', 'situation', 'situation', 'order']);
+  assert.equal(ch.stats.answered, 6); assert.equal(ch.stats.ok, 5); assert.equal(ch.stats.missed.length, 1);
+  assert.equal(JSON.stringify(P), before, 'le défi ne modifie pas la progression');
+});
+t('paquet donné par une IA : bloc de code, planches, niveau', () => {
+  const json = '```json\n{"elefiches":1,"name":"Logement (B1)","lang":"fr","level":"B1","cards":[' + ['loyer', 'bail', 'caution'].map((w, i) =>
+    `{"word":"Un ${w}","definition":"définition ${i}","translations":{},"examples":["Je paie un ${w} ici.","Le ${w} est signé."],"situation":"situation ${i}","distractors":["a${i}","b${i}"],"image":"${i ? '' : 'p1-3'}"}`).join(',') + ']}\n```\nPlanche 1 : case 3, un loyer…';
+  assert.ok(looksJSON(json)); assert.ok(!looksJSON('Word;Definition'));
+  const d = deckFromJSON(json);
+  assert.equal(d.level, 'B1'); assert.equal(d.cards.length, 3); assert.equal(d.cards[0].sheet, 'P1-3'); assert.ok(!d.cards[0].image);
+  assert.equal(d.cards[1].situation, 'situation 1'); assert.deepEqual(d.cards[2].distractors, ['a2', 'b2']); assert.equal(d.grid, '3x3');
+  const back = deckFromJSON(deckToJSON(d)); assert.equal(back.cards[0].sheet, 'P1-3'); assert.equal(back.cards[0].situation, 'situation 0');
+  assert.throws(() => deckFromJSON('{"cards": [oups'), /bad-json/);
+  // Réponse de l'IA coupée en deux blocs : les fiches sont réunies. La grille des planches est lue dans le paquet.
+  const two = deckFromJSON('```json\n{"name":"Deux (A2)","level":"A2","grid":"10x9","cards":[{"word":"Un a","definition":"x {y} \\"z\\""},{"word":"Un b","definition":"y"}]}\n```\nSuite :\n```json\n{"cards":[{"word":"Un c","definition":"z"}]}\n```');
+  const mk = deckFromJSON('{"name":"m (B2)","level":"B2","lang":"en","cards":[{"word":"to stand out","pos":"verbe","definition":"to be noticeable","examples":["My application [stood out] among two hundred.","She always [stands out]."],"distractors":["stood up","showed off","gave in"]},{"word":"an applicant","pos":"nom","definition":"a person who applies","examples":["Every [applicant] waited outside.","No mark here for the applicant."],"distractors":["an employer","a recruiter","the manager"]},{"word":"a flaw","pos":"nom","definition":"a defect","examples":["It is a [flaw]."]}]}');
+  assert.deepEqual(mk.cards[0].examples, ['My application stood out among two hundred.', 'She always stands out.']); assert.deepEqual(mk.cards[0].clozes.map(c => c.answer), ['stood out', 'stands out']);
+  assert.deepEqual(new Set(buildActivity(mk, mk.cards[0], 1, Math.random, { force: 'cloze-choice' }).options), new Set(['stood out', 'stood up', 'showed off', 'gave in']), 'forme irrégulière : la marque fait foi');
+  assert.deepEqual(new Set(buildActivity(mk, mk.cards[1], 1, Math.random, { force: 'cloze-choice' }).options), new Set(['applicant', 'employer', 'recruiter', 'manager']), 'article retiré des mots pièges');
+  assert.equal(mk.cards[1].clozes.length, 2); assert.deepEqual(deckFromJSON(deckToJSON(mk)).cards[0].marks, mk.cards[0].marks);
+  assert.equal(two.cards.length, 3); assert.equal(two.grid, '10x9'); assert.equal(two.cards[0].definition, 'x {y} "z"');
+  assert.equal(deckFromJSON(json).cards[0].id, deckFromJSON(json.replace('"cards":[', '"cards":[{"word":"Un bail neuf","definition":"d"},')).cards[1].id, 'l’identifiant d’une fiche ne dépend pas de sa place');
+  assert.equal(deckFromJSON(json, '', 'C1').level, 'C1', 'le niveau choisi par l’enseignant l’emporte');
+  assert.ok(deckFromCSV(DEMO_CSV, 'Travail').levelGuessed, 'niveau absent : à demander');
+  assert.ok(!deckFromCSV(DEMO_CSV, 'Travail (B1)').levelGuessed); assert.equal(levelIn('Travail (B1)'), 'B1'); assert.equal(levelIn('Travail'), '');
+  const csv = deckFromCSV('Mot;Définition;Exemple 1;Situation;Distracteurs\nUn loyer;a b;Je paie un loyer.;Fin du mois.;bail | garage\nUn bail;c d;Je signe un bail.;;\nUne caution;e f;Je verse une caution.;;', 'x (A2)');
+  assert.equal(csv.cards[0].situation, 'Fin du mois.'); assert.deepEqual(csv.cards[0].distractors, ['bail', 'garage']);
+});
+t('prompts : langue, niveau, traductions, grille', () => {
+  const es = buildPrompts({ lang: 'es', level: 'A2', topic: 'La ciudad', count: 10 });
+  assert.ok(es.cards.includes('Niveau A2 du CECRL')); assert.ok(es.cards.includes('"lang":"es","level":"A2","grid":"3x3"')); assert.ok(es.cards.includes('"translations":{"fr":"","en":""}'));
+  assert.ok(es.cards.includes('une phrase en français, à la deuxième personne'), 'situation en français jusqu’à B1'); assert.ok(es.cards.includes("enseignant d'espagnol"));
+  assert.ok(es.cards.includes(WRITING.A2.ex) && es.cards.includes(WRITING.A2.traps), 'consignes du niveau');
+  const b2 = buildPrompts({ lang: 'en', level: 'B2', topic: 'Work', words: 'a deadline\nto hand in\n', grid: '10x9' });
+  assert.ok(b2.cards.includes('une phrase en anglais, à la deuxième personne')); assert.ok(b2.cards.includes('paquet de 2 fiches')); assert.ok(b2.cards.includes('- to hand in'));
+  assert.ok(b2.cards.includes('"P1-90"') && b2.sheet.includes('10 colonnes et 9 rangées, soit 90 cases')); assert.ok(b2.cards.includes(WRITING.B2.traps));
+  assert.ok(buildPrompts({ lang: 'fr', level: 'A1' }).cards.includes('"translations":{}'));
+  for (const k of ['cards', 'sheet', 'next', 'zip']) assert.ok(es[k].length > 40);
 });
 t('session complète', () => {
   let now = Date.UTC(2026, 0, 1), seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
@@ -149,6 +271,7 @@ t('première session : découverte, choix, puis phrase à trous ; mots apprivois
     if (step.intro) { types.push('intro'); continue; }
     types.push(step.activity.type); s.answer(step, true, now);
   }
+  assert.deepEqual(types.slice(0, 6), ['intro', 'intro', 'intro', 'qcm', 'qcm', 'qcm'], 'la première question ne suit jamais immédiatement la découverte');
   assert.equal(types.filter(x => x === 'intro').length, 3);
   assert.equal(types.filter(x => x === 'qcm').length, 3);
   assert.equal(types.filter(x => x === 'cloze-choice').length, 3);
@@ -171,7 +294,9 @@ Pendant;Indique la durée complète d'une action.;J'ai dormi pendant huit heures
     const b = buildActivity(g, en1, 1); assert.equal(b.type, 'cloze-choice');
     assert.equal(b.options.filter(o => o === 'en').length, 1, 'une seule option « en »');
     const c = buildActivity(g, g.cards[3], 1); assert.equal(c.type, 'qcm');
-    const d = buildActivity(g, en1, 4); assert.deepEqual(d.accepted, ['en']);
+    const d = buildActivity(g, en1, 2); assert.equal(d.type, 'cloze-choice'); assert.ok(d.gated);
+    const w = buildActivity(g, en1, 3); assert.equal(w.type, 'cloze-type'); assert.deepEqual(w.accepted, ['en']);
+    assert.equal(buildActivity(g, en1, 4).type, 'order');
   }
   const split = deckFromCSV('Word;Definition;Example 1\nAu… de;Pour situer dans un mois.;Je pars au mois d\'août.\nDepuis;x y z;Je suis ici depuis hier.\nPendant;a b c;Il dort pendant le film.', 's');
   assert.equal(split.cards[0].clozes[0].answer, "au … d'");
@@ -196,6 +321,44 @@ t('niveau et étapes', () => {
   st = stageOf(d, p); assert.deepEqual([st.index, st.size, st.seen, st.allSeen], [2, 10, 0, false]);
   for (let i = 10; i < 25; i++) p['c' + i] = { seen: true, box: 1 };
   st = stageOf(d, p); assert.deepEqual([st.index, st.size, st.seen, st.allSeen], [3, 5, 5, true]);
+});
+
+t('délai entre la découverte et la première question', () => {
+  const big = prepare({ id: 'k', name: 'k', lang: 'fr', cards: Array.from({ length: 20 }, (_, i) => ({ id: 'c' + i, word: 'mot' + i + 'xx', definition: 'définition numéro ' + i, examples: [] })) });
+  for (const maxNew of [3, 5, 8]) {
+    const s = new Session(big, {}, { maxNew, now: Date.UTC(2026, 0, 1) });
+    const order = s.queue.map(i => i.kind + ':' + i.id);
+    for (const id of s.today) assert.ok(order.indexOf('quiz:' + id) - order.indexOf('intro:' + id) >= 3, `${maxNew} mots : ${order.join(' ')}`);
+  }
+  const t0 = Date.UTC(2026, 0, 1), s = new Session(big, {}, { maxNew: 3, now: t0 }); s.next(t0); s.next(t0); s.next(t0);
+  const a = s.next(t0).activity;                      // les leurres sont les autres mots du jour
+  assert.deepEqual([...a.options].sort(), ['définition numéro 0', 'définition numéro 1', 'définition numéro 2']);
+});
+
+t('anti-hasard : un mot nouveau ne monte pas sur une seule réussite', () => {
+  const now = Date.UTC(2026, 0, 1), P = {}; const s = new Session(demo, P, { now });
+  let step; const seen = {};
+  while ((step = s.next(now))) {
+    if (step.intro) continue;
+    const id = step.card.id; seen[id] = (seen[id] || 0) + 1;
+    if (seen[id] === 1) { s.answer(step, true, now); assert.equal(P[id].box, 1, 'après le seul choix du sens, le mot reste en boîte 1'); assert.ok(!P[id].fsrs); }
+    else s.answer(step, false, now);                 // la phrase à trous est ratée : le mot n'est pas acquis
+  }
+  for (const id of s.today) { assert.equal(P[id].box, 1); assert.ok(P[id].fsrs && P[id].lastOk === false); }
+  assert.equal(s.tamed.length, 0); assert.equal(s.stats.up.length, 0);
+});
+
+const zipFile = '/tmp/elefiches-test.zip';
+execFileSync('python3', ['-c', `import zipfile
+z = zipfile.ZipFile('${zipFile}', 'w', zipfile.ZIP_DEFLATED)
+z.writestr('paquet.json', '{"cards": []}' + ' ' * 2000)
+z.writestr('images/planche1.png', b'\\x89PNG' + bytes(range(256)) * 4)
+z.writestr('__MACOSX/._x', 'x')
+z.close()`]);
+const zipped = await unzip(fs.readFileSync(zipFile));
+t('archive zip : paquet et images dans un seul fichier', () => {
+  assert.deepEqual(zipped.map(f => f.name), ['paquet.json', 'images/planche1.png']);
+  assert.equal(zipped[0].blob.size, 2013); assert.equal(zipped[1].blob.size, 4 + 1024); assert.equal(zipped[1].blob.type, 'image/png');
 });
 
 const real = process.argv[2];
