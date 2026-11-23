@@ -2,7 +2,7 @@
 // Les questions se répondent par un choix ou par une réponse courte écrite (un mot ou une expression).
 import { review, isNew, isDue, boxOf, HERD_BOX } from './scheduler.js';
 import { check, variants } from './match.js';
-import { spec } from './levels.js';
+import { spec, LIMITS } from './levels.js';
 
 const shuffle = (a, rnd) => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const pick = (a, rnd) => a[Math.floor(rnd() * a.length)];
@@ -89,21 +89,27 @@ export function judge(value, a, deck, second = false) {
 //   boîte 4 : reconstruire une phrase qui emploie le mot ;
 //   boîte 5 : écrire le mot dans une situation de communication, sans la définition.
 // Si une forme est impossible pour une fiche (pas d'exemple, expression en deux morceaux…), la suivante la remplace.
-function ladder(deck, card, box) {
+// Écoute (entendre le mot), oral (le dire, puis répéter une phrase avec la voix) et phrase libre alternent avec les
+// formes écrites : une fiche sur deux, d'après son identifiant et le nombre de fois où elle a été revue (alt).
+// audio = l'appareil peut lire le mot et l'étudiant peut écouter maintenant.
+function ladder(deck, card, box, { audio = false, alt = false } = {}) {
   const cl = card.clozes.length > 0;
   // Mot grammatical avec glose (« Au (siècle) ») ou homographe (deux fiches « En ») : seule la phrase lève l'ambiguïté.
   const needsContext = (card.bare !== card.word || deck.homographs.has(card.key)) && cl;
   if (box <= 1) return needsContext ? ['cloze-choice'] : ['qcm'];
-  if (box === 2) return needsContext ? ['cloze-choice', 'qcm-rev'] : ['qcm-rev'];
-  if (box === 3) return ['number', 'cloze-type', 'type', 'cloze-choice', 'qcm-rev'];
-  if (box === 4) return ['order', 'cloze-type', 'type', 'cloze-choice', 'qcm-rev'];
-  return ['number', 'situation-type', 'type', 'cloze-type', 'cloze-choice', 'qcm-rev'];
+  if (box === 2) return needsContext ? ['cloze-choice', 'qcm-rev'] : audio && alt ? ['listen', 'qcm-rev'] : ['qcm-rev'];
+  if (box === 3) return ['number', ...(audio && alt && !cl ? ['listen-type'] : []), 'cloze-type', 'type', 'cloze-choice', 'qcm-rev'];
+  if (box === 4) return [...(audio && alt && !needsContext ? ['speak'] : []), 'order', 'cloze-type', 'type', 'cloze-choice', 'qcm-rev'];
+  return ['number', ...(alt && !needsContext ? ['sentence'] : []), 'situation-type', 'type', 'cloze-type', 'cloze-choice', 'qcm-rev'];
 }
+const hashInt = id => [...String(id)].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7);
+// Formes où l'étudiant se juge lui-même en comparant avec un modèle.
+export const SELF = ['speak', 'sentence'];
 
 // opts.force : forme imposée (rattrapage, phrase « bonus » du jour, défi, aperçu). opts.contrast : {text, id} de la
 // mauvaise réponse donnée juste avant ; le rattrapage oppose alors la bonne réponse à cette erreur précise.
 // opts.help : aide maximale à l'écriture (rattrapage). opts.gate : impose le rappel de tête (aperçu des exercices).
-export function buildActivity(deck, card, box, rnd = Math.random, { force = null, prefer = [], contrast = null, help = false, gate = false } = {}) {
+export function buildActivity(deck, card, box, rnd = Math.random, { force = null, prefer = [], contrast = null, help = false, gate = false, audio = false, vary = false, turn = 0 } = {}) {
   const mean = c => meaning(c, deck.help), L = spec(deck), lures = L.options - 1;
   const typable = c => c && !c.multi && c.n <= 3, discontinuous = /…|\.\.\./.test(card.word);
   const first = card.clozes.find(c => card.examples[0] && c.text === apos(card.examples[0]));      // phrase à trous du premier exemple
@@ -116,8 +122,26 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
     return { answer, options: shuffle([answer, ...keep.map(d => d.text)], rnd), from: Object.fromEntries(keep.filter(d => d.id).map(d => [d.text, d.id])), ...extra };
   };
   const written = (c, extra = {}) => (typable(c) ? { cloze: c, answer: c.answer, accepted: [c.answer], lemmas: variants(card.word), hint: hint(c.answer), ...extra } : null);
+  // Aux niveaux A1 et A2, le sens se choisit parmi des images quand le paquet en a assez : une définition en langue
+  // apprise est elle-même difficile à lire pour un débutant.
+  const meanings = extra => {
+    const shown = c => /^data:image\//i.test(c.image || '');      // image intégrée au paquet : elle s'affichera à coup sûr
+    if (LIMITS[deck.level]?.image && shown(card)) {
+      const ds = distractors(deck, card, lures, rnd, d => (shown(d) ? mean(d) : null), prefer);
+      if (ds.length === lures) return choice(mean(card), ds, { pics: Object.fromEntries([[mean(card), card.image], ...ds.map(d => [d.text, deck.byId[d.id].image])]), ...extra });
+    }
+    return choice(mean(card), distractors(deck, card, lures, rnd, mean, prefer), extra);
+  };
+  const sayable = !isNumber(card.definition);
   const make = {
-    qcm: () => choice(mean(card), distractors(deck, card, lures, rnd, mean, prefer)),
+    qcm: () => meanings({}),
+    // Écoute : le mot est entendu, pas montré. L'étudiant choisit son sens, ou l'écrit.
+    listen: () => (sayable ? meanings({ listen: true }) : null),
+    'listen-type': () => (discontinuous || !sayable ? null : (v => ({ answer: card.word, accepted: v, hint: hint(v[0]), listen: true }))(variants(card.word))),
+    // Oral : l'étudiant dit le mot à partir de son sens, compare avec la voix, puis répète une phrase en même temps qu'elle.
+    speak: () => (sayable ? { answer: card.bare, model: card.examples[0] ? apos(card.examples[0]) : '', self: true } : null),
+    // Phrase libre : l'étudiant compose une phrase avec le mot, puis la compare aux phrases modèles.
+    sentence: () => (card.examples.length ? { answer: card.bare, models: card.examples.map(apos), self: true } : null),
     'qcm-rev': () => choice(card.bare, distractors(deck, card, lures, rnd, d => d.bare, prefer)),
     // Phrase à compléter par un choix. Quand la fiche fournit des mots pièges écrits pour son premier exemple, ce sont
     // eux les leurres : ils s'insèrent dans la phrase sans faute de grammaire. Sinon, les leurres sont des mots du paquet.
@@ -147,11 +171,12 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
       : null),
     number: () => (isNumber(card.definition) ? { answer: card.definition.trim(), accepted: [card.definition.trim()] } : null),
   };
-  for (const type of [force, ...ladder(deck, card, box)]) {
+  const alt = vary && (hashInt(card.id) + box + turn) % 2 === 0;     // vary : la session fait alterner les formes ; sinon l'échelle écrite seule
+  for (const type of [force, ...ladder(deck, card, box, { audio, alt })]) {
     const a = type && make[type]?.();
     if (!a) continue;
     // gated : l'étudiant cherche d'abord la réponse de tête, les choix n'apparaissent qu'ensuite.
-    const gated = !!a.options && type !== 'qcm' && type !== 'situation' && !contrast && (gate || (box >= 2 && !force));
+    const gated = !!a.options && type !== 'qcm' && type !== 'situation' && type !== 'listen' && !contrast && (gate || (box >= 2 && !force));
     return { type, cardId: card.id, gated, ...a };
   }
   return null;
@@ -177,8 +202,8 @@ function bankStep(deck, ids, pool, rnd) {
 export const roomFor = (due, maxNew) => (due >= 20 ? 0 : due >= 10 ? Math.min(maxNew, 2) : maxNew);
 
 export class Session {
-  constructor(deck, progress, { minutes = 5, maxNew = 3, now = Date.now(), rnd = Math.random, force = false } = {}) {
-    Object.assign(this, { deck, progress, rnd, startedAt: now, endAt: now + minutes * 60000 });
+  constructor(deck, progress, { minutes = 5, maxNew = 3, now = Date.now(), rnd = Math.random, force = false, audio = false } = {}) {
+    Object.assign(this, { deck, progress, rnd, audio, startedAt: now, endAt: now + minutes * 60000 });
     this.stats = { answered: 0, ok: 0, fresh: 0, up: [], again: [], herd: [], streak: 0, best: 0 };
     this.served = 0; this.today = []; this.tamed = []; this.waiting = new Set();
     const due = deck.cards.filter(c => isDue(progress[c.id], now))
@@ -225,7 +250,9 @@ export class Session {
       this.stats.fresh++;
       return { item, card, intro: true };
     }
-    return { item, card, activity: buildActivity(this.deck, card, boxOf(this.progress[card.id]) || 1, this.rnd, { force: item.force, prefer: this.today, contrast: item.contrast, help: item.help }) };
+    // Si l'étudiant a dit qu'il ne pouvait pas écouter, une forme d'écoute imposée (rattrapage) redevient une forme écrite.
+    const force = !this.audio && ['listen', 'listen-type', 'speak'].includes(item.force) ? null : item.force;
+    return { item, card, activity: buildActivity(this.deck, card, boxOf(this.progress[card.id]) || 1, this.rnd, { force, prefer: this.today, contrast: item.contrast, help: item.help, audio: this.audio, vary: true, turn: this.progress[card.id]?.fsrs?.reps || 0 }) };
   }
 
   // Enregistre une réponse. Seule la première réponse du jour compte pour FSRS ; les rattrapages non.
@@ -320,8 +347,9 @@ export class Tour {
     Object.assign(this, { deck, progress, rnd, challenge: true, tour: true });
     this.stats = { answered: 0, ok: 0, missed: [] }; this.served = 0; this.today = []; this.tamed = [];
     const used = new Set(), q = [];
-    for (const [box, type] of [[1, 'qcm'], [1, 'cloze-choice'], [2, 'qcm-rev'], [3, 'cloze-type'], [4, 'order'], [5, 'situation-type'], [5, 'type']]) {
-      const card = deck.cards.find(c => !used.has(c.id) && buildActivity(deck, c, box, rnd, { force: type })?.type === type);
+    for (const [box, type] of [[1, 'qcm'], [1, 'cloze-choice'], [2, 'qcm-rev'], [2, 'listen'], [3, 'cloze-type'], [3, 'listen-type'], [4, 'order'], [4, 'speak'], [5, 'situation-type'], [5, 'type'], [5, 'sentence']]) {
+      const fits = c => buildActivity(deck, c, box, rnd, { force: type })?.type === type;
+      const card = deck.cards.find(c => !used.has(c.id) && fits(c)) || deck.cards.find(fits);       // petit paquet : une fiche peut servir deux fois
       if (card) { used.add(card.id); q.push({ kind: 'quiz', id: card.id, force: type, box }); }
     }
     const ids = deck.cards.slice(0, 5).map(c => c.id), gaps = deck.cards.filter(c => c.clozes.some(x => !x.multi)).slice(0, 4).map(c => c.id);

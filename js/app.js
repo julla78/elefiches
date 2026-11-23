@@ -1,20 +1,24 @@
 // Éléfiches — interface : accueil, espace enseignant, session, bilan.
 import * as store from './store.js';
-import { deckFromCSV, deckFromJSON, deckFromAnki, mergeDecks, deckToJSON, looksJSON, levelIn, prepare, serialize, hash, demoDeck, MODELS, safeUrl, LEVELS } from './deck.js';
+import { deckFromCSV, deckFromJSON, deckFromAnki, mergeDecks, audit, safeKey, deckToJSON, looksJSON, levelIn, prepare, serialize, hash, demoDeck, MODELS, safeUrl, LEVELS } from './deck.js';
 import { summary, boxOf, dueInDays, isNew, stageOf, HERD_BOX } from './scheduler.js';
-import { Session, Challenge, Tour, meaning, gloss, pickNew, judge, roomFor } from './session.js';
+import { Session, Challenge, Tour, meaning, gloss, pickNew, judge, roomFor, buildActivity, SELF } from './session.js';
 import { clozeParts, norm, noAcc, noArt, diffParts, remark, spoken, slug } from './match.js';
 import { unzip, typeOf } from './zip.js';
 import { buildPrompts, GRIDS, gridOf } from './prompts.js';
 import { openSqlite } from './sqlite.js';
+import { buildICS } from './remind.js';
+import { makeBackup, readBackup, mergeProgress, cleanProgress, countReplaced, countAdded } from './backup.js';
 import { STR, LANG_NAMES } from './i18n.js';
 
 const app = document.getElementById('app');
+// En ligne, l'application ne s'affiche pas à l'intérieur de la page d'un autre site (protection contre le détournement de clics).
+if (window.top !== window.self && /\.github\.io$/i.test(location.hostname)) { document.body.textContent = ''; throw new Error('cadre'); }
 // Deux interfaces sur le même code : index.html pour les étudiants (jouer), enseignant.html pour créer et modifier les paquets.
 const TEACHER = document.body.dataset.mode === 'teacher';
 const siteBase = () => location.origin + location.pathname.replace(/[^/]*\.html$/, '');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const S = { lang: 'auto', minutes: 5, maxNew: 3, help: 'fr', sound: true, voice: true, decks: [], progress: {}, view: 'home', notice: null, toast: null, confirmReset: null, confirmDel: null, editId: null, cardId: null, draft: {}, local: null, gate: false, builder: { lang: 'fr', level: '', topic: '', count: 20, words: '', grid: '3x3' }, sheets: [], loose: [], perm: 0 };
+const S = { lang: 'auto', minutes: 5, maxNew: 3, help: 'fr', sound: true, voice: true, remind: { time: '18:00', days: 'daily' }, savedAt: 0, decks: [], progress: {}, view: 'home', notice: null, toast: null, confirmReset: null, confirmDel: null, editId: null, cardId: null, draft: {}, local: null, gate: false, builder: { lang: 'fr', level: '', topic: '', count: 20, words: '', grid: '3x3' }, sheets: [], loose: [], perm: 0 };
 // Langue des consignes et du feedback. En mode automatique : français jusqu'au niveau B1,
 // langue apprise à partir de B2 (règle fixée par Julie). L'étudiant peut toujours choisir lui-même.
 function uiLang() {
@@ -38,7 +42,7 @@ const AGES = [null,
   { skin: '#98959b', shade: '#817e85', ear: '#aca5a8', body: 1.03, head: 1, earS: 1.22, tusk: 16, old: true, trunk: 'M98 45C109 50 107 68 101 77C98 82 92 80 94 75' },
 ];
 function mascot(size = 72, cls = '', age = 2) {
-  const A = AGES[age], k = 1 - A.body;
+  const A = AGES[age] || AGES[1], k = 1 - A.body;
   const tusk = A.tusk ? `<path d="M95 54q${A.tusk * 0.4} ${A.tusk * 0.6} ${A.tusk} ${A.tusk * 0.05}" fill="none" stroke="#fffaf0" stroke-width="${A.tusk > 8 ? 3.8 : 3.2}" stroke-linecap="round"/>` : '<path d="M92 55q3 3 6 0" fill="none" stroke="#7d6a61" stroke-width="1.4" stroke-linecap="round"/>';
   const fuzz = A.fuzz ? '<path d="M78 23l-1-5M83 21v-6M88 23l2-5" stroke="#9a7b6b" stroke-width="1.6" stroke-linecap="round"/>' : '';
   const old = A.old ? `<path d="M102 60h5M101 67h5M58 42q4 4 0 8" fill="none" stroke="${A.shade}" stroke-width="1.3" stroke-linecap="round"/>` : '';
@@ -69,6 +73,44 @@ const head = (cls = '') => `<svg class="head ${cls}" width="46" height="44" view
 // Une seule cacahuète, dessinée pour Éléfiches : elle marque l'arrivée, au bout de la trompe.
 const NUT = '<svg class="nut" width="32" height="20" viewBox="0 0 40 24" aria-hidden="true"><path d="M11 2C5 2 1 6.500 1 12s4 10 10 10c3 0 5-1.500 9-1.500s6 1.500 9 1.500c6 0 10-4.500 10-10S35 2 29 2c-3 0-5 1.500-9 1.500S14 2 11 2z" fill="#e6bf82" stroke="#a8782f" stroke-width="1.5"/><path d="M8 8l4 8M14 7l3 9M24 8l3 8M30 7l3 8" stroke="#bf9150" stroke-width="1.2" stroke-linecap="round"/></svg>';
 // Empreinte d'éléphant : bouton des règles du jeu.
+// Pictogrammes et personnages dessinés dans le même style que les éléphants : formes pleines, contours ronds, mêmes teintes.
+const ic = body => `<svg class="ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+const ICON = {
+  sound: ic('<path d="M4 9.5v5h3.500l4.500 4v-13l-4.500 4z" fill="currentColor"/><path d="M15.500 9a4 4 0 0 1 0 6M18 6.500a7.500 7.500 0 0 1 0 11"/>'),
+  mic: ic('<rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/><path d="M6 11a6 6 0 0 0 12 0M12 17v4M9 21h6"/>'),
+  play: ic('<path d="M8 5.500v13l10-6.500z" fill="currentColor"/>'),
+  stop: ic('<rect x="6.500" y="6.500" width="11" height="11" rx="2" fill="currentColor"/>'),
+  bell: ic('<path d="M6 16.500V11a6 6 0 0 1 12 0v5.500l1.500 2h-15zM10 20.500a2 2 0 0 0 4 0"/>'),
+  cal: ic('<rect x="4" y="5.500" width="16" height="14.500" rx="3"/><path d="M4 10h16M8.500 3.500v4M15.500 3.500v4"/>'),
+  gear: ic('<circle cx="12" cy="12" r="3.200"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.600 5.600l2.100 2.100M16.300 16.300l2.100 2.100M5.600 18.400l2.100-2.100M16.300 7.700l2.100-2.100"/>'),
+  save: ic('<path d="M5 4h11l3 3v13H5z"/><path d="M8.500 4v5h6V4M8 20v-6h8v6"/>'),
+};
+// La souris : elle court au rythme du record de l'étudiant.
+const mouse = (size = 34) => `<svg class="mouse" width="${Math.round(size * 1.3)}" height="${size}" viewBox="0 0 52 40" aria-hidden="true">
+  <path d="M10 31C2 31 0 23 5 18" fill="none" stroke="#b79f92" stroke-width="2.200" stroke-linecap="round"/>
+  <path d="M17 35v3M30 35v3" stroke="#b0a596" stroke-width="3" stroke-linecap="round"/>
+  <ellipse cx="24" cy="27" rx="15" ry="10" fill="#c8bdae"/><circle cx="38" cy="22" r="9.500" fill="#c8bdae"/>
+  <circle cx="34" cy="11.500" r="6.500" fill="#d9cec1" stroke="#b0a596" stroke-width="1.200"/><circle cx="34" cy="11.500" r="3.200" fill="#f0c4b8"/>
+  <circle cx="41" cy="27" r="2.400" fill="#f0a08c" opacity=".4"/><circle cx="47.500" cy="23.500" r="1.800" fill="#e58f7c"/>
+  <circle cx="42" cy="20" r="2" fill="#2b2a33"/><circle cx="42.700" cy="19.300" r=".7" fill="#fff"/></svg>`;
+// Le crocodile : l'adversaire du match amical. Souriant, jamais menaçant.
+const croc = (size = 60) => `<svg class="croc" width="${Math.round(size * 1.7)}" height="${size}" viewBox="0 0 120 70" aria-hidden="true">
+  <ellipse cx="56" cy="65" rx="40" ry="4" fill="#000" opacity=".08"/>
+  <path d="M16 46C4 44 3 31 10 27" fill="none" stroke="#7fb98a" stroke-width="9" stroke-linecap="round"/>
+  <rect x="30" y="50" width="11" height="14" rx="5" fill="#6fae7a"/><rect x="60" y="50" width="11" height="14" rx="5" fill="#6fae7a"/>
+  <path d="M30 32l5-6 5 6M43 30l5-6 5 6M56 31l5-6 5 6" fill="#6fae7a"/>
+  <ellipse cx="50" cy="44" rx="34" ry="15" fill="#8cc497"/><ellipse cx="50" cy="51" rx="25" ry="7" fill="#dcefd0"/>
+  <rect x="68" y="31" width="46" height="20" rx="10" fill="#8cc497"/><circle cx="79" cy="29" r="8.500" fill="#8cc497"/>
+  <path d="M84 44q14 7 27 0" fill="none" stroke="#4f8a5b" stroke-width="1.800" stroke-linecap="round"/>
+  <path d="M91 47l2.200 3.200 2.200-2.600M100 48l2.200 3 2.200-3.200" fill="#fffaf0" stroke="#fffaf0" stroke-width=".6" stroke-linejoin="round"/>
+  <circle cx="109" cy="36" r="1.100" fill="#4f8a5b"/><circle cx="90" cy="40" r="3" fill="#f0a08c" opacity=".4"/>
+  <circle cx="81" cy="28" r="2.800" fill="#2b2a33"/><circle cx="82" cy="27" r="1" fill="#fff"/></svg>`;
+// Le petit oiseau blanc qui accompagne les éléphants : il « souffle » le mot dans les exercices d'écoute.
+const bird = (size = 26) => `<svg class="birdy" width="${Math.round(size * 1.2)}" height="${size}" viewBox="38 12 22 20" aria-hidden="true"><path d="M44 26v4M48 26v4" stroke="#6b6878" stroke-width="1"/><ellipse cx="46" cy="23" rx="5.500" ry="3.600" fill="#fff" stroke="#d8d2c8" stroke-width=".5"/><circle cx="51.500" cy="18.500" r="2.400" fill="#fff" stroke="#d8d2c8" stroke-width=".5"/><path d="M53.500 18l4.500 1-4.500 1z" fill="#f2a33a"/><circle cx="52" cy="18" r=".6" fill="#2b2a33"/></svg>`;
+// Décor de l'accueil : un coin de savane, discret, derrière l'éléphanteau.
+const SAVANNA = `<svg class="savanna" viewBox="0 0 400 120" preserveAspectRatio="xMaxYMax slice" aria-hidden="true"><circle cx="392" cy="2" r="34" fill="#f6d58a" opacity=".5"/>
+  <path d="M0 106q100-12 200-4t200-6v24H0z" fill="#e3e6c4" opacity=".75"/>
+  <g fill="#b9c49a" opacity=".7"><path d="M8 110q1-14 7-19q0 11-3 19zM18 110q6-11 14-13q-4 9-10 13zM148 110q2-13 8-17q-1 10-4 17zM158 110q6-9 13-11q-4 7-9 11zM366 108q2-12 7-16q0 9-3 16zM376 108q5-9 12-10q-4 7-8 10z"/></g></svg>`;
 // Paire de défenses : la récompense d'un défi d'étape réussi.
 const tusks = (size = 30, on = true) => `<svg class="tusks${on ? '' : ' off'}" width="${size}" height="${Math.round(size * 0.8)}" viewBox="0 0 40 32" aria-hidden="true"><path d="M12 3c-7 3-10 12-6 19 3 5 9 7 13 6-5-2-8-6-8-11 0-5 1-9 4-13z"/><path d="M28 3c7 3 10 12 6 19-3 5-9 7-13 6 5-2 8-6 8-11 0-5-1-9-4-13z"/></svg>`;
 const FOOT = '<svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><ellipse cx="13" cy="15" rx="9" ry="8.500" fill="currentColor"/><ellipse cx="5.500" cy="6.500" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="10.500" cy="3.800" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="15.800" cy="3.800" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="20.700" cy="6.500" rx="2.300" ry="2.800" fill="currentColor"/></svg>';
@@ -84,40 +126,91 @@ try { loadVoices(); speechSynthesis.addEventListener('voiceschanged', () => { lo
 // Choix de la voix : la langue du paquet d'abord (variante attendue, sinon une autre variante de la même langue),
 // puis les voix de bonne qualité ; les voix fantaisie de certains systèmes sont écartées.
 const ODD = /albert|bad news|bahh|bells|boing|bubbles|cellos|good news|jester|organ|superstar|trinoids|whisper|wobble|zarvox|deranged|hysterical|junior|ralph|fred|eddy|flo\b|grandma|grandpa|reed|rocko|sandy|shelley/i;
-const FINE = /google|microsoft|natural|neural|enhanced|premium|siri|online/i;
+const FINE = /natural|neural|enhanced|premium|siri/i;
 const vlang = v => (v.lang || '').replace('_', '-').toLowerCase();
-function voiceFor(lang) {
+// Les voix installées sur l'appareil passent avant les voix « en ligne » du navigateur, qui restent parfois muettes.
+function voicesFor(lang) {
   const code = (VOICES[lang] || lang).toLowerCase();
-  const score = v => (vlang(v) === code ? 8 : 0) + (FINE.test(v.name) ? 2 : 0) + (v.default ? 1 : 0) - (ODD.test(v.name) ? 6 : 0);
-  return voices.filter(v => vlang(v) === code || vlang(v).startsWith(lang + '-') || vlang(v) === lang).sort((a, b) => score(b) - score(a))[0] || null;
+  const score = v => (vlang(v) === code ? 8 : 0) + (v.localService ? 3 : 0) + (FINE.test(v.name) ? 2 : 0) + (v.default ? 1 : 0) - (ODD.test(v.name) ? 6 : 0);
+  // Confidentialité : l'application ne choisit jamais une voix « en ligne », qui enverrait le mot lu à un service extérieur.
+  return voices.filter(v => v.localService !== false && (vlang(v) === code || vlang(v).startsWith(lang + '-') || vlang(v) === lang)).sort((a, b) => score(b) - score(a));
 }
+const voiceFor = lang => voicesFor(lang)[0] || null;
 
-function toast(text) { S.toast = text; render(); setTimeout(() => { if (S.toast === text) { S.toast = null; render(); } }, 4000); }
+// Messages brefs : affichés dans leur propre zone, sans redessiner l'écran, pour ne jamais effacer une réponse en cours d'écriture.
+const toastBox = document.body.appendChild(Object.assign(document.createElement('div'), { id: 'toasts' }));
+function toast(text) { S.toast = text; toastBox.innerHTML = `<p class="toast" role="alert">${esc(text)}</p>`; setTimeout(() => { if (S.toast === text) { S.toast = null; toastBox.innerHTML = ''; } }, 5000); }
 
-// Lit le mot : fichier audio de la fiche s'il existe, sinon voix de l'appareil dans la langue du paquet.
-function speak(card, lang, { auto = false } = {}) {
-  const say = text => { if (!auto) toast(text); };            // la lecture automatique reste discrète si la voix manque
-  const tts = () => {
-    try {
-      if (!voices.length) loadVoices();
-      const code = VOICES[lang] || lang, v = voiceFor(lang);
-      const u = new SpeechSynthesisUtterance(spoken(card.word));
+// Dit un texte dans la langue du paquet. Si la première voix ne démarre pas, on essaie la suivante, puis la voix
+// par défaut de l'appareil : l'échec n'est annoncé qu'après ces essais.
+function sayText(text, lang, { auto = false, rate = 0.9, onend = null } = {}) {
+  const fail = () => { if (!auto) toast(t(voices.length && !voiceFor(lang) ? 'noVoice' : 'ttsSilent', LANG_NAMES[lang] || lang)); onend?.(); };
+  try {
+    if (!voices.length) loadVoices();
+    const code = VOICES[lang] || lang, list = [...voicesFor(lang).slice(0, 2), null];
+    let k = 0, settled = false;
+    const attempt = () => {
+      const v = list[k++], u = new SpeechSynthesisUtterance(text); let started = false;
       if (v) u.voice = v;
-      u.lang = v?.lang?.replace('_', '-') || code; u.rate = 0.9;
-      let started = false;
+      u.lang = v?.lang?.replace('_', '-') || code; u.rate = rate;
+      const next = () => {
+        if (started || settled) return;
+        if (k < list.length) { try { speechSynthesis.cancel(); } catch { /* rien à annuler */ } setTimeout(attempt, 80); } else { settled = true; fail(); }
+      };
       u.onstart = () => { started = true; };
-      u.onerror = e => { started = true; if (e.error !== 'interrupted' && e.error !== 'canceled') say(t('ttsSilent')); };
-      setTimeout(() => { if (!started) say(t('ttsSilent')); }, 2500);   // certains cadres bloquent la voix sans le dire
+      u.onend = () => { if (started && !settled) { settled = true; onend?.(); } };
+      u.onerror = e => { if (e.error === 'interrupted' || e.error === 'canceled') { if (started && !settled) { settled = true; onend?.(); } return; } next(); };
+      setTimeout(next, 1800);                                  // certaines voix, ou certains cadres, restent muets sans le dire
       speechSynthesis.resume?.();
-      if (speechSynthesis.speaking || speechSynthesis.pending) {
-        speechSynthesis.cancel();
-        setTimeout(() => speechSynthesis.speak(u), 80);      // Chrome reste muet si « speak » suit « cancel » sans délai
-      } else speechSynthesis.speak(u);                       // sans délai : iOS n'accepte la voix que dans le geste de l'utilisateur
-      if (voices.length && !v) say(t('noVoice', LANG_NAMES[lang] || lang));
-    } catch { say(t('noVoice', LANG_NAMES[lang] || lang)); }
-  };
+      speechSynthesis.speak(u);
+    };
+    if (speechSynthesis.speaking || speechSynthesis.pending) { speechSynthesis.cancel(); setTimeout(attempt, 80); }   // Chrome reste muet si « speak » suit « cancel » sans délai
+    else attempt();                                            // sans délai : iOS n'accepte la voix que dans le geste de l'utilisateur
+  } catch { fail(); }
+}
+// Lit le mot : fichier audio de la fiche s'il existe, sinon voix de l'appareil dans la langue du paquet.
+function speak(card, lang, opts = {}) {
+  const tts = () => sayText(spoken(card.word), lang, opts);
   if (card.audio) { try { new Audio(card.audio).play().catch(tts); } catch { tts(); } } else tts();
 }
+// Enregistrement de la voix de l'étudiant, pour qu'il se réécoute à côté du modèle. Rien n'est envoyé ni conservé :
+// l'enregistrement vit dans la page et disparaît à l'étape suivante.
+let rec = null, recBusy = false, recStream = null, recTimer = null;
+const stopMic = () => { clearTimeout(recTimer); try { recStream?.getTracks().forEach(tr => tr.stop()); } catch { /* déjà arrêté */ } recStream = null; };
+async function recStart() {
+  if (rec || recBusy) return;                              // un double appui n'ouvre pas deux fois le micro
+  recBusy = true;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true }), step = S.step;
+    recStream = stream;
+    if (!S.session || S.step !== step || S.view !== 'session') return stopMic();
+    const r = new MediaRecorder(stream), chunks = [];
+    r.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+    r.onstop = () => {
+      stopMic(); rec = null;
+      if (S.step !== step || !S.session) return;
+      S.local = { ...(S.local || {}), recording: false, phase: 1, rec: URL.createObjectURL(new Blob(chunks, { type: r.mimeType || 'audio/webm' })) };
+      S.spoke = S.step; render(); speak(S.step.card, S.session.deck.lang, { auto: true });
+    };
+    r.start(); rec = r; recTimer = setTimeout(() => { try { r.stop(); } catch { /* déjà arrêté */ } }, 30000);   // jamais plus de trente secondes
+    S.local = { ...(S.local || {}), recording: true }; render();
+  } catch { stopMic(); S.local = { ...(S.local || {}), noMic: true }; toast(t('micRefused')); }
+  finally { recBusy = false; }
+}
+window.addEventListener('pagehide', () => { try { rec?.stop(); } catch { /* déjà arrêté */ } stopMic(); });
+function dropRecording() { const r = rec; rec = null; try { r?.stop(); } catch { /* déjà arrêté */ } stopMic(); if (S.local?.rec) URL.revokeObjectURL(S.local.rec); }
+// « Je ne peux pas écouter maintenant » : la session continue sans exercice d'écoute ni d'oral.
+function cantListen() {
+  const s = S.session, card = S.step.card; S.quiet = true; s.audio = false; dropRecording(); S.local = null;
+  if (s.tour || s.challenge) return advance();
+  S.step.activity = buildActivity(s.deck, card, boxOf(s.progress[card.id]) || 1, Math.random, { prefer: s.today, gate: true });
+  toast(t('quietOn')); render();
+}
+// Ce que l'étudiant a commencé à écrire est gardé quand l'écran se redessine.
+function keepInputs() { for (const el of app.querySelectorAll('[data-keep]')) S.local = { ...(S.local || {}), [el.dataset.keep]: el.value }; }
+// L'appareil sait-il lire les mots de ce paquet ? (voix de la langue, ou un son joint à chaque fiche)
+const canListen = deck => !S.quiet && (deck.cards.every(c => c.audio) || ('speechSynthesis' in window && !(voices.length && !voiceFor(deck.lang))));
+
 // Chaque mot s'entend sans rien demander : à sa découverte, puis après chaque réponse (réglage « Prononciation automatique »).
 function autoSpeak() { const c = S.step?.card; if (!S.voice || !c || !S.session || S.spoke === S.step) return; S.spoke = S.step; speak(c, S.session.deck.lang, { auto: true }); }
 
@@ -148,31 +241,30 @@ function sfx(kind) {
 
 async function load() {
   const set = (await store.get('settings')) || {};
-  Object.assign(S, { lang: set.lang || 'auto', minutes: set.minutes || 5, maxNew: set.maxNew || 3, help: set.help || 'fr', sound: set.sound ?? true, voice: set.voice ?? true });
+  Object.assign(S, { lang: set.lang || 'auto', minutes: set.minutes || 5, maxNew: set.maxNew || 3, help: set.help || 'fr', sound: set.sound ?? true, voice: set.voice ?? true, remind: { time: '18:00', days: 'daily', ...(set.remind || {}) }, savedAt: set.savedAt || 0 });
   const saved = (await store.get('decks')) || [];
   S.decks = saved.map(prepare);
   if (!S.decks.length) { S.decks = [demoDeck()]; await saveDecks(); }
-  for (const d of S.decks) S.progress[d.id] = (await store.get('progress:' + d.id)) || {};
+  for (const d of S.decks) S.progress[d.id] = cleanProgress(await store.get('progress:' + d.id));     // état reconstruit champ par champ : rien de forgé n'atteint l'écran
   // Lien de partage : « …/?paquet=logement-a2 » ouvre le fichier paquets/logement-a2.json rangé à côté de l'application
-  // (ou une adresse complète). L'étudiant n'a rien d'autre à faire que d'ouvrir le lien.
+  // L'étudiant n'a rien d'autre à faire que d'ouvrir le lien. Seul le dossier paquets/ du site est lu, en JSON strict.
   const ref = new URLSearchParams(location.search).get('paquet');
   if (ref) {
     try {
       const plain = ref.replace(/\.json$/i, '').replace(/[^\w.-]/g, '');
-      let res = await fetch(/^https?:\/\//i.test(ref) ? ref : `paquets/${plain}.json`);
+      let res = await fetch(`paquets/${plain}.json`);                 // seulement le dossier du site : un lien ne peut pas charger un paquet venu d'ailleurs
       if (!res.ok && slug(ref.replace(/\.json$/i, '')) !== plain) res = await fetch(`paquets/${slug(ref.replace(/\.json$/i, ''))}.json`);   // lien tapé avec des accents ou des majuscules
       if (!res.ok) throw new Error('link');
-      const deck = deckFromJSON(await res.text());
+      const deck = deckFromJSON(JSON.stringify(await res.json()));      // JSON strict : un fichier qui serait aussi lisible comme un script est refusé
       S.decks = [...S.decks.filter(d => d.id !== deck.id && !(d.demo && !Object.keys(S.progress[d.id] || {}).length)), deck];
-      S.progress[deck.id] ??= (await store.get('progress:' + deck.id)) || {};
+      S.progress[deck.id] ??= cleanProgress(await store.get('progress:' + deck.id));
       await saveDecks(); S.notice = { text: t('opened', deck.name) };
-      history.replaceState(null, '', location.pathname);
     } catch { S.notice = { bad: true, text: t('errLink') }; }
   }
   if (TEACHER && location.hash !== '#accueil') S.view = 'teacher';
 }
 const saveDecks = () => store.set('decks', S.decks.map(serialize));
-const saveSettings = () => store.set('settings', { lang: S.lang, minutes: S.minutes, maxNew: S.maxNew, help: S.help, sound: S.sound, voice: S.voice });
+const saveSettings = () => store.set('settings', { lang: S.lang, minutes: S.minutes, maxNew: S.maxNew, help: S.help, sound: S.sound, voice: S.voice, remind: S.remind, savedAt: S.savedAt });
 const saveProgress = id => store.set('progress:' + id, S.progress[id]);
 
 // Langue des traductions affichées pour un paquet, selon le réglage de l'étudiant et ce que le paquet contient.
@@ -206,6 +298,20 @@ function challengeLine(d, P) {
   }
   return `${line}${won ? `<p class="tuskrow" aria-label="${t('tusksLine', won, st.count)}">${Array.from({ length: Math.min(won, 12) }, () => tusks(20)).join('')}<span>${t('tusksLine', won, st.count)}</span></p>` : ''}`;
 }
+// Le grand rendez-vous du paquet : un match amical contre les crocodiles, sur les mots de toutes les étapes.
+// Il s'ouvre quand toutes les défenses sont gagnées ; le but lointain reste visible dès la première paire.
+function matchLine(d, P) {
+  const st = stageOf(d, P), won = Object.keys(P._stages || {}).length;
+  if (!won) return '';
+  if (won < st.count) return `<p class="chlock">${croc(20)}<span>${t('fmLocked', won, st.count)}</span></p>`;
+  return `<button class="secondary challenge" data-action="friendly" data-id="${d.id}">${croc(22)}<span>${t('fmBtn')}${P._match?.best ? ` <span class="meta">${t('raceBest', +P._match.best || 0)}</span>` : ''}</span></button>`;
+}
+function startFriendly(id) {
+  const deck = S.decks.find(d => d.id === id), P = S.progress[id]; deck.help = helpFor(deck);
+  const pool = deck.cards.filter(c => !isNew(P[c.id])).map(c => [Math.random(), c]).sort((a, b) => a[0] - b[0]).slice(0, 12).map(x => x[1]);
+  S.session = new Challenge(deck, P, pool); S.session.friendly = true;
+  S.chStage = 0; S.view = 'session'; S.notice = null; advance();
+}
 function pendingStage(d, P) {
   const st = stageOf(d, P), done = P._stages || {}, today = new Date(Date.now()).setHours(0, 0, 0, 0);
   for (let i = 0; i < st.count; i++) {
@@ -223,13 +329,15 @@ function deckCard(d) {
   const held = pickNew(d, P, S.maxNew).length > roomFor(s.due, S.maxNew);
   const mute = voices.length && !voiceFor(d.lang) && d.cards.some(c => !c.audio);
   return `<article class="deck card" style="--th:${hue(d.cards[0].theme || d.name)}">
-    <div><h2 lang="${d.lang}">${esc(d.name)}</h2><p class="meta">${LANG_NAMES[d.lang] || d.lang} · ${d.level}${d.demo ? ' · ' + t('demo') : ''}</p></div>
+    <div><h2 lang="${d.lang}">${esc(d.name)}</h2><p class="meta">${esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang)} · ${d.level}${d.demo ? ' · ' + t('demo') : ''}</p></div>
     ${prairie(d, s, [], !canStart)}
     <div class="stagebar"><span>${t('stageN', s.stage.index)}</span>${trunkBar(pct, 'idle', t('stageAria', s.stage.index, s.stage.count, s.stage.seen, s.stage.size))}</div>
     ${canStart ? `<button class="primary" data-action="start" data-id="${d.id}">${t('start', S.minutes)}</button>` : `<p class="rest">${t('nothing', nextDays)}</p>`}
     ${held ? `<p class="heldline">${t('heldHome')} <button class="link" data-action="start-force" data-id="${d.id}">${t('heldForce')}</button></p>` : ''}
-    ${mute ? `<p class="banner warn">${t('noVoiceDeck', LANG_NAMES[d.lang] || d.lang)}</p>` : ''}
+    ${mute ? `<p class="banner warn">${t('noVoiceDeck', esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang))}</p>` : ''}
     ${challengeLine(d, P)}
+    ${matchLine(d, P)}
+    ${d.cards.filter(c => !isNew(P[c.id])).length >= 6 ? `<button class="secondary race" data-action="race" data-id="${d.id}">${mouse(22)} ${t('raceBtn')}${P._race?.best ? ` <span class="meta">${t('raceBest', +P._race.best || 0)}</span>` : ''}</button>` : ''}
     <button class="link" data-action="herd" data-id="${d.id}">${t('herdBtn', s.animals.length)}</button>
   </article>`;
 }
@@ -251,6 +359,17 @@ function herdView() {
       : `<button class="link" data-action="reset" data-id="${d.id}">${t('reset')}</button>`}`;
 }
 
+// Confidentialité : ce qui est enregistré, où, ce qui sort de l'appareil, et le moyen de tout effacer.
+function privacyView() {
+  return `<button class="link" data-action="home">← ${t('back')}</button>
+    <h1>${t('pvTitle')}</h1><p class="lead">${t('pvLead')}</p>
+    <section class="card privacy"><dl>${t('pvItems').map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}</dl></section>
+    <section class="card privacy"><h2>${t('pvRights')}</h2><p>${t('pvRightsText')}</p>
+      <div class="stack"><button class="secondary" data-action="backup">${t('bkSave')}</button>
+      ${S.confirmWipe ? `<button class="secondary danger" data-action="wipe-yes">${t('pvWipeSure')}</button><button class="secondary" data-action="wipe-no">${t('cancel')}</button>` : `<button class="secondary danger" data-action="wipe">${t('pvWipe')}</button>`}</div>
+      <p class="sethint">${t('pvContact')}</p></section>`;
+}
+
 function rulesView() {
   const ages = t('ageNames');
   return `<button class="link" data-action="home">← ${t('back')}</button>
@@ -268,12 +387,12 @@ const banners = () => `${store.isPersistent() ? '' : `<p class="banner warn">${t
   ${S.notice ? `<p class="banner ${S.notice.bad ? 'warn' : 'good'}" role="status">${esc(S.notice.text)}</p>` : ''}`;
 
 function home() {
-  return `${TEACHER ? `<button class="link" data-action="teacher">← ${t('eBack')}</button>` : ''}<header class="top">${mascot(64, 'idle', 2)}<div class="brand"><h1>Éléfiches</h1><p>${t('tagline')}</p></div>
+  return `${TEACHER ? `<button class="link" data-action="teacher">← ${t('eBack')}</button>` : ''}<header class="top">${SAVANNA}${mascot(96, 'idle', 2)}<div class="brand"><h1>Éléfiches</h1><p>${t('tagline')}</p></div>
       <button class="rulesbtn" data-action="rules">${FOOT}<span>${t('rules')}</span></button></header>
     ${banners()}
     <div class="appetite"><span class="aplabel">${NUT}${t('appetite')}</span>${seg('maxNew', S.maxNew, [[3, t('ap1')], [5, t('ap2')], [8, t('ap3')]])}</div>
     <section class="decks">${S.decks.map(deckCard).join('')}</section>
-    <details class="card settings"><summary><span aria-hidden="true">⚙️</span> ${t('settings')}</summary>
+    <details class="card settings"><summary>${ICON.gear} ${t('settings')}</summary>
       ${setrow('appLang', seg('lang', S.lang, [['auto', t('auto')], ...Object.entries(LANG_NAMES)]))}
       <p class="sethint">${t('autoHint')}</p>
       ${setrow('help', seg('help', S.help, [['none', t('helpNone')], ...Object.entries(LANG_NAMES)]))}
@@ -282,8 +401,17 @@ function home() {
       ${setrow('voiceAuto', seg('voice', S.voice ? '1' : '0', [['1', t('onF')], ['0', t('offF')]]))}
       <p class="sethint">${t('voiceHint')}</p>
     </details>
+    ${backupView()}
+    <details class="card settings remind"><summary>${ICON.bell} ${t('remTitle')}</summary>
+      <p class="sethint">${t('remIntro')}</p>
+      <div class="setrow"><label for="remtime">${t('remTime')}</label><input id="remtime" type="time" data-remind="time" value="${esc(S.remind.time)}"></div>
+      ${setrow('remDays', seg('remindDays', S.remind.days, [['daily', t('remDaily')], ['weekdays', t('remWeek')], ['three', t('remThree')]]))}
+      <div class="stack"><button class="secondary" data-action="remind">${ICON.cal} ${t('remAdd')}</button></div>
+      <p class="sethint">${t('remHint')}</p>
+    </details>
     <label class="link filelabel">${t('openPacket')}<input type="file" class="vh" data-file="packet" accept=".json,.zip,.apkg,application/json,application/zip"></label>
-    ${TEACHER ? `<button class="secondary" data-action="teacher">${t('teacher')}</button>` : ''}`;
+    ${TEACHER ? `<button class="secondary" data-action="teacher">${t('teacher')}</button>` : ''}
+    <button class="link privacylink" data-action="privacy">${t('pvLink')}</button>`;
 }
 
 // ---------- Espace enseignant ----------
@@ -310,7 +438,7 @@ function teacherView() {
     <p class="studenturl">${t('studentUrl')} <b>${esc(siteBase())}</b></p>
     ${banners()}
     <section class="card"><h2>${t('myDecks')}</h2><ul class="decklist">${S.decks.map(d => `<li>
-      <span><b lang="${d.lang}">${esc(d.name)}</b><br><span class="meta">${t('nCards', d.cards.length)} · ${LANG_NAMES[d.lang] || d.lang} · ${d.level}</span></span>
+      <span><b lang="${d.lang}">${esc(d.name)}</b><br><span class="meta">${t('nCards', d.cards.length)} · ${esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang)} · ${d.level}</span>${auditView(d)}</span>
       <span class="row"><button class="secondary small" data-action="tour" data-id="${d.id}">${t('tourBtn')}</button>
       <button class="secondary small" data-action="edit" data-id="${d.id}">${t('edit')}</button>
       <button class="secondary small" data-action="images" data-id="${d.id}">${t('imgBtn')}</button>
@@ -328,6 +456,7 @@ function teacherView() {
       </div></section>
     <section class="card"><h2>${t('b2')}</h2><p>${t('b2Intro')}</p>
       ${promptBox('file', 'pFile')}
+      <details class="more"><summary>${t('pReviewSum')}</summary><p class="sethint">${t('pReviewHint')}</p>${promptBox('review', 'pReview')}</details>
       <details class="more"><summary>${t('noFile')}</summary><p>${t('noFileHint')}</p>
         ${promptBox('cards', 'pCards')}
         <label class="inline">${t('bGrid')} <select data-b="grid">${GRIDS.map(g => opt(g, B.grid, t('gridOpt', gridOf(g).n, gridOf(g).cols, gridOf(g).rows))).join('')}</select></label>
@@ -360,7 +489,7 @@ async function addDeck(text, name, lang, json = false, level) {
   try {
     const deck = json ? deckFromJSON(text, name, level) : deckFromCSV(text, name, lang, level);
     S.decks = [...S.decks.filter(d => d.id !== deck.id), deck];
-    S.progress[deck.id] ??= (await store.get('progress:' + deck.id)) || {};
+    S.progress[deck.id] ??= cleanProgress(await store.get('progress:' + deck.id));
     await saveDecks();
     S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped) };
     S.view = 'home';
@@ -369,19 +498,22 @@ async function addDeck(text, name, lang, json = false, level) {
   }
   render();
 }
-const ERR = { 'anki-new': 'errAnki', sqlite: 'errAnki', 'no-word-column': 'errNoWord', 'too-few': 'errFew', 'bad-json': 'errJson', 'no-level': 'errLevel', 'no-name': 'errName', nothing: 'errNothing' };
+const ERR = { 'too-many': 'errMany', 'zip-big': 'errBig', zip: 'errEmpty', 'anki-new': 'errAnki', sqlite: 'errAnki', 'no-word-column': 'errNoWord', 'too-few': 'errFew', 'bad-json': 'errJson', 'no-level': 'errLevel', 'no-name': 'errName', nothing: 'errNothing' };
 
 // Import : un texte collé ou un fichier de paquet (.json, .csv), accompagné ou non d'images, de sons et de planches,
 // le tout éventuellement réuni dans une archive .zip. Rien n'est envoyé nulle part : tout est lu sur l'appareil.
 async function importPacket({ files = [], text = '', name = '', lang = 'fr', level = '', home = false }) {
   try {
     files = files.map(f => ({ name: f.name, blob: f }));
-    for (const z of files.filter(f => /\.zip$/i.test(f.name))) files.push(...await unzip(await z.blob.arrayBuffer()));
+    const budget = { left: 250e6 };                 // place totale pour tout ce qui se décompresse pendant cet import
+    if (files.length > 400 || files.reduce((n, f) => n + f.blob.size, 0) > 250e6) throw new Error('zip-big');
+    for (const z of files.filter(f => /\.zip$/i.test(f.name))) files.push(...await unzip(await z.blob.arrayBuffer(), budget));
     files = files.filter(f => !/\.zip$/i.test(f.name));
     // Paquet Anki (.apkg) : une archive qui contient une base de notes et des médias numérotés.
     let anki = null; const ankis = [];
     for (const a of files.filter(f => /\.(apkg|colpkg)$/i.test(f.name))) {
-      const inside = await unzip(await a.blob.arrayBuffer()), get = n => inside.find(f => f.name === n);
+      if (ankis.length >= 12) throw new Error('zip-big');
+      const inside = await unzip(await a.blob.arrayBuffer(), budget), get = n => inside.find(f => f.name === n);
       const base = get('collection.anki21') || get('collection.anki2');
       if (!base) throw new Error('anki-new');
       let names = {}; try { names = JSON.parse(await get('media').blob.text()); } catch { /* table des médias absente ou d'un autre format */ }
@@ -418,7 +550,7 @@ async function importPacket({ files = [], text = '', name = '', lang = 'fr', lev
       for (const f of images.filter(f => !used.has(f))) S.loose.push(await imageToDataURL(f.blob));
     }
     S.decks = [...S.decks.filter(d => d.id !== deck.id), deck];
-    S.progress[deck.id] ??= (await store.get('progress:' + deck.id)) || {};
+    S.progress[deck.id] ??= cleanProgress(await store.get('progress:' + deck.id));
     await saveDecks();
     S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped) };
     const toCheck = S.sheets.length || S.loose.length || deck.cards.some(c => c.image || c.sheet);   // toute image se vérifie d'un coup d'œil
@@ -456,11 +588,22 @@ async function cutSheets(deck, sheets) {
   return n;
 }
 
+// Contrôle du paquet : ce que l'application peut vérifier seule (images, longueur des définitions, exemples).
+function auditView(d) {
+  const found = audit(d), warn = found.filter(f => f.warn);
+  if (!found.length) return `<p class="audit ok">${t('auOk')}</p>`;
+  const names = f => f.cards.slice(0, 4).map(c => esc(c.bare)).join(', ') + (f.cards.length > 4 ? '…' : '');
+  return `<details class="audit${warn.length ? ' warn' : ''}"><summary>${t(warn.length ? 'auTitle' : 'auInfo', warn.length || found.length)}</summary>
+    <ul>${found.map(f => `<li class="${f.warn ? 'w' : ''}">${t(f.key, f.cards.length, d.cards.length, d.level)} <span class="meta" lang="${d.lang}">${names(f)}</span></li>`).join('')}</ul>
+    <p class="sethint">${t('auNote')}</p></details>`;
+}
+
 function imagesView() {
   const d = S.decks.find(x => x.id === S.imgId), waiting = d.cards.filter(c => c.sheet && !c.image).length, wantsSheets = d.cards.some(c => c.sheet);
   return `<button class="link" data-action="teacher">← ${t('eBack')}</button>
     <h1>${t('imgTitle')}</h1><p class="lead" lang="${d.lang}">${esc(d.name)}</p>
     ${banners()}
+    ${auditView(d)}
     ${wantsSheets ? `<section class="card import"><h2>${t('imgSheets')}</h2><p class="sethint">${t('imgSheetsHint')}</p>
       ${waiting ? `<p class="banner warn">${t('imgNone', waiting)}</p>` : ''}
       <input type="file" multiple accept="image/*" data-file="sheets" aria-label="${t('imgSheets')}">
@@ -516,12 +659,10 @@ function cardView() {
       <fieldset><legend>${t('fImg')}</legend>
         <img class="illus" data-preview="image" src="${esc(S.draft.image || '')}" alt="" ${S.draft.image ? '' : 'hidden'}>
         <input type="file" data-file="image" accept="image/*" aria-label="${t('fImg')}">
-        ${field('imageUrl', t('fImgUrl'), /^data:/.test(S.draft.image || '') ? '' : S.draft.image, 'placeholder="https://…"')}
         <button type="button" class="link" data-action="clear" data-key="image">${t('remove')}</button></fieldset>
       <fieldset><legend>${t('fAudio')}</legend>
         <p class="meta" data-preview="audio">${S.draft.audio ? '🔊 ✓' : '—'}</p>
         <input type="file" data-file="audio" accept="audio/*" aria-label="${t('fAudio')}">
-        ${field('audioUrl', t('fAudioUrl'), /^data:/.test(S.draft.audio || '') ? '' : S.draft.audio, 'placeholder="https://…"')}
         <span class="row"><button type="button" class="secondary small" data-action="test-audio">${t('listen')}</button>
         <button type="button" class="link" data-action="clear" data-key="audio">${t('remove')}</button></span></fieldset>
       <div class="row"><button class="primary">${t('save')}</button><button type="button" class="link" data-action="edit" data-id="${d.id}">${t('cancel')}</button>
@@ -537,7 +678,7 @@ async function saveCard(form) {
   const data = { word: v('word'), definition: v('definition') || undefined, translations, examples: v('examples').split(/\n+/).map(x => x.trim()).filter(Boolean),
     situation: v('situation') || undefined, distractors: v('distractors').split('|').map(x => x.trim()).filter(Boolean),
     theme: v('theme') || undefined, register: v('register') || undefined, family: v('family') || undefined, ipa: v('ipa') || undefined,
-    image: safeUrl(v('imageUrl')) || S.draft.image || undefined, audio: safeUrl(v('audioUrl')) || S.draft.audio || undefined };
+    image: safeUrl(S.draft.image) || undefined, audio: safeUrl(S.draft.audio) || undefined };
   const old = d.byId[S.cardId];
   if (old) { delete old.marks; Object.assign(old, data); } else d.cards.push({ id: 'c' + hash(data.word + Date.now()), extra: {}, ...data });
   prepare(d); await saveDecks();
@@ -559,6 +700,7 @@ async function attach(input) {
   const kind = input.dataset.file, file = input.files[0]; if (!file) return;
   if (kind === 'sheets') return addSheets([...input.files]);
   if (kind === 'packet') return importPacket({ files: [...input.files], home: true });
+  if (kind === 'backup') return restoreBackup(file);
   try {
     if (kind === 'image') S.draft.image = await imageToDataURL(file);
     else {
@@ -587,19 +729,142 @@ function showDraft() {
 function download(name, text, bom = true) {
   try {
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([(bom ? '\uFEFF' : '') + text], { type: bom ? 'text/csv;charset=utf-8' : 'application/json' }));
+    const type = /\.ics$/i.test(name) ? 'text/calendar;charset=utf-8' : bom ? 'text/csv;charset=utf-8' : 'application/json';
+    a.href = URL.createObjectURL(new Blob([(bom ? '\uFEFF' : '') + text], { type }));
     a.download = name; document.body.append(a); a.click(); a.remove();
   } catch { toast(t('downloadFail')); }
 }
+// ---------- Sauvegarde de la progression ----------
+const hasProgress = () => Object.values(S.progress).some(P => Object.keys(P || {}).some(k => !k.startsWith('_')));
+const iosSafari = () => /iP(hone|ad|od)/.test(navigator.userAgent) && !navigator.standalone && !matchMedia('(display-mode: standalone)').matches;
+function saveBackup() {
+  const d = new Date(), name = `elefiches-sauvegarde-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.json`;
+  download(name, makeBackup({ decks: S.decks.map(serialize), progress: S.progress, settings: { lang: S.lang, minutes: S.minutes, maxNew: S.maxNew, help: S.help } }), false);
+  S.savedAt = Date.now(); saveSettings(); S.notice = { text: t('bkSaved', name) }; render();
+}
+// Restauration en deux temps : on lit le fichier, on montre ce qu'il changerait, et l'étudiant confirme.
+async function restoreBackup(file) {
+  const b = file.size < 60e6 ? readBackup(await file.text()) : null;
+  if (!b) { S.notice = { bad: true, text: t('bkBad') }; return render(); }
+  const decks = [];
+  for (const raw of b.decks) {
+    let d; try { d = deckFromJSON(JSON.stringify(raw)); } catch { continue; }
+    d.id = safeKey(raw?.id) || d.id;
+    const cur = S.progress[d.id] || cleanProgress(await store.get('progress:' + d.id));
+    decks.push({ deck: d, saved: b.progress[d.id], replaced: countReplaced(cur, b.progress[d.id]), added: countAdded(cur, b.progress[d.id]), fresh: !S.decks.some(x => x.id === d.id) });
+  }
+  if (!decks.length) { S.notice = { bad: true, text: t('bkBad') }; return render(); }
+  const when = new Date(b.date); S.pendingBackup = { decks, date: Number.isNaN(+when) ? '' : when.toLocaleDateString(uiLang()) }; S.notice = null; render();
+}
+async function applyBackup() {
+  const pb = S.pendingBackup; if (!pb) return; S.pendingBackup = null;
+  let cards = 0;
+  for (const { deck: d, saved } of pb.decks) {
+    if (!S.decks.some(x => x.id === d.id)) S.decks.push(d);
+    S.progress[d.id] = mergeProgress(S.progress[d.id] || cleanProgress(await store.get('progress:' + d.id)), saved);
+    cards += Object.keys(S.progress[d.id]).filter(k => !k.startsWith('_')).length;
+    await saveProgress(d.id);
+  }
+  S.decks = S.decks.filter(d => !(d.demo && !Object.keys(S.progress[d.id] || {}).length && S.decks.length > 1));
+  await saveDecks(); S.notice = { text: t('bkRestored', cards) }; render();
+}
+function backupView() {
+  const days = S.savedAt ? Math.floor((Date.now() - S.savedAt) / 86400000) : -1, late = hasProgress() && (days < 0 || days >= 14);
+  return `<details class="card settings backup"${late || iosSafari() || S.pendingBackup ? ' open' : ''}><summary>${ICON.save} ${t('bkTitle')}</summary>
+      <p class="sethint">${t('bkIntro')}</p>
+      ${iosSafari() ? `<p class="banner warn">${t('bkIos')}</p>` : ''}
+      ${late ? `<p class="banner warn">${days < 0 ? t('bkNever') : t('bkLate', days)}</p>` : days >= 0 ? `<p class="sethint">${t('bkWhen', days)}</p>` : ''}
+      ${S.pendingBackup ? `<div class="banner warn bkask" role="alert"><p><b>${S.pendingBackup.date ? t('bkAsk', esc(S.pendingBackup.date)) : t('bkAskNoDate')}</b></p><ul>${S.pendingBackup.decks.map(x => `<li><span lang="${esc(x.deck.lang)}">${esc(x.deck.name)}</span> : ${t(x.fresh ? 'bkAskNew' : 'bkAskOld', x.deck.cards.length, x.replaced, x.added)}</li>`).join('')}</ul>
+        <div class="row"><button class="primary" data-action="backup-yes">${t('bkYes')}</button><button class="secondary" data-action="backup-no">${t('cancel')}</button></div></div>` : ''}
+      <div class="stack"><button class="secondary" data-action="backup">${t('bkSave')}</button>
+      <label class="secondary filebtn">${t('bkRestore')}<input type="file" class="vh" data-file="backup" accept=".json,application/json"></label></div>
+    </details>`;
+}
+
+// ---------- Course : la fluidité ----------
+// Soixante secondes sur des mots déjà rencontrés : retrouver vite un mot connu. La course ne déplace aucune fiche et ne
+// compare l'étudiant qu'à lui-même : la souris court au rythme de son record, l'éléphant avance à chaque bonne réponse.
+const RACE_MS = 60000;
+let raceTimer = null;
+function stopRace() { clearInterval(raceTimer); raceTimer = null; if (S.race && !S.race.over) S.race = null; }
+function raceQuestion(r) {
+  const pool = r.deck.cards.filter(c => !isNew(S.progress[r.deck.id][c.id]) && c.id !== r.card?.id);
+  for (let i = 0; i < 12; i++) {
+    const card = pool[Math.floor(Math.random() * pool.length)], a = card && buildActivity(r.deck, card, 2, Math.random, { force: 'qcm-rev' });
+    if (a?.options) { r.card = card; r.activity = a; r.flash = null; return; }
+  }
+  r.over = true;
+}
+function startRace(id) {
+  const deck = S.decks.find(d => d.id === id), P = S.progress[id]; deck.help = helpFor(deck);
+  const best = P._race?.best || 0;
+  S.race = { deck, score: 0, miss: 0, missed: [], goal: Math.max(10, Math.min(30, best + 1)), best, startAt: Date.now(), over: false };
+  raceQuestion(S.race); S.view = 'race'; S.session = null; S.notice = null; window.scrollTo?.(0, 0); render();
+  clearInterval(raceTimer);
+  raceTimer = setInterval(() => {
+    const r = S.race; if (!r || r.over || S.view !== 'race') return clearInterval(raceTimer);
+    const left = Math.max(0, 1 - (Date.now() - r.startAt) / RACE_MS), bar = app.querySelector('.racetime span'), hare = app.querySelector('.hare');
+    if (bar) bar.style.width = (100 * left).toFixed(1) + '%';
+    if (hare) hare.style.left = (12 + 76 * (1 - left)).toFixed(1) + '%';
+    if (!left) endRace(false);
+  }, 200);
+}
+const raceGain = r => Math.max(0, r.score - r.miss / 2);
+function endRace(won) {
+  const r = S.race; if (!r || r.over) return;
+  clearInterval(raceTimer); r.over = true; r.won = won;
+  const P = S.progress[r.deck.id], old = P._race || {};
+  r.record = r.score > (old.best || 0);
+  P._race = { best: Math.max(old.best || 0, r.score), runs: (old.runs || 0) + 1 }; saveProgress(r.deck.id);
+  sfx(won ? 'trumpet' : 'birds'); render();
+}
+function racePick(i) {
+  const r = S.race; if (!r || r.over || r.flash) return;
+  const picked = r.activity.options[i]; if (picked === undefined) return;
+  if (picked === r.activity.answer) {
+    r.score++; sfx('pop');
+    if (raceGain(r) >= r.goal) return endRace(true);
+    raceQuestion(r); render();
+  } else {                                  // une erreur coûte un demi-pas et le temps de lire la bonne réponse
+    r.miss++; if (!r.missed.includes(r.card.id)) r.missed.push(r.card.id);
+    r.flash = picked; sfx('steps'); render();
+    setTimeout(() => { if (S.race === r && !r.over) { raceQuestion(r); render(); } }, 900);
+  }
+}
+function raceView() {
+  const r = S.race, lang = r.deck.lang, pos = Math.min(88, 5 + 83 * raceGain(r) / r.goal), left = Math.max(0, 1 - (Date.now() - r.startAt) / RACE_MS);
+  if (r.over) {
+    return `<div class="card done">${mascot(104, r.won ? 'joy' : 'idle', 4)}
+      <h2>${t(r.won ? 'raceWon' : 'raceLost')}</h2>
+      <p class="big">${t('raceScore', r.score)}</p>
+      <p>${r.record ? t('raceRecord') : t('raceBestLine', Math.max(r.best, r.score))}</p>
+      ${r.missed.length ? `<p><span class="label">${t('doneAgain')}</span><br>${r.missed.map(id => `<span class="chip" lang="${lang}">${esc(r.deck.byId[id].word)}</span>`).join(' ')}</p>` : ''}
+      ${r.miss ? '' : `<p class="win">${t('raceClean')}</p>`}
+      <p class="quip">${t('raceNote')}</p>
+      <div class="row"><button class="secondary" data-action="race" data-id="${r.deck.id}">${t('raceAgain')}</button><button class="primary" data-action="home" autofocus>${t('home')}</button></div></div>`;
+  }
+  const a = r.activity, card = r.card;
+  return `<div class="bar"><button class="icon" data-action="home" aria-label="${t('quit')}" title="${t('quit')}">✕</button>
+      <div class="racetime" role="timer" aria-label="${t('raceTime')}"><span style="width:${(100 * left).toFixed(1)}%"></span></div><span class="racescore" aria-label="${t('raceScore', r.score)}">${r.score}</span></div>
+    <div class="track" aria-hidden="true"><span class="finish">${NUT}</span><span class="hare" style="left:${(12 + 76 * (1 - left)).toFixed(1)}%">${mouse(34)}</span><span class="runner" style="left:${pos.toFixed(1)}%">${mascot(40, 'joy', 3)}</span></div>
+    <div class="card study racecard" style="--th:${hue(card.theme)}"><p class="question">${t('raceQ')} <span class="meta">${t('raceGoal', r.goal)}</span></p>
+      ${card.image ? `<img class="illus small" src="${esc(card.image)}" alt="">` : ''}<p class="def big" lang="${card.definition ? lang : ''}">${esc(gloss(card, r.deck.help) || meaning(card, r.deck.help))}</p>
+      <div class="options">${a.options.map((o, i) => {
+        const cls = r.flash ? (o === a.answer ? 'right' : o === r.flash ? 'wrong' : '') : '';
+        return `<button class="option ${cls}" data-action="race-pick" data-i="${i}" ${r.flash ? 'disabled' : ''} lang="${lang}"><kbd>${i + 1}</kbd> ${esc(o)}</button>`;
+      }).join('')}</div></div>`;
+}
+
 // ---------- Session ----------
 
 function startSession(id, force = false) {
   const deck = S.decks.find(d => d.id === id);
   deck.help = helpFor(deck);
   S.stageBefore = summary(deck, S.progress[id]).stage;
-  S.session = new Session(deck, S.progress[id], { minutes: S.minutes, maxNew: S.maxNew, force });
+  S.session = new Session(deck, S.progress[id], { minutes: S.minutes, maxNew: S.maxNew, force, audio: canListen(deck) });
   S.view = 'session'; S.notice = null;
   advance();
+  store.keep();                            // demande au navigateur de ne pas effacer la progression s'il manque de place
   if (S.session?.held) toast(t('heldNew'));
 }
 
@@ -622,14 +887,16 @@ function startTour(id) {
 }
 
 function advance() {
-  S.feedback = null; S.local = null; S.gate = false;
+  dropRecording(); S.feedback = null; S.local = null; S.gate = false;
   S.step = S.session.next();
   if (!S.step) {
     const id = S.session.deck.id;
-    if (S.session.challenge && !S.session.tour) { S.chWon = S.session.stats.answered - S.session.stats.ok <= 1; if (S.chWon) (S.progress[id]._stages ??= {})[S.chStage] = Date.now(); }
+    if (S.session.friendly) { const st = S.session.stats, old = S.progress[id]._match || {}; S.progress[id]._match = { best: Math.max(old.best || 0, st.ok), runs: (old.runs || 0) + 1 }; }
+    else if (S.session.challenge && !S.session.tour) { S.chWon = S.session.stats.answered - S.session.stats.ok <= 1; if (S.chWon) (S.progress[id]._stages ??= {})[S.chStage] = Date.now(); }
     S.view = 'done'; saveProgress(id); sfx(S.session.challenge ? 'trumpet' : 'birds');
   } else if (S.step.intro) { saveProgress(S.session.deck.id); autoSpeak(); }
   render();
+  if (S.step?.activity?.listen) speak(S.step.card, S.session.deck.lang, { auto: true });      // exercice d'écoute : le mot est dit dès l'affichage
 }
 
 function sentence(cl, lang, reveal) {
@@ -638,7 +905,7 @@ function sentence(cl, lang, reveal) {
     : esc(p.text))).join('')}</p>`;
 }
 
-const listenBtn = card => `<button class="icon" data-action="speak" data-id="${card.id}" aria-label="${t('listen')}" title="${t('listen')}">🔊</button>`;
+const listenBtn = card => `<button class="icon" data-action="speak" data-id="${card.id}" aria-label="${t('listen')}" title="${t('listen')}">${ICON.sound}</button>`;
 const chips = c => `<p class="chips">${c.theme ? `<span class="chip theme">${esc(c.theme)}</span>` : ''}${c.register ? `<span class="chip">${esc(c.register)}</span>` : ''}</p>`;
 const illus = c => (c.image ? `<img class="illus" src="${esc(c.image)}" alt="">` : '');
 
@@ -669,15 +936,41 @@ function activityView(step, lang) {
   // Après la réponse, l'exercice d'orthographe ne laisse à l'écran que la bonne forme : une faute qu'on relit s'imprime.
   const options = () => `<div class="options">${a.options.map((o, i) => {
     const cls = fb ? (o === a.answer ? 'right' : o === fb.chosen ? 'wrong' : '') : '';
-    return `<button class="option ${cls}" data-action="choose" data-i="${i}" ${fb ? 'disabled' : ''} lang="${lang}"><kbd>${i + 1}</kbd> ${esc(o)}${cls === 'right' ? ' <span class="mark">✓</span>' : cls === 'wrong' ? ' <span class="mark">✗</span>' : ''}</button>`;
+    const mark = cls === 'right' ? ' <span class="mark">✓</span>' : cls === 'wrong' ? ' <span class="mark">✗</span>' : '';
+    if (a.pics) return `<button class="option pic ${cls}" data-action="choose" data-i="${i}" ${fb ? 'disabled' : ''} aria-label="${esc(o)}"><kbd>${i + 1}</kbd><img src="${esc(a.pics[o])}" alt=""><span class="cap${fb ? ' on' : ''}" lang="${lang}">${esc(o)}</span>${mark}</button>`;
+    return `<button class="option ${cls}" data-action="choose" data-i="${i}" ${fb ? 'disabled' : ''} lang="${lang}"><kbd>${i + 1}</kbd> ${esc(o)}${mark}</button>`;
   }).join('')}</div>${fb ? '' : skip}`;
+  // Écoute : un gros bouton pour réentendre le mot, et une sortie pour qui ne peut pas écouter maintenant.
+  const ear = `<p class="earrow"><button type="button" class="earbtn" data-action="speak" data-id="${card.id}" aria-label="${t('listenAgain')}">${bird(30)}${ICON.sound} <span>${t('listenAgain')}</span></button></p>`;
+  const quiet = fb ? '' : `<button type="button" class="link" data-action="cant-listen">${t('cantListen')}</button>`;
+  const selfRow = `<p class="askline">${t(a.type === 'speak' ? 'selfSpeak' : 'selfSentence')}</p><div class="row felt"><button class="primary" data-action="self" data-v="good">${t('selfGood')}</button><button class="secondary" data-action="self" data-v="again">${t('selfAgain')}</button></div>`;
   // Rappel de tête : l'étudiant cherche d'abord sa réponse, les choix n'arrivent qu'ensuite pour la vérifier.
   const gate = () => `<div class="gate"><p>${t('gateWord')}</p>
     <div class="row"><button class="primary" data-action="reveal" autofocus>${t('reveal')}</button>${skip}</div></div>`;
   const choice = () => (a.gated && !S.gate && !fb ? gate() : options());
-  const hint = `<div class="hint"><span class="tag">${t('hint')}</span>${sense(card, lang, 'hintdef')}</div>`;
+  const hint = `<div class="hint"><span class="tag">${t('hint')}</span>${card.image ? `<img class="hintimg" src="${esc(card.image)}" alt="">` : ''}${sense(card, lang, 'hintdef')}</div>`;
   let body;
   if (a.type === 'qcm') body = `<p class="question">${t('qMeaning')}</p><h2 class="word" lang="${lang}">${esc(card.bare)} ${listenBtn(card)}</h2>${options()}`;
+  else if (a.type === 'listen') body = `<p class="question">${t('qListen')}</p>${ear}${fb ? `<h2 class="word" lang="${lang}">${esc(card.bare)}</h2>` : ''}${options()}${quiet}`;
+  else if (a.type === 'speak') {
+    // Oral : dire le mot à partir de son sens, écouter la voix, puis répéter une phrase en même temps qu'elle (shadowing).
+    const can = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder) && !L.noMic;
+    body = !L.phase && !fb ? `<p class="question">${t('qSpeak')}</p>${illus(card)}${sense(card, lang, 'def big')}
+        <div class="row">${L.recording ? `<button class="primary rec on" data-action="rec-stop">${ICON.stop} ${t('recStop')}</button>` : `${can ? `<button class="primary rec" data-action="rec-start">${ICON.mic} ${t('recStart')}</button>` : ''}<button class="${can ? 'secondary' : 'primary'}" data-action="reveal-self">${t('saidIt')}</button>`}</div>
+        ${L.recording ? `<p class="again" role="status">${t('recOn')}</p>` : `<p class="sethint oral">${t(can ? 'recHint' : 'noRecHint')}</p>`}${skip}${quiet}`
+      : `<p class="question">${t('qSpeakCheck')}</p>${illus(card)}<h2 class="word" lang="${lang}">${esc(card.bare)} ${listenBtn(card)}</h2>
+        ${L.rec ? `<p class="mine"><span class="meta">${t('myVoice')}</span><audio controls src="${esc(L.rec)}"></audio></p>` : ''}
+        ${a.model ? `<div class="shadow"><p class="meta">${t('shadowHow')}</p><p class="example" lang="${lang}">${esc(a.model)}</p><button type="button" class="secondary" data-action="shadow">${ICON.play} ${t('shadowGo')}</button></div>` : ''}
+        ${fb ? '' : selfRow}`;
+  } else if (a.type === 'sentence') {
+    // Phrase libre : l'étudiant compose sa phrase, puis la compare aux phrases modèles et se juge lui-même.
+    body = !L.phase && !fb ? `<p class="question">${t('qSentence')}</p><h2 class="word" lang="${lang}">${esc(card.bare)} ${listenBtn(card)}</h2>${sense(card, lang)}
+        <label class="mysentence">${t('mySentence')}<textarea name="mine" rows="2" lang="${lang}" autocomplete="off" autocapitalize="sentences" spellcheck="false" data-keep="mine">${esc(L.mine || '')}</textarea></label>
+        <div class="row"><button class="primary" data-action="reveal-self">${t('seeModel')}</button>${skip}</div>`
+      : `<p class="question">${t('qSentenceCheck')}</p>${L.mine ? `<p class="mine"><span class="meta">${t('yours')}</span><span lang="${lang}">${esc(L.mine)}</span></p>` : ''}
+        <ul class="models">${a.models.map((m, i) => `<li lang="${lang}"><button type="button" class="icon small" data-action="say-model" data-i="${i}" aria-label="${t('listen')}">${ICON.sound}</button> ${esc(m)}</li>`).join('')}</ul>
+        ${fb ? '' : selfRow}`;
+  }
   else if (a.type === 'qcm-rev') body = `<p class="question">${t('qWord')}</p>${illus(card)}${sense(card, lang, 'def big')}${choice()}`;
   else if (a.type === 'cloze-choice') body = `<p class="question">${t('qCloze')}</p>${sentence(a.cloze, lang, !!fb)}${hint}${choice()}`;
   else if (a.type === 'situation') body = `<p class="question">${t('qSituation')}</p><p class="situation">${esc(a.situation)}</p>${options()}`;
@@ -697,6 +990,7 @@ function activityView(step, lang) {
       ${L.again && !fb ? `<p class="again" role="status">${t(L.accent ? 'tryAccent' : 'tryAgain')}</p>` : ''}
       ${fb ? '' : `<div class="row"><button class="primary">${t('validate')}</button>${skip}</div>`}</form>`;
     if (a.type === 'cloze-type') body = `<p class="question">${t('qClozeType')}</p>${sentence(a.cloze, lang, !!fb)}${hint}${typed}`;
+    else if (a.type === 'listen-type') body = `<p class="question">${t('qListenType')}</p>${ear}${typed}${quiet}`;
     else if (a.type === 'situation-type') body = `<p class="question">${t('qSitType')}</p><p class="situation">${esc(a.situation)}</p>${sentence(a.cloze, lang, !!fb)}${typed}`;
     else if (a.type === 'type') body = `<p class="question">${t('qType')}</p>${illus(card)}${sense(card, lang, 'def big')}${typed}`;
     else body = `<p class="question">${t('qNumber')}</p><h2 class="word" lang="${lang}">${esc(card.bare)} ${listenBtn(card)}</h2>${typed}`;
@@ -755,7 +1049,7 @@ function feedbackView(step, lang) {
     ${explain ? `<p class="explain">${esc(explain)}</p>` : ''}
     ${note ? `<p class="explain">${esc(note)}</p>` : ''}
     ${sp ? `<p class="spelling" lang="${lang}">${esc(sp[0])}<mark>${esc(sp[1])}</mark>${esc(sp[2])}</p>` : ''}
-    <p class="recap"><b lang="${lang}">${esc(card.word)}</b> ${listenBtn(card)}</p>
+    <p class="recap">${card.image ? `<img class="recapimg" src="${esc(card.image)}" alt="">` : ''}<b lang="${lang}">${esc(card.word)}</b> ${listenBtn(card)}</p>
     ${sense(card, lang, 'recapdef')}
     ${ex ? `<p class="example" lang="${lang}"><span class="meta">${t('example')} :</span> ${esc(ex)}</p>` : ''}
     <p class="meta">${[move, when].filter(Boolean).join(' ')}</p>
@@ -830,17 +1124,28 @@ function sessionView() {
       ${trunkBar(pct, S.feedback ? (S.feedback.ok ? 'joy' : 'oops') : 'idle', t('sessionBar'))}
       ${dots}
     </div>
-    <p class="where"><span class="chip box">${s.tour ? (s.box ? t('tourN', s.box) : t('tourAll')) : s.challenge ? t('challengeN', S.chStage) : step.intro ? t('newCard') : step.activity.multi ? t('recap') : t('box', box)}</span></p>
+    <p class="where"><span class="chip box">${s.tour ? (s.box ? t('tourN', s.box) : t('tourAll')) : s.friendly ? t('fmChip') : s.challenge ? t('challengeN', S.chStage) : step.intro ? t('newCard') : step.activity.multi ? t('recap') : t('box', +box || 1)}</span></p>
     ${step.intro ? introView(step.card, lang) : activityView(step, lang)}`;
 }
 
 function doneView() {
   if (S.session.tour) return `<div class="card done">${mascot(104, 'joy', 3)}<h2>${t('tourDone')}</h2><p>${t('tourNote')}</p>
     <div class="row"><button class="primary" data-action="teacher" autofocus>${t('eBack')}</button><button class="secondary" data-action="home">${t('home')}</button></div></div>`;
+  if (S.session.friendly) {                // match amical : on compte les points, on se serre la trompe, personne ne perd rien
+    const { stats, deck } = S.session, them = stats.answered - stats.ok;
+    return `<div class="card done">
+      <p class="duo" aria-hidden="true">${mascot(84, 'joy', 4)}${croc(64)}</p>
+      <h2>${t(stats.ok > them ? 'fmWon' : stats.ok === them ? 'fmDraw' : 'fmLost')}</h2>
+      <p class="big">${t('fmScore', stats.ok, them)}</p>
+      ${stats.missed.length ? `<p><span class="label">${t('doneAgain')}</span><br>${stats.missed.map(id => `<span class="chip" lang="${deck.lang}">${esc(deck.byId[id].word)}</span>`).join(' ')}</p>` : ''}
+      <p class="quip">${t('fmNote')}</p>
+      <div class="row"><button class="secondary" data-action="friendly" data-id="${deck.id}">${t('fmAgain')}</button><button class="primary" data-action="home" autofocus>${t('home')}</button></div>
+    </div>`;
+  }
   if (S.session.challenge) {
     const { stats, deck } = S.session;
     return `<div class="card done">
-      <div class="rain" aria-hidden="true">${Array.from({ length: 16 }, (_, i) => `<i style="left:${(i * 37 + 11) % 96}%;animation-delay:${(i * 0.13).toFixed(2)}s;font-size:${1 + (i % 3) * 0.3}rem">🥜</i>`).join('')}</div>
+      <div class="rain" aria-hidden="true">${Array.from({ length: 16 }, (_, i) => `<i style="left:${(i * 37 + 11) % 96}%;animation-delay:${(i * 0.13).toFixed(2)}s;font-size:${1 + (i % 3) * 0.3}rem">${NUT}</i>`).join('')}</div>
       ${mascot(104, S.chWon ? 'joy' : 'idle', 5)}
       <h2>${t(S.chWon ? 'chDone' : 'chTried', S.chStage)}</h2>
       <p class="win tuskwin">${tusks(44, S.chWon)}<span>${t(S.chWon ? 'chWon' : 'chAlmost')}</span></p>
@@ -856,7 +1161,7 @@ function doneView() {
   const stageDone = s.stage.count > 1 && (s.stage.index > S.stageBefore.index || (s.stage.allSeen && !S.stageBefore.allSeen));
   const line = (label, ids) => (ids.length ? `<p><span class="label">${t(label)}</span><br>${words(ids)}</p>` : '');
   return `<div class="card done">
-    <div class="rain" aria-hidden="true">${Array.from({ length: 16 }, (_, i) => `<i style="left:${(i * 37 + 11) % 96}%;animation-delay:${(i * 0.13).toFixed(2)}s;font-size:${1 + (i % 3) * 0.3}rem">🥜</i>`).join('')}</div>
+    <div class="rain" aria-hidden="true">${Array.from({ length: 16 }, (_, i) => `<i style="left:${(i * 37 + 11) % 96}%;animation-delay:${(i * 0.13).toFixed(2)}s;font-size:${1 + (i % 3) * 0.3}rem">${NUT}</i>`).join('')}</div>
     ${mascot(104, 'joy', Math.min(5, 1 + Math.floor(summary(deck, P).memory * 5)))}
     <h2>${t('doneTitle')}</h2>
     ${tamed.length ? `<p class="big">${t('doneTamed', tamed.length)}</p>` : ''}
@@ -869,16 +1174,26 @@ function doneView() {
     ${S.session.held ? `<p class="heldline">${t('heldDone')} <button class="link" data-action="start-force" data-id="${deck.id}">${t('heldForce')}</button></p>` : ''}
     <div class="row">${more ? `<button class="secondary" data-action="start" data-id="${deck.id}">${t('again')}</button>` : ''}<button class="primary" data-action="home" autofocus>${t('home')}</button></div>
     <button class="link" data-action="share">${t('share')}</button>
+    <button class="link" data-action="remind">${ICON.bell} ${t('remDone')}</button>
   </div>`;
 }
 
 // ---------- Rendu et événements ----------
 
 function render() {
+  try { paint(); S.rescue = false; } catch (e) {
+    S.rescue = true;
+    // Écran de secours : revenir à l'accueil, ou retirer le paquet qui empêche l'affichage. La progression des autres est intacte.
+    console.error(e);
+    const onHome = S.view === 'home' || !S.view;
+    app.innerHTML = `<div class="card"><h2>${esc(STR.fr.rescueTitle)}</h2><p>${esc(STR.fr.rescueText)}</p>
+      ${onHome ? `<ul class="decklist">${S.decks.map(d => `<li><span>${esc(d.name)}</span><button class="link danger" data-action="rescue-del" data-id="${esc(d.id)}">${esc(STR.fr.rescueDel)}</button></li>`).join('')}</ul>` : `<button class="primary" data-action="home">${esc(STR.fr.home)}</button>`}</div>`;
+  }
+}
+function paint() {
   document.documentElement.lang = uiLang();
   const open = app.querySelector('details.settings')?.open;
-  app.innerHTML = (S.view === 'session' ? sessionView() : S.view === 'done' ? doneView() : S.view === 'teacher' ? teacherView() : S.view === 'rules' ? rulesView() : S.view === 'herd' ? herdView() : S.view === 'images' ? imagesView() : S.view === 'edit' ? editView() : S.view === 'card' ? cardView() : home())
-    + (S.toast ? `<p class="toast" role="alert">${esc(S.toast)}</p>` : '');
+  app.innerHTML = (S.view === 'session' ? sessionView() : S.view === 'done' ? doneView() : S.view === 'teacher' ? teacherView() : S.view === 'rules' ? rulesView() : S.view === 'herd' ? herdView() : S.view === 'images' ? imagesView() : S.view === 'edit' ? editView() : S.view === 'card' ? cardView() : S.view === 'race' ? raceView() : S.view === 'privacy' ? privacyView() : home());
   if (open && app.querySelector('details.settings')) app.querySelector('details.settings').open = true;
   if (S.view === 'session' || S.view === 'done') {
     app.querySelector('[autofocus]')?.focus({ preventScroll: true });
@@ -886,30 +1201,37 @@ function render() {
   }
 }
 
+// Une confirmation n'est acceptée qu'un instant après la demande : un double-clic ne peut pas tout effacer par accident.
+const armed = () => Date.now() - (S.armedAt || 0) >= 800;
 app.addEventListener('click', e => {
   const b = e.target.closest('[data-action]'); if (!b) return;
   const { action, id, model } = b.dataset;
   if (action === 'start') startSession(id);
   else if (action === 'start-force') startSession(id, true);
   else if (action === 'next') advance();
-  else if (action === 'home' || action === 'quit') { if (S.session) saveProgress(S.session.deck.id); S.view = 'home'; S.session = null; window.scrollTo?.(0, 0); render(); }
+  else if (action === 'home' || action === 'quit') { stopRace(); dropRecording(); if (S.session) saveProgress(S.session.deck.id); S.view = 'home'; S.session = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'teacher') { if (!TEACHER) return; if (S.session) S.session = null; S.view = 'teacher'; S.notice = null; S.confirmDel = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'set') applySetting(b.dataset.key, b.dataset.value);
   else if (action === 'rules') { S.view = 'rules'; window.scrollTo?.(0, 0); render(); }
+  else if (action === 'privacy') { S.view = 'privacy'; S.confirmWipe = false; S.notice = null; window.scrollTo?.(0, 0); render(); }
+  else if (action === 'wipe') { S.confirmWipe = true; S.armedAt = Date.now(); render(); }
+  else if (action === 'wipe-no') { S.confirmWipe = false; render(); }
+  else if (action === 'wipe-yes') { if (!S.confirmWipe || S.view !== 'privacy' || !armed()) return; store.wipe().then(() => location.reload()); }       // tout est effacé sur cet appareil, puis l'application repart de zéro
   else if (action === 'herd') { S.herdId = id; S.view = 'herd'; S.confirmReset = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'share') { const st = S.session.stats; navigator.clipboard?.writeText(t('shareText', S.session.deck.name, S.session.tamed.length, st.ok, st.answered)).then(() => toast(t('copied')), () => toast(t('downloadFail'))); }
   else if (action === 'edit') { S.editId = id; S.view = 'edit'; if (b.closest('form')) S.notice = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'card') { const c = editing().byId[id]; S.cardId = id; S.draft = { image: c?.image, audio: c?.audio }; S.notice = null; S.view = 'card'; window.scrollTo?.(0, 0); render(); }
   else if (action === 'clear') { S.draft[b.dataset.key] = undefined; const u = b.closest('form')[b.dataset.key + 'Url']; if (u) u.value = ''; showDraft(); }
-  else if (action === 'test-audio') { const f = b.closest('form'), src = safeUrl(f.audioUrl.value) || S.draft.audio; speak({ word: f.word.value, audio: src }, editing().lang); }
+  else if (action === 'test-audio') { const f = b.closest('form'); speak({ word: f.word.value, audio: safeUrl(S.draft.audio) }, editing().lang); }
   else if (action === 'del-card') { const d = editing(); d.cards = d.cards.filter(c => c.id !== S.cardId); prepare(d); saveDecks(); S.view = 'edit'; render(); }
   else if (action === 'export') {
     const d = S.decks.find(x => x.id === id), lv = (d.level || '').toLowerCase(), base = slug(d.name), name = lv && !base.split('-').includes(lv) ? `${base}-${lv}` : base;
     download(name + '.json', deckToJSON(d), false);
     S.notice = { text: t('exported', name + '.json', siteBase() + '?paquet=' + name) }; render();
   }
-  else if (action === 'del') { S.confirmDel = id; render(); }
-  else if (action === 'del-yes') { S.decks = S.decks.filter(d => d.id !== id); S.confirmDel = null; saveDecks(); render(); }
+  else if (action === 'del') { S.confirmDel = id; S.armedAt = Date.now(); render(); }
+  else if (action === 'del-yes') { if (S.confirmDel !== id || !armed()) return; S.decks = S.decks.filter(d => d.id !== id); S.confirmDel = null; saveDecks(); render(); }
+  else if (action === 'rescue-del') { if (!S.rescue) return; S.decks = S.decks.filter(d => d.id !== id); S.rescue = false; S.view = 'home'; saveDecks(); render(); }
   else if (action === 'speak') speak(S.session.deck.byId[id], S.session.deck.lang);
   else if (action === 'choose' && !S.feedback) {
     const o = S.step.activity.options[+b.dataset.i];
@@ -917,6 +1239,26 @@ app.addEventListener('click', e => {
   }
   else if (action === 'skip' && !S.feedback) { commit({ ok: false }, { typed: '', chosen: null }); sfx('steps'); render(); }
   else if (action === 'reveal') { S.gate = true; render(); }
+  else if (action === 'remind') { download('elefiches-rappel.ics', buildICS({ ...S.remind, url: siteBase(), title: t('remEvent', S.minutes), note: t('remNote') }), false); toast(t('remOk')); }
+  else if (action === 'race') startRace(id);
+  else if (action === 'friendly') startFriendly(id);
+  else if (action === 'backup') saveBackup();
+  else if (action === 'backup-yes') applyBackup();
+  else if (action === 'backup-no') { S.pendingBackup = null; render(); }
+  else if (action === 'race-pick') racePick(+b.dataset.i);
+  else if (action === 'cant-listen' && !S.feedback) cantListen();
+  else if (action === 'rec-start') recStart();
+  else if (action === 'rec-stop') rec?.stop();
+  else if (action === 'reveal-self' && !S.feedback) { keepInputs(); S.local = { ...(S.local || {}), phase: 1 }; S.spoke = S.step; render(); if (S.step.activity.type === 'speak') speak(S.step.card, S.session.deck.lang, { auto: true }); }
+  else if (action === 'shadow') sayText(S.step.activity.model, S.session.deck.lang, { rate: 0.8 });
+  else if (action === 'say-model') sayText(S.step.activity.models[+b.dataset.i], S.session.deck.lang);
+  else if (action === 'self' && !S.feedback) {
+    // L'étudiant se juge en comparant avec le modèle : « comme le modèle », « j'ai hésité » ou « à revoir ».
+    const v = b.dataset.v; S.spoke = S.step;
+    // Se juger soi-même est indulgent : un « oui » compte comme une réussite hésitante, donc une révision plus proche.
+    const fb = commit({ ok: v !== 'again' }, { hesitated: true, self: true });
+    if (fb.tamed || fb.joined || !fb.ok) { sfx(fb.ok ? 'trumpet' : 'steps'); render(); } else { sfx('pop'); advance(); }
+  }
   else if (action === 'felt' && S.feedback?.ask) {
     const v = b.dataset.v, was = S.feedback;
     const fb = commit({ ok: v !== 'lucky', note: was.note }, { chosen: was.chosen, typed: was.typed, shown: was.shown, hesitated: v === 'hard', lucky: v === 'lucky' });
@@ -968,8 +1310,8 @@ app.addEventListener('click', e => {
   }
   else if (action === 'assign-image' && S.loose.length) { const d = S.decks.find(x => x.id === S.imgId); d.byId[id].image = S.loose.shift(); saveDecks(); render(); }
   else if (action === 'skip-image') { S.loose.shift(); render(); }
-  else if (action === 'reset') { S.confirmReset = id; render(); }
-  else if (action === 'reset-yes') { S.progress[id] = {}; S.confirmReset = null; saveProgress(id); render(); }
+  else if (action === 'reset') { S.confirmReset = id; S.armedAt = Date.now(); render(); }
+  else if (action === 'reset-yes') { if (S.confirmReset !== id || !armed()) return; S.progress[id] = {}; S.confirmReset = null; saveProgress(id); render(); }
   else if (action === 'dl') download(MODELS[model].file, MODELS[model].csv);
   else if (action === 'copy') navigator.clipboard?.writeText(MODELS[model].csv).then(() => toast(t('copied')), () => toast(t('downloadFail')));
   else if (action === 'try') addDeck(MODELS[model].csv, MODELS[model].name, MODELS[model].lang, false, MODELS[model].level || 'A2');
@@ -983,12 +1325,22 @@ app.addEventListener('submit', e => {
   else if (kind === 'typed' && !S.feedback) submitTyped(e.target.answer.value);
 });
 function applySetting(k, v) {
-  S[k] = k === 'minutes' || k === 'maxNew' ? +v : k === 'sound' || k === 'voice' ? v === '1' : v;
+  if (!['lang', 'help', 'minutes', 'maxNew', 'sound', 'voice', 'remindDays'].includes(k)) return;          // seuls les réglages connus se modifient
+  if (k === 'remindDays') S.remind = { ...S.remind, days: v };
+  else S[k] = k === 'minutes' || k === 'maxNew' ? +v : k === 'sound' || k === 'voice' ? v === '1' : v;
   saveSettings(); render();
   if (k === 'sound' && S.sound) sfx('pop');
 }
+// Une image qui ne peut pas s'afficher ne laisse jamais un exercice sans contenu : dans un choix parmi des images,
+// tous les choix repassent en texte ; ailleurs, l'image disparaît simplement.
+app.addEventListener('error', e => {
+  const img = e.target; if (img?.tagName !== 'IMG' || !img.getAttribute('src') || img.dataset.preview) return;      // l'aperçu de l'éditeur reste en place, même vide
+  const options = img.closest('.options');
+  if (options) options.classList.add('nopics'); else img.remove();
+}, true);
 app.addEventListener('change', e => {
   if (e.target.dataset.file) return attach(e.target);
+  if (e.target.dataset.remind) { S.remind = { ...S.remind, time: e.target.value || '18:00' }; return saveSettings(); }
   if (e.target.dataset.grid) {                 // grille des planches : colonnes ou rangées
     const d = S.decks.find(x => x.id === S.imgId), G = gridOf(d.grid);
     G[e.target.dataset.grid] = +e.target.value; d.grid = `${G.cols}x${G.rows}`;
@@ -1003,6 +1355,7 @@ app.addEventListener('input', e => {
   for (const li of app.querySelectorAll('.cardlist li')) li.hidden = !!q && !li.dataset.text.includes(q);
 });
 document.addEventListener('keydown', e => {
+  if (S.view === 'race' && !S.race?.over) { const k = ['1', '2', '3', '4'].indexOf(e.key); if (k >= 0) racePick(k); return; }
   if (S.view !== 'session' || S.feedback || !S.step?.activity?.options) return;
   const i = ['1', '2', '3', '4'].indexOf(e.key);
   if (i >= 0) app.querySelector(`.option[data-i="${i}"]`)?.click();
@@ -1035,4 +1388,5 @@ document.addEventListener('pointercancel', endDrag);
 load().then(render).catch(err => { app.innerHTML = `<p class="banner warn">${esc(err.message)}</p>`; });
 
 // Accès réservé aux tests automatiques (tests/browser_test.py).
-window.__elefiches = { get step() { return S.step; }, get state() { return S; }, rerender: render };
+// Accès à l'état pour les tests : seulement sur un poste de développement, jamais sur le site en ligne.
+if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) window.__elefiches = { get step() { return S.step; }, get state() { return S; }, rerender: render };

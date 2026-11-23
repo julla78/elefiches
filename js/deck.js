@@ -1,5 +1,6 @@
 // Éléfiches — lecture des paquets de fiches (CSV) et modèle de données.
 import { norm, noAcc, heads, clozes, unmark } from './match.js';
+import { LIMITS } from './levels.js';
 
 export function hash(s) {
   let h = 5381;
@@ -50,6 +51,9 @@ const TR = /^(?:translation|traduction|traduccion|traducción|trad)\.?\s*(?:[-�
 const LANGS = { fr: 'fr', francais: 'fr', french: 'fr', frances: 'fr', en: 'en', anglais: 'en', english: 'en', ingles: 'en', es: 'es', espagnol: 'es', spanish: 'es', espanol: 'es' };
 const plain = s => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
+// Un identifiant venu d'un fichier sert de clé d'objet : lettres, chiffres, tiret et souligné seulement, jamais un nom réservé.
+export const safeKey = v => (typeof v === 'string' && /^[A-Za-z0-9_*-]{1,64}$/.test(v) && !['__proto__', 'constructor', 'prototype'].includes(v) ? v : '');
+
 // Un texte venu d'Anki, d'un tableur ou d'une IA peut contenir des codes HTML à la place des caractères
 // (« J&#x27;ai », « caf&eacute; », « &amp; ») : on rend le vrai caractère, partout.
 const ENT = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', laquo: '«', raquo: '»', hellip: '…', rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”', ndash: '–', mdash: '—', bull: '•', middot: '·', euro: '€', deg: '°',
@@ -68,23 +72,36 @@ export function decode(text) {
   return s;
 }
 const TEXTS = ['word', 'definition', 'situation', 'theme', 'register', 'family', 'ipa', 'pos'];
+// Plafonds : un paquet démesuré ralentirait chaque ouverture de l'application sur un téléphone.
+export const DECK_LIMITS = { cards: 2000, word: 200, definition: 500, situation: 400, theme: 80, register: 40, family: 80, ipa: 80, pos: 40, example: 300, examples: 6, trap: 80, traps: 6 };
+const cut = (v, n) => (typeof v === 'string' && v.length > n ? v.slice(0, n) : v);
 // Nettoie une fiche déjà enregistrée ou tout juste importée. Les positions du mot dans les exemples (marks) sont
 // oubliées si un exemple change de longueur : elles seront retrouvées d'après le mot.
 function tidyCard(c) {
+  for (const k of TEXTS) if (c[k] !== undefined && typeof c[k] !== 'string') delete c[k]; else if (c[k]) c[k] = cut(c[k], DECK_LIMITS[k] * 4);     // coupe large avant décodage
   const fix = v => (typeof v === 'string' && v.includes('&') ? decode(v) : v);
-  for (const k of TEXTS) if (c[k]) c[k] = fix(c[k]);
-  if (Array.isArray(c.examples)) { const before = c.examples.join('\n'); c.examples = c.examples.map(fix); if (c.marks && c.examples.join('\n') !== before) delete c.marks; }
-  if (Array.isArray(c.distractors)) c.distractors = c.distractors.map(fix);
+  for (const k of TEXTS) if (c[k]) c[k] = cut(fix(c[k]), DECK_LIMITS[k]);
+  if (Array.isArray(c.examples)) {
+    const before = c.examples.join('\n');
+    c.examples = c.examples.filter(e => typeof e === 'string').slice(0, 24).map(e => fix(cut(e, 4000))).flatMap(e => (/(^|\s)[•▪◦‣]\s/.test(e) ? e.split(/(?:^|\s)[•▪◦‣]\s+/).map(x => x.trim()).filter(Boolean) : [e]));   // « • phrase • phrase » : une phrase par exemple
+    const n = c.examples.length; c.examples = c.examples.slice(0, DECK_LIMITS.examples).map(e => cut(e, DECK_LIMITS.example));
+    if (c.marks && (c.examples.join('\n') !== before || n !== c.examples.length)) delete c.marks;
+  }
+  if (Array.isArray(c.distractors)) c.distractors = c.distractors.filter(x => typeof x === 'string').slice(0, DECK_LIMITS.traps).map(x => cut(fix(x), DECK_LIMITS.trap)); else delete c.distractors;
   if (c.translations) for (const k of Object.keys(c.translations)) c.translations[k] = fix(c.translations[k]);
   if (c.translation) c.translation = fix(c.translation);
 }
 
-// N'accepte comme image ou son qu'un lien web, une image intégrée ou un chemin relatif.
+// Images et sons : seulement un contenu intégré au paquet (data:) ou un fichier rangé à côté de l'application.
+// Jamais une adresse d'un autre site : elle révélerait à ce site chaque étudiant qui ouvre la fiche.
 export function safeUrl(u) {
   u = String(u || '').trim();
-  if (/^(https?:\/\/|data:image\/|data:audio\/|data:video\/webm)/i.test(u)) return u;
-  return /^[\w.\-\/ %]+$/.test(u) && !u.includes('..') ? u : '';
+  if (/^data:(image\/(png|jpeg|webp|gif|svg\+xml)|audio\/[\w.+-]+|video\/webm)[;,]/i.test(u)) return u.length <= 1500000 ? u : '';
+  return u.length <= 200 && /^(?:[\w -]+\/)*[\w -]+(?:\.[\w-]+)+$/.test(u) ? u : '';       // chemin relatif simple : ni « / » initial, ni « .. », ni « % »
 }
+
+// Champ « image » d'une fiche : une case de planche (« P1-3 ») ou une image sûre.
+const imgRef = v => (/^P\d+-\d+$/i.test(String(v ?? '').trim()) ? String(v).trim() : safeUrl(v));
 
 // Niveau du paquet (A1 à C2) : il décide de la langue des consignes et du feedback.
 export const LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
@@ -96,10 +113,11 @@ export const deckFromCSV = (text, name, lang = 'fr', level) => deckFromRows(pars
 // Paquet construit à partir d'un tableau : première ligne = noms des colonnes.
 export function deckFromRows(rows, name, lang = 'fr', level) {
   if (rows.length < 2) throw new Error('empty');
+  if (rows.length > DECK_LIMITS.cards * 5) throw new Error('too-many');
   const cols = rows[0].map(h => {
     const k = h.trim().toLowerCase();
     const tr = k.match(TR);
-    if (tr) return 'tr:' + (LANGS[plain(tr[1])] || plain(tr[1]) || '*');
+    if (tr) return 'tr:' + (LANGS[plain(tr[1])] || safeKey(plain(tr[1])) || '*');
     const hit = COLUMNS.find(([re]) => re.test(k));
     return hit ? hit[1] : 'extra:' + h.trim();
   });
@@ -112,7 +130,7 @@ export function deckFromRows(rows, name, lang = 'fr', level) {
       if (!v) return;
       if (col === 'example') c.examples.push(v);
       else if (col.startsWith('tr:')) c.translations[col.slice(3)] = v;
-      else if (col === 'image' || col === 'audio') { const u = safeUrl(v); if (u) c[col] = u; }
+      else if (col === 'image' || col === 'audio') { const u = col === 'image' ? imgRef(v) : safeUrl(v); if (u) c[col] = u; }
       else if (col === 'distractors') c.distractors = v.split('|').map(x => x.trim()).filter(Boolean);
       else if (col.startsWith('extra:')) c.extra[col.slice(6)] = v;
       else c[col] = v;
@@ -153,11 +171,13 @@ const ROLES = [
 ];
 const TR_NAMES = { fr: /^(fran[cç]ais|french|franc[eé]s|fr)$/, en: /^(anglais|english|ingl[eé]s|en)$/, es: /^(espagnol|spanish|espa[nñ]ol|es)$/ };
 const BREAK = /<br\s*\/?>|<\/(div|p|li|tr|h\d)>|\r?\n/gi;
-const strip = html => decode(String(html).replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ').replace(/\[sound:[^\]]+\]/g, ' ').replace(BREAK, ' ').replace(/<[^>]+>/g, '')).replace(/\s+/g, ' ').trim();
-const imgOf = html => { const m = String(html).match(/<img[^>]+src\s*=\s*["']?([^"'>\s]+)/i); return m ? decode(m[1]) : ''; };
-const sndOf = html => { const m = String(html).match(/\[sound:([^\]]+)\]/); return m ? decode(m[1]) : ''; };
+const FIELD_MAX = 2000;                       // un champ de vocabulaire n'approche jamais cette longueur
+const CLOZE = /\{\{c(\d+)::((?:(?!\}\}|::)[\s\S])*)(?:::((?:(?!\}\})[\s\S])*))?\}\}/g;
+const strip = html => decode(String(html).slice(0, FIELD_MAX).replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ').replace(/\[sound:[^\]\[]*\]/g, ' ').replace(BREAK, ' ').replace(/<[^<>]*>/g, '')).replace(/\s+/g, ' ').trim();
+const imgOf = html => { const m = String(html).slice(0, FIELD_MAX * 2).match(/<img[^>]+src\s*=\s*["']?([^"'>\s]+)/i); return m ? decode(m[1]) : ''; };
+const sndOf = html => { const m = String(html).slice(0, FIELD_MAX).match(/\[sound:([^\]\[]+)\]/); return m ? decode(m[1]) : ''; };
 // Un champ d'exemples peut en réunir plusieurs : lignes, puces « • », éléments de liste.
-const lines = html => String(html).replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ').split(/<br\s*\/?>|<\/(?:div|p|li|tr)>|\r?\n|\s[•▪◦‣·]\s|^\s*[•▪◦‣]\s*/gi)
+const lines = html => String(html).slice(0, FIELD_MAX).replace(/<(style|script)[\s\S]*?<\/\1>/gi, ' ').split(/<br\s*\/?>|<\/(?:div|p|li|tr)>|\r?\n|\s[•▪◦‣·]\s|^\s*[•▪◦‣]\s*/gi)
   .map(x => strip(x || '').replace(/^[-–—•▪◦‣*]\s+|^\d+[.)]\s+/, '')).filter(Boolean);
 const wordsIn = t => (t ? t.split(/\s+/).length : 0);
 
@@ -195,9 +215,10 @@ function ankiRoles(model, notes) {
 
 // Note « texte à trous » : {{c1::mot::indice}} dans une phrase.
 function clozeCard(text, extra) {
-  const all = [...String(text).matchAll(/\{\{c(\d+)::([\s\S]*?)(?:::([\s\S]*?))?\}\}/g)];
+  text = String(text).slice(0, FIELD_MAX);
+  const all = [...text.matchAll(CLOZE)];
   if (!all.length) return null;
-  const first = all[0], word = strip(first[2]), open = t => t.replace(/\{\{c\d+::([\s\S]*?)(?:::[\s\S]*?)?\}\}/g, '$1');
+  const first = all[0], word = strip(first[2]), open = t => t.replace(CLOZE, '$2');
   const marked = strip(open(String(text).replace(first[0], '\u0001' + first[2] + '\u0002'))).replace('\u0001', '[').replace('\u0002', ']');
   const holed = strip(open(String(text).replace(first[0], '\u0001'))).replace('\u0001', '…');
   return { word, example: marked, definition: strip(extra || '') || strip(first[3] || '') || `Le mot qui manque dans : « ${holed} »` };
@@ -207,7 +228,8 @@ export function deckFromAnki(db, name, lang = 'fr', level) {
   const col = db.table('col')[0] || [];
   let models = {}, decks = {};
   try { models = JSON.parse(col[9] || '{}'); decks = JSON.parse(col[10] || '{}'); } catch { /* base d'un autre format */ }
-  const notes = db.table('notes').map(n => ({ id: String(n[0]), mid: String(n[2]), tags: String(n[5] || '').trim().split(/\s+/).filter(Boolean), f: String(n[6] ?? '').split('\x1f') }));
+  const notes = db.table('notes').map(n => ({ id: String(n[0]), mid: String(n[2]), tags: String(n[5] || '').trim().split(/\s+/).filter(Boolean), f: String(n[6] ?? '').slice(0, 60000).split('\x1f').slice(0, 40).map(x => x.slice(0, FIELD_MAX)) }));
+  if (notes.length > DECK_LIMITS.cards * 5) throw new Error('too-many');
   if (!notes.length || !Object.keys(models).length) throw new Error('anki-new');
   // Sous-paquets : le nom du sous-paquet d'une note sert de thème quand la note n'en a pas.
   const deckName = id => String(decks[id]?.name || '').split('::').pop().trim();
@@ -258,6 +280,21 @@ export function mergeDecks(decks, name) {
 export function prepare(deck) {
   // Niveau absent : on le lit dans le nom (« Logement (A2) ») ; sinon A2 par défaut, et l'import demande de le choisir.
   if (!LEVELS.includes(deck.level)) { deck.levelGuessed = !levelIn(deck.name); deck.level = guessLevel(deck.name); }
+  // Ce qui sert d'attribut ou de clé ne vient jamais tel quel d'un fichier : code de langue et identifiants sont contrôlés.
+  if (!/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(deck.lang || '')) deck.lang = 'fr';
+  if (!safeKey(deck.id)) deck.id = 'd' + hash(norm(String(deck.name || 'paquet')));
+  deck.name = String(deck.name || 'Paquet').slice(0, 120);
+  deck.cards = (Array.isArray(deck.cards) ? deck.cards : []).filter(c => c && typeof c.word === 'string' && c.word.trim());
+  if (deck.cards.length > DECK_LIMITS.cards) { deck.skipped = (deck.skipped || 0) + deck.cards.length - DECK_LIMITS.cards; deck.cards = deck.cards.slice(0, DECK_LIMITS.cards); }
+  if (deck.fields !== undefined) deck.fields = (Array.isArray(deck.fields) ? deck.fields : []).filter(f => typeof f === 'string').slice(0, 60).map(f => f.slice(0, 80));
+  const ids = new Set();
+  for (const c of deck.cards) {
+    if (!safeKey(c.id) || ids.has(c.id)) c.id = hash(c.word + '|' + (c.definition || '') + '|' + ids.size);
+    ids.add(c.id);
+    if (c.image && !imgRef(c.image)) delete c.image;
+    if (c.audio && !safeUrl(c.audio)) delete c.audio;
+    if (c.translations && typeof c.translations === 'object') c.translations = Object.fromEntries(Object.entries(c.translations).filter(([k, v]) => safeKey(k) && typeof v === 'string'));
+  }
   deck.cards.forEach(tidyCard);
   const tokSet = s => new Set(noAcc(norm(s || '')).split(/[^\p{L}\p{N}]+/u).filter(Boolean));
   const info = deck.cards.map(c => ({
@@ -297,6 +334,21 @@ export function prepare(deck) {
   return deck;
 }
 
+// Contrôle d'un paquet : ce qu'une machine peut vérifier. La justesse et le naturel des phrases restent à relire.
+// Renvoie une liste de constats { key, cards } (fiches concernées), du plus gênant au moins gênant.
+export function audit(deck) {
+  const lim = LIMITS[deck.level] || {}, wc = t => (t || '').trim().split(/\s+/).filter(Boolean).length, out = [];
+  const add = (key, cards, warn = true) => { if (cards.length) out.push({ key, cards, warn }); };
+  add('auNoImage', deck.cards.filter(c => !c.image && !c.sheet), !!lim.image);
+  add('auLongDef', deck.cards.filter(c => c.definition && lim.def && wc(c.definition) > lim.def));
+  add('auNoExample', deck.cards.filter(c => !c.examples.length));
+  add('auNoCloze', deck.cards.filter(c => c.examples.length && !c.clozes.length));
+  add('auDefHasWord', deck.cards.filter(c => c.definition && c.key.length >= 4 && noAcc(norm(c.definition)).split(/[^\p{L}\p{N}]+/u).includes(c.key.split(' ').pop())));
+  add('auNoSituation', deck.cards.filter(c => !c.situation), false);
+  add('auNoTraps', deck.cards.filter(c => !(c.distractors || []).length), false);
+  return out;
+}
+
 // Forme enregistrable d'un paquet (sans les champs calculés).
 export function serialize(deck) {
   return {
@@ -332,12 +384,13 @@ export function deckFromJSON(text, name, level) {
   }
   if (!d) throw new Error('bad-json');
   if (!d || !Array.isArray(d.cards)) throw new Error('empty');
+  if (d.cards.length > DECK_LIMITS.cards * 5) throw new Error('too-many');     // au-delà, on ne tente même pas la lecture
   const str = v => (typeof v === 'string' ? v : '');
   const cards = d.cards.filter(c => c && str(c.word)).map(c => ({
-    id: str(c.id) || hash(c.word + '|' + (str(c.definition) || Object.values(c.translations || {}).find(str) || '')), word: str(c.word), definition: str(c.definition) || undefined,
-    translations: Object.fromEntries(Object.entries(c.translations || {}).filter(([, v]) => str(v))),
+    id: safeKey(c.id) || hash(c.word + '|' + (str(c.definition) || Object.values(c.translations || {}).find(str) || '')), word: str(c.word), definition: str(c.definition) || undefined,
+    translations: Object.fromEntries(Object.entries(c.translations && typeof c.translations === 'object' ? c.translations : {}).filter(([k, v]) => safeKey(k) && str(v))),
     examples: (Array.isArray(c.examples) ? c.examples : []).filter(str), theme: str(c.theme) || undefined, register: str(c.register) || undefined,
-    family: str(c.family) || undefined, ipa: str(c.ipa) || undefined, image: safeUrl(c.image) || undefined, audio: safeUrl(c.audio) || undefined, extra: {},
+    family: str(c.family) || undefined, ipa: str(c.ipa) || undefined, image: imgRef(c.image) || undefined, audio: safeUrl(c.audio) || undefined, extra: {},
     sheet: /^P\d+-\d+$/i.test(str(c.sheet)) ? c.sheet : undefined, pos: str(c.pos) || undefined,
     marks: Array.isArray(c.marks) ? c.marks.map(m => (Array.isArray(m) && m.length === 2 ? [+m[0], +m[1]] : null)) : undefined, situation: str(c.situation) || undefined, distractors: (Array.isArray(c.distractors) ? c.distractors : []).filter(str),
   })).filter(c => c.definition || Object.keys(c.translations).length);

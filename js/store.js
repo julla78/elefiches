@@ -41,3 +41,18 @@ export async function set(key, value) {
 }
 
 export const isPersistent = () => persistent;
+
+// Demande au navigateur de garder ces données même s'il manque de place. Renvoie true si c'est accordé.
+export async function keep() { try { return !!(await navigator.storage?.persist?.()); } catch { return false; } }
+export async function kept() { try { return !!(await navigator.storage?.persisted?.()); } catch { return false; } }
+
+// Efface tout ce que l'application a enregistré sur cet appareil (paquets, progression, réglages).
+export function wipe() {
+  mem.clear();
+  return new Promise(res => {
+    const finish = () => { dbp = null; res(true); };
+    (dbp || Promise.resolve(null)).then(db => {
+      try { db?.close(); const r = indexedDB.deleteDatabase(DB); r.onsuccess = r.onerror = r.onblocked = finish; } catch { finish(); }
+    });
+  });
+}

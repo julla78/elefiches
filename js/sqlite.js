@@ -10,8 +10,10 @@ export function openSqlite(buffer) {
     return [v * 256 + u8[p], p + 1];
   };
   // Contenu d'une ligne, y compris la partie rangée dans des pages de débordement.
+  let budget = 64e6;                       // octets de lignes lus pour toute la base : une base forgée ne sature pas la mémoire
   const payload = (p, size) => {
     const max = usable - 35;
+    if (size > 2e6 || (budget -= size) < 0) throw new Error('sqlite');     // aucune note de vocabulaire n'approche 2 Mo
     if (size <= max) return u8.subarray(p, p + size);
     const min = Math.floor((usable - 12) * 32 / 255) - 23, k = min + (size - min) % (usable - 4), local = k <= max ? k : min;
     const out = new Uint8Array(size); out.set(u8.subarray(p, p + local));
@@ -26,6 +28,7 @@ export function openSqlite(buffer) {
     const d = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength), types = [];
     const vi = p => { let v = 0; for (let i = 0; i < 9; i++) { const b = bytes[p++]; v = v * 128 + (b & 127); if (!(b & 128)) break; } return [v, p]; };
     let [hdr, p] = vi(0), q = hdr;
+    if (hdr > bytes.length) throw new Error('sqlite');
     while (p < hdr) { const [t, n] = vi(p); types.push(t); p = n; }
     return types.map(t => {
       if (t === 0) return null;
@@ -38,10 +41,13 @@ export function openSqlite(buffer) {
       q += n; return v;
     });
   };
-  const rows = (root, out = []) => {     // parcourt l'arbre d'une table et renvoie ses lignes
+  const rows = (root, out = [], seen = new Set()) => {     // parcourt l'arbre d'une table et renvoie ses lignes
+    if (!(root >= 1) || root * pageSize > u8.length + pageSize || seen.has(root) || seen.size > 200000) throw new Error('sqlite');   // base forgée : page absente ou arbre en boucle
+    seen.add(root);
     const base = (root - 1) * pageSize, h = base + (root === 1 ? 100 : 0), kind = u8[h], n = dv.getUint16(h + 3);
     const cells = Array.from({ length: n }, (_, i) => base + dv.getUint16(h + (kind === 5 ? 12 : 8) + 2 * i));
-    if (kind === 5) { for (const c of cells) rows(dv.getUint32(c), out); rows(dv.getUint32(h + 8), out); }
+    if (new Set(cells).size !== cells.length) throw new Error('sqlite');     // deux pointeurs vers la même ligne : base forgée
+    if (kind === 5) { for (const c of cells) rows(dv.getUint32(c), out, seen); rows(dv.getUint32(h + 8), out, seen); }
     else if (kind === 13) for (const c of cells) { const [size, p1] = varint(c), [rowid, p2] = varint(p1), r = record(payload(p2, size)); if (r[0] === null) r[0] = rowid; out.push(r); }   // « id integer primary key » : la valeur est le numéro de ligne
     return out;
   };

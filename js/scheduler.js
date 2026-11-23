@@ -13,7 +13,9 @@ export function review(state, grade, now = Date.now()) {
     ? { ...state.fsrs, due: new Date(state.fsrs.due), last_review: state.fsrs.last_review ? new Date(state.fsrs.last_review) : undefined }
     : createEmptyCard(new Date(now));
   const rating = grade === 'again' ? Rating.Again : grade === 'hard' ? Rating.Hard : Rating.Good;
-  const { card } = engine.next(prev, new Date(now), rating);
+  let card;
+  try { ({ card } = engine.next(prev, new Date(now), rating)); }
+  catch { ({ card } = engine.next(createEmptyCard(new Date(now)), new Date(now), rating)); }      // état de mémoire illisible : on repart d'une fiche neuve
   const box0 = state?.box ?? 1;
   const box = grade === 'again' ? Math.max(1, box0 - 1) : Math.min(5, box0 + 1);
   return {

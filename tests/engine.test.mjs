@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { check, variants, findSpans, clozes, clozeParts } from '../js/match.js';
-import { parseCSV, deckFromCSV, DEMO_CSV, serialize, prepare, demoDeck, MODELS, safeUrl, deckToJSON, deckFromJSON, mergeDecks, decode } from '../js/deck.js';
+import { parseCSV, deckFromCSV, DEMO_CSV, serialize, prepare, demoDeck, MODELS, safeUrl, deckToJSON, deckFromJSON, mergeDecks, decode, audit } from '../js/deck.js';
 import { review, isDue, inHerd, summary, stageOf } from '../js/scheduler.js';
 import { guessLevel } from '../js/deck.js';
 import { Session, Challenge, Tour, pickNew, buildActivity, meaning, gloss, chunks, judge, hintOf, roomFor } from '../js/session.js';
@@ -14,7 +14,10 @@ import { levelIn, looksJSON, deckFromAnki } from '../js/deck.js';
 import { openSqlite } from '../js/sqlite.js';
 import { execFileSync } from 'node:child_process';
 
-let n = 0; const t = (name, fn) => { fn(); n++; };
+// État de fiche réaliste (tel que le calendrier le produit), pour les tests de sauvegarde.
+const st = (box, last, extra = {}) => ({ seen: true, box, lastOk: true, fsrs: { state: 2, stability: 5, difficulty: 5, due: last + 86400000, last_review: last, reps: 1, lapses: 0, ...extra } });
+// Les groupes asynchrones sont attendus avant le bilan : un échec ne peut pas passer inaperçu.
+let n = 0; const pending = [], t = (name, fn) => { const r = fn(); if (r?.then) pending.push(r.catch(e => { console.error('ÉCHEC :', name); throw e; })); n++; };
 const surf = (s, w) => { const f = findSpans(s, w); return f && f.spans.map(p => s.slice(p.start, p.end)).join('|'); };
 
 t('variants', () => {
@@ -170,7 +173,7 @@ t('session : difficulté ressentie, récapitulatif du jour, aperçu', () => {
   const mean = (Q, ids) => ids.reduce((x, id) => x + Q[id].fsrs.due, 0) / ids.length;
   assert.ok(mean(P2, s2.today) > mean(P, s.today), '« Facile » espace davantage que « J’ai hésité »');
   const tour = new Tour(demo, {}); const seen = []; while ((step = tour.next())) { seen.push(step.activity.type); tour.answer(step, true); }
-  assert.deepEqual(seen, ['qcm', 'cloze-choice', 'qcm-rev', 'cloze-type', 'order', 'situation-type', 'type', 'match', 'bank']);
+  assert.deepEqual(seen, ['qcm', 'cloze-choice', 'qcm-rev', 'listen', 'cloze-type', 'listen-type', 'order', 'speak', 'situation-type', 'type', 'sentence', 'match', 'bank']);
 });
 t("défi d'étape : associer, compléter, employer ; aucune fiche ne bouge", () => {
   let seed = 5; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
@@ -226,7 +229,7 @@ t('prompts : langue, niveau, traductions, grille', () => {
 t('session complète', () => {
   let now = Date.UTC(2026, 0, 1), seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   const progress = {};
-  for (let day = 0; day < 40; day++) {
+  for (let day = 0; day < 500; day++) {
     const s = new Session(demo, progress, { minutes: 5, maxNew: 5, now, rnd });
     const introduced = new Set(); let step, guard = 0;
     while ((step = s.next(now)) && guard++ < 500) {
@@ -262,7 +265,7 @@ t('langues : traductions par colonne', () => {
 });
 t('images et liens', () => {
   assert.ok(demoDeck().cards.filter(c => c.image).length === 5);
-  assert.equal(safeUrl('javascript:alert(1)'), ''); assert.equal(safeUrl('https://x.org/a.png'), 'https://x.org/a.png');
+  assert.equal(safeUrl('javascript:alert(1)'), ''); assert.equal(safeUrl('https://x.org/a.png'), '', 'aucune image d’un autre site'); assert.equal(safeUrl('//evil.example/x.png'), ''); assert.equal(safeUrl('%2e%2e/%2e%2e/x.png'), ''); assert.equal(safeUrl('/autre/x.png'), ''); assert.equal(safeUrl('images/salle-de-bains.png'), 'images/salle-de-bains.png'); assert.equal(safeUrl('data:text/html,<script>'), ''); assert.ok(safeUrl('data:image/png;base64,AAAA'));
   assert.equal(safeUrl('images/cafe.png'), 'images/cafe.png'); assert.equal(safeUrl('../x'), '');
 });
 t('première session : découverte, choix, puis phrase à trous ; mots apprivoisés', () => {
@@ -361,6 +364,89 @@ t('révisions d’abord : pas de nouveaux mots quand les révisions s’accumule
   // « J'en veux quand même » : l'étudiant lève le frein pour la session
   const forced = new Session(big, due(25), { maxNew: 5, now, force: true }); assert.equal(forced.today.length, 5); assert.ok(!forced.held);
   assert.deepEqual([roomFor(0, 5), roomFor(9, 5), roomFor(10, 5), roomFor(19, 8), roomFor(20, 8)], [5, 5, 2, 2, 0]);
+});
+
+t('écoute, oral et phrase libre : une fiche sur deux, avec repli quand le son manque', () => {
+  const d = demoDeck(), rnd = () => 0.3, seen = { 2: new Set(), 3: new Set(), 4: new Set(), 5: new Set() };
+  for (const c of d.cards) for (const box of [2, 3, 4, 5]) for (const turn of [0, 1]) seen[box].add(buildActivity(d, c, box, rnd, { audio: true, vary: true, turn }).type);
+  assert.ok(seen[2].has('listen') && seen[2].has('qcm-rev'), [...seen[2]].join());
+  assert.ok(seen[4].has('speak') && seen[4].has('order'), [...seen[4]].join());
+  assert.ok(seen[5].has('sentence') && seen[5].has('situation-type'), [...seen[5]].join());
+  for (const c of d.cards) for (const box of [2, 3, 4]) for (const turn of [0, 1]) assert.ok(!['listen', 'listen-type', 'speak'].includes(buildActivity(d, c, box, rnd, { audio: false, vary: true, turn }).type), 'sans son : aucune forme d’écoute ni d’oral');
+  const cafe = d.cards[0], li = buildActivity(d, cafe, 2, rnd, { force: 'listen' }), sp = buildActivity(d, cafe, 4, rnd, { force: 'speak' }), se = buildActivity(d, cafe, 5, rnd, { force: 'sentence' }), lt = buildActivity(d, cafe, 3, rnd, { force: 'listen-type' });
+  assert.ok(li.listen && !li.gated && li.options.includes(li.answer)); assert.ok(sp.self && sp.model === cafe.examples[0]); assert.deepEqual(se.models, cafe.examples); assert.ok(lt.listen && lt.accepted.length);
+  assert.ok(li.pics && Object.keys(li.pics).length === li.options.length || !li.pics, 'niveau A1 ou A2 avec images : le sens se choisit parmi des images');
+  // une session entière avec le son : les nouvelles formes se jugent comme les autres
+  const P = {}, now = Date.UTC(2026, 0, 1); let s = new Session(d, P, { maxNew: 5, now, audio: true }), n = 0, types = new Set();
+  for (let day = 0; day < 500; day++) {
+    const at = now + day * 86400000; s = new Session(d, P, { maxNew: 5, now: at, audio: true });
+    for (let st = s.next(at); st && n < 20000; st = s.next(at)) { n++; types.add(st.activity?.type); if (st.activity) s.answer(st, true, at, {}); }
+  }
+  assert.ok(['listen', 'speak', 'sentence'].every(x => types.has(x)), [...types].join());
+});
+
+t('sauvegarde : aller-retour, et l’état le plus récent l’emporte', async () => {
+  const { makeBackup, readBackup, mergeProgress } = await import('../js/backup.js');
+  const d = demoDeck(), now = Date.UTC(2026, 0, 1), a = d.cards[0].id, b = d.cards[1].id;
+  const old = { [a]: st(2, now), [b]: st(4, now + 5), _stages: { 1: now }, _race: { best: 9 } };
+  const text = makeBackup({ decks: [serialize(d)], progress: { [d.id]: old }, settings: { minutes: 5 }, now });
+  const back = readBackup(text);
+  assert.equal(back.decks[0].cards.length, d.cards.length); assert.deepEqual(back.progress[d.id][a], old[a]);
+  assert.equal(readBackup('{"elefiches":1,"cards":[]}'), null, 'un paquet n’est pas une sauvegarde'); assert.equal(readBackup('pas du json'), null);
+  const newer = { [a]: st(3, now + 9), _race: { best: 4 }, _stages: { 2: now } };
+  const m = mergeProgress(newer, old, now + 100);
+  assert.equal(m[a].box, 3, 'le travail récent n’est pas écrasé par une vieille sauvegarde'); assert.equal(m[b].box, 4, 'une fiche absente est retrouvée');
+  assert.deepEqual(Object.keys(m._stages).sort(), ['1', '2']); assert.equal(m._race.best, 9);
+});
+
+t('rappel : rendez-vous répété avec alarme, au format des agendas', async () => {
+  const { buildICS } = await import('../js/remind.js');
+  const ics = buildICS({ time: '18:30', days: 'three', url: 'https://exemple.test/elefiches/', title: 'Éléfiches : 5 minutes, promis', note: 'Ouvre Éléfiches.', now: new Date(2026, 10, 24, 20, 0) });   // un mardi soir
+  assert.ok(ics.startsWith('BEGIN:VCALENDAR\r\n') && ics.endsWith('END:VCALENDAR\r\n'));
+  assert.ok(ics.includes('RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR')); assert.ok(ics.includes('DTSTART:20261125T183000'), 'premier rappel le mercredi suivant');
+  assert.ok(ics.includes('BEGIN:VALARM') && ics.includes('TRIGGER:PT0M')); assert.ok(ics.includes('SUMMARY:Éléfiches : 5 minutes\\, promis'), 'virgule protégée');
+  assert.ok(ics.split('\r\n').every(l => new TextEncoder().encode(l).length <= 75), 'aucune ligne de plus de 75 octets');
+  assert.ok(buildICS({ time: 'n’importe quoi', now: new Date(2026, 0, 1, 9, 0) }).includes('DTSTART:20260101T180000'));
+  assert.ok(buildICS({ days: 'daily' }).includes('RRULE:FREQ=DAILY'));
+});
+
+t('contrôle d’un paquet : images, longueur des définitions, exemples', () => {
+  const mk = (level, cards) => prepare({ id: 'q', name: 'Q', lang: 'en', level, cards: cards.map((c, i) => ({ id: 'k' + i, examples: [], translations: {}, ...c })) });
+  const a1 = mk('A1', [{ word: 'a sheep', definition: 'A farm animal that gives us wool and that we often see in fields in the countryside.', examples: ['The cow is big.'] }, { word: 'a cow', definition: 'A big farm animal.', image: 'data:image/png;base64,AA', examples: ['The cow gives milk.'], situation: 's', distractors: ['dog'] }, { word: 'a horse', definition: 'It is a horse animal.', image: 'data:image/png;base64,AA' }]);
+  const found = Object.fromEntries(audit(a1).map(f => [f.key, f]));
+  assert.equal(found.auNoImage.cards.length, 1); assert.ok(found.auNoImage.warn, 'A1 : chaque mot doit avoir son image');
+  assert.deepEqual(found.auLongDef.cards.map(c => c.word), ['a sheep']); assert.deepEqual(found.auNoExample.cards.map(c => c.word), ['a horse']);
+  assert.deepEqual(found.auNoCloze.cards.map(c => c.word), ['a sheep'], 'le mot « sheep » n’est pas dans son exemple'); assert.deepEqual(found.auDefHasWord.cards.map(c => c.word), ['a horse']);
+  assert.ok(!found.auNoSituation.warn);
+  assert.ok(!audit(mk('B2', [{ word: 'a lease', definition: 'A contract.', examples: ['I signed the lease.'] }])).find(f => f.key === 'auNoImage').warn, 'B2 : image facultative');
+});
+
+t('prompts : phrase qui n’admet qu’un mot, image pour chaque fiche en A1, prompt de correction', () => {
+  const p = buildPrompts({ lang: 'en', level: 'A1', topic: 'farm animals', count: 12 }), b2 = buildPrompts({ lang: 'fr', level: 'B2', topic: 'le logement', count: 12 });
+  assert.ok(p.file.includes('RÈGLES DES PHRASES D\'EXEMPLE') && p.file.includes('présent continu') && p.file.includes('n\'importe quel animal irait'));
+  assert.ok(p.file.includes('CHAQUE fiche a une image') && p.cards.includes('CHAQUE fiche a une image')); assert.ok(!b2.file.includes('CHAQUE fiche a une image') && b2.file.includes('N\'illustre pas les mots abstraits'));
+  assert.ok(p.review.includes('Livre ensuite de nouveau le paquet COMPLET') && p.review.includes('5. Chaque fiche a une image')); assert.ok(!b2.file.includes('présent continu'));
+});
+
+await (async () => {
+  // Archive piégée : un petit fichier qui en annonce un petit mais se décompresse en 80 Mo.
+  execFileSync('python3', ['-c', `import zipfile
+z = zipfile.ZipFile('/tmp/elefiches-bombe.zip', 'w', zipfile.ZIP_DEFLATED); z.writestr('paquet.json', b'0' * 80_000_000); z.close()`]);
+  let err = ''; try { await unzip(fs.readFileSync('/tmp/elefiches-bombe.zip')); } catch (e) { err = e.message; }
+  t('fichiers piégés : archive trop grosse refusée, clés réservées écartées', () => {
+    assert.equal(err, 'zip-big', 'une archive qui se décompresse en 80 Mo est refusée');
+    const evil = JSON.stringify({ name: 'X', level: 'A1', cards: [{ id: '__proto__', word: 'a', definition: 'un', translations: { __proto__: 'x', constructor: 'y', fr: 'ok' } }, { id: 'constructor', word: 'b', definition: 'deux' }, { id: '<img src=x onerror=alert(1)>', word: 'c', definition: 'trois' }] });
+    const d = deckFromJSON(evil);
+    assert.ok(d.cards.every(c => /^[A-Za-z0-9_-]+$/.test(c.id) && !['__proto__', 'constructor'].includes(c.id)), d.cards.map(c => c.id).join());
+    assert.deepEqual(Object.keys(d.cards[0].translations), ['fr']); assert.equal(({}).polluted, undefined);
+  });
+})();
+
+t('sauvegarde forgée : aucune clé réservée ne passe', async () => {
+  const { mergeProgress } = await import('../js/backup.js');
+  const forged = JSON.parse('{"__proto__":{"polluted":1},"constructor":{"x":1},"ok":{"seen":true,"box":2,"fsrs":{"state":2,"stability":5,"difficulty":5,"due":9,"last_review":5}},"bad":"texte","sansmemoire":{"seen":true,"box":3},"_stages":{"1":5,"__proto__":{"y":1},"zz":3}}');
+  const m = mergeProgress({}, forged);
+  assert.deepEqual(Object.keys(m).sort(), ['_stages', 'ok', 'sansmemoire']); assert.equal(m.sansmemoire.box, 1); assert.deepEqual(m._stages, { 1: 5 }); assert.equal(({}).polluted, undefined); assert.equal(m.polluted, undefined);
 });
 
 t('voix : ce qui est lu à voix haute', () => {
@@ -492,4 +578,32 @@ if (real && fs.existsSync(real)) {
   const show = w => { const c = d.cards.find(x => x.word === w); return c && `${w} → ${c.clozes.map(x => x.answer).join(' / ')} ; voisines : ${c.neighbours.map(id => d.byId[id].word).join(', ')}`; };
   for (const w of ['Un boulot', 'Bosser', 'Avoir du taf', 'Être viré(e)', 'Un emploi', 'Jusqu\'à']) console.log(show(w));
 }
+t('sécurité : progression forgée reconstruite, paquet démesuré refusé, texte à trous piégé lu vite', async () => {
+  const { cleanProgress, mergeProgress, countReplaced } = await import('../js/backup.js');
+  const now = Date.UTC(2026, 10, 23), far = Date.UTC(2100, 0, 1);
+  const forged = { abc: { seen: 1, box: 99, born: far, lastOk: 'oui', fsrs: { state: 2, stability: 30, difficulty: 4, due: far, last_review: far, note: '<img src=x>', reps: 3 } }, casse: { seen: true, box: 4, fsrs: { due: 1, last_review: 1, state: 99 } }, '<b>x</b>': st(2, now), _race: { best: '<meta http-equiv=refresh content=0;url=//evil>', runs: -5 }, _match: { best: 7.6 }, _autre: { x: 1 } };
+  const c = cleanProgress(forged, now);
+  assert.deepEqual(Object.keys(c).sort(), ['_match', '_race', 'abc', 'casse']); assert.equal(c.abc.box, 5); assert.equal(c.abc.born, now); assert.equal(c.abc.fsrs.last_review, now);
+  assert.ok(c.abc.fsrs.due <= now + 5 * 366 * 86400000); assert.equal(c.abc.fsrs.note, undefined); assert.equal(c.abc.fsrs.reps, 3); assert.strictEqual(c.abc.lastOk, true);
+  assert.deepEqual([c.casse.box, c.casse.fsrs], [1, undefined], 'état de mémoire invalide : la fiche redevient tout juste découverte');
+  assert.deepEqual(cleanProgress({ neuve: { seen: true, box: 1, born: now - 5 } }, now).neuve, { seen: true, box: 1, lastOk: false, born: now - 5 }, 'fiche découverte, pas encore révisée : gardée');
+  assert.deepEqual(c._race, { best: 0, runs: 0 }); assert.deepEqual(c._match, { best: 8, runs: 0 }); assert.ok(!JSON.stringify(c).includes('<'));
+  // une sauvegarde datée du futur ne l'emporte pas sur un travail d'aujourd'hui fait après elle
+  const mine = { abc: st(2, now) };
+  assert.equal(mergeProgress(mine, forged, now).abc.box, 2); assert.equal(countReplaced(mine, forged, now), 0);
+  assert.equal(countReplaced({ abc: st(1, now - 5) }, { abc: st(3, now - 1) }, now), 1);
+  // un état illisible ne bloque jamais une réponse : le calendrier repart d'une fiche neuve
+  const { review } = await import('../js/scheduler.js');
+  assert.equal(review({ seen: true, box: 3, fsrs: { due: 1, last_review: 1, state: 99 } }, 'good', now).box, 4);
+  // paquet démesuré : refusé d'emblée, ou réduit à 2 000 fiches ; champs coupés
+  assert.throws(() => deckFromJSON(JSON.stringify({ name: 'X', level: 'A1', cards: Array.from({ length: 10001 }, (_, i) => ({ word: 'm' + i, definition: 'd' })) })), /too-many/);
+  const big = deckFromJSON(JSON.stringify({ name: 'X', level: 'A1', cards: Array.from({ length: 2600 }, (_, i) => ({ word: 'mot' + i, definition: 'd'.repeat(3000), examples: Array.from({ length: 30 }, () => 'x '.repeat(900)), distractors: Array.from({ length: 40 }, (_, k) => 'p' + k) })) }));
+  assert.equal(big.cards.length, 2000); assert.equal(big.cards[0].definition.length, 500); assert.equal(big.cards[0].examples.length, 6); assert.ok(big.cards[0].examples[0].length <= 300); assert.equal(big.cards[0].distractors.length, 6);
+  // champ Anki piégé : des milliers de « {{c1:: » ne figent plus la lecture
+  const t0 = Date.now(), evil = deckFromAnki(await makeAnki({ models: { 20: { id: 20, name: 'Texte à trous', type: 1, flds: fl('Texte', 'Extra') } }, decks: { 1: { name: 'Default' }, 2: { name: 'Piège A1' } },
+    notes: [{ mid: 20, did: 2, f: ['{{c1::'.repeat(4000), 'x'] }, { mid: 20, did: 2, f: ['Je paie mon {{c1::loyer}}.', 'Argent du logement.'] }, { mid: 20, did: 2, f: ['Elle signe le {{c1::bail}}.', 'Contrat.'] }, { mid: 20, did: 2, f: ['Il donne son {{c1::préavis}}.', 'Délai.'] }] }), '', 'fr', '');
+  assert.ok(Date.now() - t0 < 3000, 'lecture en moins de trois secondes'); assert.ok(evil.cards.some(c => c.word === 'loyer'));
+});
+
+await Promise.all(pending);
 console.log(`${n} groupes de tests réussis`);

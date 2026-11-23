@@ -44,6 +44,14 @@ def play(page, right=True, shots=None, near=False):
         if page.locator('[data-action=reveal]').count():
             kinds.add('gate'); shot('gate'); assert not page.locator('.option').count(), 'les choix restent cachés avant le rappel de tête'
             page.click('[data-action=reveal]')
+        if kind in ('speak', 'sentence'):         # formes où l'étudiant se juge lui-même en comparant avec un modèle
+            shot(kind, True)
+            if kind == 'sentence': page.fill('textarea[name=mine]', 'Ma phrase.')
+            page.click('[data-action=reveal-self]'); shot(kind + '_check', True)
+            if kind == 'sentence': assert 'Ma phrase.' in page.inner_text('.mine'), 'la phrase de l’étudiant est gardée pour la comparaison'
+            page.click('[data-action=self][data-v=good]' if right else '[data-action=self][data-v=again]')
+            continue
+        if kind == 'listen': assert not page.locator('.study h2.word').count(), 'écoute : le mot ne doit pas être écrit avant la réponse'
         if kind == 'order':
             sol = page.evaluate("window.__elefiches.step.activity.solution")
             if not right: page.click('[data-action=skip]')
@@ -67,7 +75,7 @@ def play(page, right=True, shots=None, near=False):
             for ans in page.evaluate("window.__elefiches.step.activity.items.map(i => i.answer)"):
                 page.locator('.bank .chunk:not(:disabled)', has_text=re.compile('^' + re.escape(ans) + '$')).first.click()
             shot('bank', True); page.click('[data-action=check-bank]')
-        elif kind in ('cloze-type', 'situation-type', 'type', 'number'):
+        elif kind in ('cloze-type', 'situation-type', 'type', 'number', 'listen-type'):
             ans = page.evaluate("(a => a.cloze || a.type === 'number' ? a.answer : a.accepted[0])(window.__elefiches.step.activity)")
             shot(kind)
             if near and 'near' not in kinds and len(ans) >= 5:        # une lettre en trop : second essai (B1) ou acceptation corrigée (A1, A2)
@@ -80,8 +88,9 @@ def play(page, right=True, shots=None, near=False):
             # la bonne réponse est connue du test via l'état interne exposé par la page
             ans = page.evaluate("window.__elefiches.step.activity.answer")
             opts = page.locator('.option')
-            texts = [re.sub(r'^\d\s*', '', opts.nth(i).inner_text()).strip() for i in range(opts.count())]
-            assert ans in texts, (ans, texts)
+            texts = page.evaluate("window.__elefiches.step.activity.options")      # les choix peuvent être des images : on lit l'état, pas l'écran
+            assert ans in texts and opts.count() == len(texts), (ans, texts)
+            if page.evaluate("!!window.__elefiches.step.activity.pics"): kinds.add('pics'); assert page.locator('.option.pic img').count() == len(texts)
             idx = texts.index(ans) if right else (texts.index(ans) + 1) % len(texts)
             shot(kind)
             opts.nth(idx).click()
@@ -140,7 +149,7 @@ with sync_playwright() as p:
     page.locator('.cardlist li:visible .cardrow').click(); page.wait_for_selector('form[data-submit=card]')
     page.fill('textarea[name=definition]', 'Levantarse muy pronto.')
     page.set_input_files('input[data-file=image]', png)
-    page.wait_for_function("!document.querySelector('[data-preview=image]').hidden")
+    page.wait_for_selector('[data-preview=image]:not([hidden])')      # la règle de sécurité du site interdit l'évaluation de texte : on attend un élément
     assert page.input_value('textarea[name=definition]') == 'Levantarse muy pronto.', 'la saisie ne doit pas être effacée par l’ajout d’image'
     page.screenshot(path=f'{out}/card_edit.png', full_page=True)
     page.click('form[data-submit=card] button.primary'); page.wait_for_selector('.cardlist')
@@ -283,6 +292,70 @@ with sync_playwright() as p:
     page.screenshot(path=f'{out}/b2_en.png')
     page.click('[data-action=quit]')
     assert page.evaluate("document.documentElement.lang") == 'fr'
+    # ---- version 10 : contrôle du paquet, course, match amical, rappel, sauvegarde et restauration ----
+    page.wait_for_selector('.deck')
+    did = page.evaluate("window.__elefiches.state.decks.find(d => d.name === 'A2+ test').id")
+    card = page.locator(f'.deck:has([data-action=herd][data-id="{did}"])')
+    # la progression survit au rechargement de la page : c'est la condition de toute la méthode
+    before = page.evaluate(f"JSON.stringify(Object.entries(window.__elefiches.state.progress['{did}']).filter(([k]) => !k.startsWith('_')).map(([k, v]) => [k, v.box, v.fsrs.due]).sort())")
+    page.reload(); page.wait_for_selector('.deck')
+    after = page.evaluate(f"JSON.stringify(Object.entries(window.__elefiches.state.progress['{did}']).filter(([k]) => !k.startsWith('_')).map(([k, v]) => [k, v.box, v.fsrs.due]).sort())")
+    assert before == after and len(before) > 500, 'la progression doit être retrouvée à l’identique après rechargement'
+    # course avec la souris : cinq bonnes réponses, une erreur, puis la fin du temps
+    card.locator('[data-action=race]').click(); page.wait_for_selector('.track .hare svg'); page.screenshot(path=f'{out}/race.png')
+    for k in range(6):
+        a_ = page.evaluate("(a => [a.options, a.answer])(window.__elefiches.state.race.activity)")
+        i = a_[0].index(a_[1]); page.locator('[data-action=race-pick]').nth(i if k != 2 else (i + 1) % len(a_[0])).click()
+        if k == 2: page.wait_for_timeout(1000)
+    assert page.evaluate("[window.__elefiches.state.race.score, window.__elefiches.state.race.miss]") == [5, 1]
+    page.evaluate("window.__elefiches.state.race.startAt -= 61000"); page.wait_for_selector('.done'); page.screenshot(path=f'{out}/race_done.png')
+    assert page.evaluate(f"window.__elefiches.state.progress['{did}']._race.best") == 5
+    page.click('[data-action=home]'); assert 'record 5' in card.locator('[data-action=race]').inner_text()
+    # match amical contre les crocodiles : ouvert quand toutes les défenses sont gagnées
+    assert card.locator('.chlock .croc').count() == 1 and not card.locator('[data-action=friendly]').count()
+    page.evaluate(f"(S => {{ const P = S.progress['{did}']; P._stages = {{}}; for (let i = 1; i <= 9; i++) P._stages[i] = Date.now(); window.__elefiches.rerender(); }})(window.__elefiches.state)")
+    card.locator('[data-action=friendly]').click(); kf = play(page, right=True); page.screenshot(path=f'{out}/friendly_done.png', full_page=True)
+    assert page.locator('.done .duo .croc').count() == 1 and 'Éléphants' in page.inner_text('.done'), page.inner_text('.done')
+    page.click('.done [data-action=home]')
+    # rappel : un fichier d'agenda
+    page.click('details.remind summary'); page.fill('input[data-remind=time]', '07:45'); page.keyboard.press('Tab')
+    with page.expect_download() as dl: page.click('[data-action=remind]')
+    ics = open(dl.value.path(), encoding='utf-8').read(); assert dl.value.suggested_filename.endswith('.ics') and 'T074500' in ics and 'BEGIN:VALARM' in ics, ics[:300]
+    page.screenshot(path=f'{out}/home_v10.png', full_page=True)
+    # sauvegarde dans un fichier, puis restauration sur un appareil neuf
+    if not page.locator('details.backup[open]').count(): page.click('details.backup summary')
+    with page.expect_download() as dl: page.click('[data-action=backup]')
+    bpath = out + '/_sauvegarde.json'; dl.value.save_as(bpath)
+    fresh = b.new_context(viewport={'width': 420, 'height': 860}).new_page(); fresh.on('pageerror', lambda e: errors.append(str(e)))
+    fresh.goto(student); fresh.wait_for_selector('.deck'); assert fresh.locator('.deck').count() == 1
+    fresh.set_input_files('input[data-file=backup]', bpath); fresh.wait_for_selector('.bkask')       # la restauration demande une confirmation
+    assert fresh.locator('.bkask li').count() >= 2 and 'nouveau paquet' in fresh.inner_text('.bkask'); fresh.screenshot(path=f'{out}/backup_ask.png', full_page=True)
+    fresh.click('[data-action=backup-yes]'); fresh.wait_for_selector('.banner.good')
+    got = fresh.evaluate(f"(S => [S.decks.length, JSON.stringify(Object.entries(S.progress['{did}']).filter(([k]) => !k.startsWith('_')).map(([k, v]) => [k, v.box, v.fsrs.due]).sort()), S.progress['{did}']._race.best])(window.__elefiches.state)")
+    assert got[1] == after and got[2] == 5 and got[0] >= 2, 'la restauration doit rendre les paquets et toute la progression'
+    fresh.reload(); fresh.wait_for_selector('.deck'); assert fresh.evaluate(f"Object.keys(window.__elefiches.state.progress['{did}']).length") > 50, 'la progression restaurée est enregistrée'
+    fresh.set_input_files('input[data-file=backup]', zpath); fresh.wait_for_selector('.banner.warn')
+    import json as _json
+    bad = _json.load(open(bpath, encoding='utf-8')); P = bad['progress'][did]
+    P['_race'] = {'best': '<img src=x id=pwn1><meta http-equiv=refresh content="0;url=https://example.org/">', 'runs': 1}; P['_match'] = {'best': '<b id=pwn2>x</b>'}
+    k0 = next(k for k in P if not k.startswith('_')); P[k0]['box'] = 99; P[k0]['fsrs']['last_review'] = 4102444800000; P[k0]['fsrs']['due'] = 4102444800000
+    badpath = out + '/_sauvegarde_forgee.json'; _json.dump(bad, open(badpath, 'w', encoding='utf-8'))
+    fresh.set_input_files('input[data-file=backup]', badpath); fresh.wait_for_selector('.bkask'); fresh.click('[data-action=backup-yes]'); fresh.wait_for_selector('.banner.good')
+    fresh.reload(); fresh.wait_for_selector('.deck'); fresh.wait_for_timeout(1500)
+    assert 'localhost' in fresh.url and not fresh.locator('#pwn1, #pwn2, meta[http-equiv=refresh]').count(), 'une sauvegarde forgée ne doit rien injecter'
+    assert fresh.evaluate(f"(P => [P._race.best, P['{k0}'].box <= 5, P['{k0}'].fsrs.due < Date.now() + 6 * 365 * 86400000])(window.__elefiches.state.progress['{did}'])") == [5, True, True]
+    # confidentialité : la page dit ce qui est enregistré, et « tout effacer » vide vraiment l'appareil
+    fresh.click('[data-action=privacy]'); fresh.wait_for_selector('.privacy dl'); assert 'GitHub' in fresh.inner_text('.privacy') and 'cookie' in fresh.inner_text('.privacy').lower()
+    fresh.click('[data-action=wipe]'); fresh.click('[data-action=wipe-yes]'); fresh.wait_for_timeout(300)
+    assert fresh.locator('.privacy').count(), 'un double-clic ne doit pas tout effacer'
+    fresh.wait_for_timeout(900); fresh.click('[data-action=wipe-yes]'); fresh.wait_for_selector('.deck')
+    assert fresh.evaluate("(S => [S.decks.length, S.decks[0].demo === true, Object.keys(S.progress[S.decks[0].id] || {}).length])(window.__elefiches.state)") == [1, True, 0], 'après effacement : seulement la démonstration, sans progression'
+    fresh.reload(); fresh.wait_for_selector('.deck'); assert fresh.locator('.deck').count() == 1
+    fresh.close()
+    # espace enseignant : contrôle automatique du paquet et prompt de correction
+    page.click('[data-action=teacher]'); assert page.locator('.decklist .audit').count() >= 1
+    page.screenshot(path=f'{out}/teacher_v10.png', full_page=True); page.click('[data-action=home]')
+
     # paquet reçu : par un lien (« ?paquet=… ») ou par un fichier ouvert depuis l'accueil, sur un appareil neuf
     import os
     pk = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'paquets'); os.makedirs(pk, exist_ok=True)
@@ -295,9 +368,14 @@ with sync_playwright() as p:
         p3 = b.new_context().new_page(); p3.goto(url.split('#')[0]); p3.wait_for_selector('[data-b=level]')   # enseignant.html s'ouvre sur l'éditeur
         assert 'index.html' not in p3.inner_text('.studenturl') and p3.inner_text('.studenturl').strip().endswith('/'); p3.close()
         assert p2.locator('.deck').count() == 1 and 'Logement (B1)' in p2.inner_text('.deck') and 'est prêt' in p2.inner_text('.banner.good'), p2.inner_text('body')[:300]
-        assert '?' not in p2.url
+        # le lien reste dans l'adresse : une icône posée sur l'écran d'accueil rouvre ainsi le paquet, sans doublon ni perte
+        assert '?paquet=_test' in p2.url
+        p2.locator('[data-action=start]').first.click(); p2.wait_for_selector('.intro'); p2.click('[data-action=next]'); p2.click('[data-action=quit]')
+        seen = p2.evaluate("(S => Object.keys(S.progress[S.decks[0].id]).length)(window.__elefiches.state)"); assert seen >= 1
+        p2.reload(); p2.wait_for_selector('.deck')
+        assert p2.locator('.deck').count() == 1 and p2.evaluate("(S => Object.keys(S.progress[S.decks[0].id]).length)(window.__elefiches.state)") == seen, 'rouvrir le lien garde la progression'
         p2.screenshot(path=f'{out}/student_link.png', full_page=True)
-        p2.set_input_files('input[data-file=packet]', zpath); p2.wait_for_function("document.querySelectorAll('.deck').length === 2")
+        p2.set_input_files('input[data-file=packet]', zpath); p2.locator('.deck').nth(1).wait_for()
         assert p2.locator('.deck').nth(1).locator('.prairie').count() == 1
         p2.goto(student + '?paquet=absent'); p2.wait_for_selector('.banner.warn'); assert 'lien' in p2.inner_text('.banner.warn')
         ctx.close()

@@ -22,14 +22,17 @@ export const SPEC = {
 };
 export const spec = deck => SPEC[deck.level] || SPEC.A2;
 
+// Longueur maximale d'une définition (en mots) et image attendue pour chaque mot : contrôlés à l'import d'un paquet.
+export const LIMITS = { A1: { def: 10, image: true }, A2: { def: 14, image: true }, B1: { def: 20 }, B2: { def: 28 }, C1: { def: 40 }, C2: { def: 60 } };
+
 // Consignes de rédaction données à l'IA, niveau par niveau : définitions, exemples, mots pièges.
 export const WRITING = {
   A1: { words: 'mots concrets et très fréquents, liés à des situations précises de la vie quotidienne',
-    def: 'une phrase très courte au présent, avec des mots que connaît un débutant ; si c\'est impossible, un exemple concret (« c\'est comme… »)',
-    ex: '4 à 7 mots, au présent, une seule proposition (sujet, verbe, complément)',
+    def: '4 à 8 mots, sur le modèle « C\'est un animal de la ferme. » ou « C\'est pour dormir. » (à transposer dans la langue du paquet), avec seulement les mots les plus fréquents de la langue (être, avoir, faire, aller, manger, grand, petit, une personne, un animal, une chose) ; jamais un mot plus difficile que le mot défini',
+    ex: '4 à 7 mots, une seule proposition (sujet, verbe, complément)',
     traps: 'des mots très courants, de sens nettement différent, qu\'un débutant connaît déjà' },
   A2: { words: 'mots courants des besoins quotidiens (achats, logement, études, loisirs, déplacements)',
-    def: 'une phrase courte et simple, avec des mots plus fréquents que le mot défini',
+    def: '6 à 12 mots, une phrase simple, avec des mots plus fréquents que le mot défini',
     ex: '5 à 9 mots, au présent, au passé composé ou au futur proche, une seule proposition ou deux reliées par « et », « mais », « parce que »',
     traps: 'des mots courants du même domaine, de sens clairement différent' },
   B1: { words: 'vocabulaire des sujets familiers : famille, loisirs, travail, voyages, actualité',
