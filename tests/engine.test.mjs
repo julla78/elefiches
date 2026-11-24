@@ -7,7 +7,7 @@ import { review, isDue, inHerd, summary, stageOf } from '../js/scheduler.js';
 import { guessLevel } from '../js/deck.js';
 import { Session, Challenge, Tour, pickNew, buildActivity, meaning, gloss, chunks, judge, hintOf, roomFor, neutral } from '../js/session.js';
 import { bookish, sceneLike } from '../js/deck.js';
-import { kindOf, genderOf, startOf, cluster, tightGap } from '../js/session.js';
+import { kindOf, genderOf, startOf, cluster, tightGap, sameSense, SELF, genderGap, numberOf } from '../js/session.js';
 import { diffParts, spoken, slug } from '../js/match.js';
 import { SPEC, WRITING } from '../js/levels.js';
 import { unzip } from '../js/zip.js';
@@ -335,7 +335,7 @@ t('niveau et étapes', () => {
 });
 
 t('délai entre la découverte et la première question', () => {
-  const big = prepare({ id: 'k', name: 'k', lang: 'fr', cards: Array.from({ length: 20 }, (_, i) => ({ id: 'c' + i, word: 'mot' + i + 'xx', definition: 'définition numéro ' + i, examples: [] })) });
+  const big = prepare({ id: 'k', name: 'k', lang: 'fr', cards: Array.from({ length: 20 }, (_, i) => ({ id: 'c' + i, word: 'mot' + i + 'xx', definition: 'définition numéro ' + i, pos: 'nom', examples: [] })) });
   for (const maxNew of [3, 5, 8]) {
     const s = new Session(big, {}, { maxNew, now: Date.UTC(2026, 0, 1) });
     const order = s.queue.map(i => i.kind + ':' + i.id);
@@ -683,7 +683,7 @@ t('prompt : quatre phrases variées, phrases de manuel interdites, contrôle de 
 
 t('mots pièges : même nature, même début, même genre, même thème ; rien ne s’élimine par la grammaire ou l’orthographe', () => {
   assert.equal(startOf("l'appartement", 'fr'), 'V'); assert.equal(startOf('un hôtel', 'fr'), 'V'); assert.equal(startOf('une maison', 'fr'), 'C'); assert.equal(startOf('an hour', 'en'), 'C'); assert.equal(startOf('an owl', 'en'), 'V');
-  assert.equal(kindOf({ word: 'to run' }), 'verbe'); assert.equal(kindOf({ word: 'a cow' }), 'nom'); assert.equal(kindOf({ word: 'vite', pos: 'adverbe' }), 'adverbe');
+  assert.equal(kindOf({ word: 'to run' }, 'en'), 'verbe'); assert.equal(kindOf({ word: 'a cow' }, 'en'), 'nom'); assert.equal(kindOf({ word: 'vite', pos: 'adverbe' }), 'adverbe');
   assert.equal(genderOf({ word: 'une maison' }), 'f'); assert.equal(genderOf({ word: 'un loyer' }), 'm'); assert.equal(genderOf({ word: "l'appartement" }), '');
   const mk = (word, ex, theme = 'logement', pos = 'nom') => ({ word, pos, theme, definition: 'définition de ' + word, translations: {}, examples: [ex] });
   const deck = prepare({ name: 'Logement (A2)', lang: 'fr', level: 'A2', cards: [
@@ -724,6 +724,70 @@ t('mots pièges : même nature, même début, même genre, même thème ; rien n
 t('phrase libre : jusqu’à cinq modèles', () => {
   const d = prepare({ name: 'x', lang: 'en', level: 'A1', cards: [{ word: 'a cow', definition: 'It is an animal.', examples: ['The [cow] gives us milk.', 'We have a [cow].', '[Cows] eat grass.', 'Where is my [cow]?', 'I can see two [cows].', 'A sixth [cow] sentence.'] }] });
   assert.equal(buildActivity(d, d.cards[0], 5, Math.random, { force: 'sentence' }).models.length, 5);
+});
+
+t('questions à choix : sens jumeaux jamais opposés, forme du mot piège accordée à la réponse, toujours un exercice', () => {
+  assert.ok(sameSense('Donner un travail à quelqu’un.', 'Donner un travail à quelqu’un')); assert.ok(sameSense('une vache', 'Une vache'));
+  assert.ok(!sameSense('Quitter son travail.', 'Retirer son travail à quelqu’un.')); assert.ok(!sameSense('définition numéro 1', 'définition numéro 2')); assert.ok(!sameSense('', 'x'));
+  const mk = (word, definition, ex, pos) => ({ word, definition, pos, examples: [ex] });
+  const w = prepare({ name: 'Le travail (A2)', lang: 'fr', level: 'A2', cards: [
+    mk('embaucher', 'Donner un travail à quelqu’un.', 'Le patron veut [embaucher] deux serveurs.', 'verbe'), mk('recruter', 'Donner un travail à quelqu’un.', 'L’entreprise va [recruter] dix personnes.', 'verbe'),
+    mk('licencier', 'Retirer son travail à quelqu’un.', 'Il a peur de se faire [licencier].', 'verbe'), mk('démissionner', 'Quitter son travail.', 'Elle veut [démissionner] en juin.', 'verbe'),
+    mk('travailler', 'Faire un métier.', 'Elle [travaille] le samedi.', 'verbe'), mk('un salaire', 'Argent reçu pour un travail.', 'Mon [salaire] arrive le 30.', 'nom'), mk('un patron', 'Personne qui dirige une entreprise.', 'Mon [patron] est sympa.', 'nom'),
+    mk('un contrat', 'Document qui fixe les règles d’un travail.', 'Je signe mon [contrat] demain.', 'nom'), mk('fatigant', 'Qui demande beaucoup d’énergie.', 'Ce travail est très [fatigant].', 'adjectif'),
+  ] });
+  const [embaucher, recruter] = w.cards;
+  assert.deepEqual(w.twins, [['embaucher', 'recruter']]); assert.deepEqual(audit(w).find(a => a.key === 'auTwins').lines, ['embaucher / recruter']);
+  for (let i = 0; i < 40; i++) for (const [box, force] of [[1, 'qcm'], [2, 'qcm-rev'], [2, 'listen'], [1, 'cloze-choice']]) {
+    const a = buildActivity(w, embaucher, box, Math.random, { force, audio: true });
+    if (a.options) assert.ok(!Object.values(a.from || {}).includes(recruter.id), force + ' : embaucher n’est jamais opposé à recruter, qui a le même sens');
+  }
+  // la réponse est un infinitif : les mots pièges tirés du paquet sont des infinitifs, jamais une forme conjuguée d'une autre fiche
+  for (let i = 0; i < 30; i++) { const a = buildActivity(w, embaucher, 1, Math.random, { force: 'cloze-choice' }); assert.ok(a.options.every(o => /er$/.test(o)), a.options.join(', ')); assert.ok(!a.options.includes('travaille')); }
+  // la réponse est conjuguée (« travaille ») : aucune autre fiche n'a de forme qui se termine pareil, donc pas de choix bancal
+  const t3 = buildActivity(w, w.cards[4], 1, Math.random, { force: 'cloze-choice' }); assert.ok(t3.type !== 'cloze-choice' || t3.options.every(o => o.endsWith('e')), t3.type + ' ' + JSON.stringify(t3.options));
+  // l'adjectif est seul de sa catégorie : jamais de choix ; sans phrase et avec un mot en deux parties, il reste le rappel de tête
+  for (let box = 1; box <= 5; box++) assert.ok(!buildActivity(w, w.cards[8], box, Math.random, { vary: true, audio: true }).options);
+  const lone = prepare({ name: 'x', lang: 'fr', level: 'A2', cards: [{ word: 'De… à…', definition: 'Entre deux points.' }] });
+  for (let box = 1; box <= 5; box++) { const a = buildActivity(lone, lone.cards[0], box, Math.random, { vary: true, audio: true }); assert.equal(a.type, 'recall'); assert.ok(SELF.includes('recall') && a.self && a.answer === 'De… à…'); }
+  const s = new Session(lone, {}, { maxNew: 3, now: Date.UTC(2026, 0, 1) }); let step, n = 0; while ((step = s.next(Date.UTC(2026, 0, 1))) && n++ < 20) { assert.ok(step.intro || step.activity, 'aucune étape sans exercice'); if (!step.intro) s.answer(step, true, Date.UTC(2026, 0, 1)); }
+  // mots grammaticaux reconnus par listes fermées ; une fiche de catégorie inconnue n'est jamais proposée avec d'autres
+  const kd = (word, lang = 'fr', extra = {}) => kindOf({ word, ...extra }, lang);
+  for (const w of ['Depuis', 'Pendant', "Jusqu'à", 'En (durée nécessaire)', 'Dans (délai)', 'À (heure)', 'Au (siècle)', 'De… à…', 'Au mois de', 'Il y a', 'à partir de', 'près de', 'grâce à']) assert.equal(kd(w), 'préposition', w);
+  assert.equal(kd('next to', 'en'), 'préposition'); assert.equal(kd('avoir besoin de'), 'verbe'); assert.equal(kd('un tas de'), 'nom');
+  assert.equal(kd('Le (jour ou date)'), 'déterminant'); assert.equal(kd('De la paperasse'), 'nom'); assert.equal(kd('Un boulot'), 'nom'); assert.equal(kd('Avoir du travail'), 'verbe');
+  assert.equal(kd('in front of', 'en'), 'préposition'); assert.equal(kd('since', 'en'), 'préposition'); assert.equal(kd('a cow', 'en'), 'nom'); assert.equal(kd('to hire', 'en'), 'verbe');
+  assert.equal(kd('desde', 'es'), 'préposition'); assert.equal(kd('cerca de', 'es'), 'préposition'); assert.equal(kd('a menudo', 'es'), 'expression'); assert.equal(kd('el trabajo', 'es'), 'nom');
+  const edited = { word: 'zzzq' }; assert.equal(kindOf(edited, 'fr'), 'autre'); edited.pos = 'adjectif'; assert.equal(kindOf(edited, 'fr'), 'adjectif', 'une fiche corrigée dans l’éditeur est réexaminée');
+  const unk = prepare({ name: 'u', lang: 'fr', level: 'A2', cards: ['zzzq', 'wwwk', 'qqqj', 'xxxv'].map((word, i) => ({ word, definition: 'sens ' + i, examples: ['Voici [' + word + '] ici.'] })) });
+  for (const c of unk.cards) for (let box = 1; box <= 5; box++) assert.ok(!buildActivity(unk, c, box, Math.random, { vary: true, audio: true }).options, 'catégorie inconnue : jamais de question à choix');
+  // phrase à trou : ce que la phrase impose (genre, nombre, début, casse, terminaison du verbe) est un filtre, pas une préférence
+  const nn = (word, definition, ex, extra = {}) => ({ word, definition, pos: 'nom', examples: [ex], ...extra });
+  const g = prepare({ name: 'g', lang: 'fr', level: 'A2', cards: [
+    nn('Un emploi', 'Travail payé, dans une entreprise.', 'Mon frère cherche un [emploi] stable.', { theme: 't', register: 'courant' }), nn('Une entreprise', 'Organisation qui vend des biens ou des services.', 'Mon frère travaille dans une grande [entreprise].'),
+    nn('Une équipe', 'Groupe de personnes qui travaillent ensemble.', 'Notre [équipe] se réunit le lundi.'), nn('Une école', 'Lieu où l’on apprend.', 'Cette [école] ouvre à huit heures.'), nn('Un entretien', 'Rendez-vous pour obtenir un poste.', 'Elle passe un [entretien] demain.'),
+    nn('Un avis', 'Ce que l’on pense de quelque chose.', 'Il donne son [avis] en réunion.'), nn('Les papiers', 'Documents à présenter.', 'J’ai oublié mes [papiers] à la maison.'), nn('Les loisirs', 'Activités du temps libre.', 'Quels sont tes [loisirs] préférés ?'),
+    nn('Les animaux', 'Êtres vivants qui ne sont pas des plantes.', 'Il aime les [animaux] sauvages.'), nn('Un CV', 'Document qui présente un parcours.', 'J’envoie mon [CV] ce soir.'), nn('De la paperasse', 'Beaucoup de documents à remplir.', 'Il déteste la [paperasse].'),
+    nn('Un job', 'Mot familier pour parler d’un emploi, souvent court.', 'Ce [job] étudiant paie son loyer.', { theme: 't', register: 'familier' }), nn('Un boulot', 'Mot familier qui signifie un emploi.', 'Son [boulot] est fatigant.', { theme: 't', register: 'familier' }),
+    nn('Un taf', 'Mot très familier qui signifie un emploi.', 'Il cherche un [taf] pour l’été.', { theme: 't', register: 'très familier' }),
+  ] });
+  const W = Object.fromEntries(g.cards.map(c => [c.word, c])), opts = (c, k = 40) => { const all = new Set(); for (let i = 0; i < k; i++) { const a = buildActivity(g, c, 1, Math.random, { force: 'cloze-choice' }); if (a.type === 'cloze-choice') for (const o of a.options) all.add(o); } return [...all]; };
+  assert.ok(genderGap(W['Une entreprise'].clozes[0], 'fr'), '« une grande ___ » impose le féminin'); assert.equal(numberOf(W['Les papiers']), 'p'); assert.equal(numberOf(W['Un CV']), 's');
+  const ent = opts(W['Une entreprise']); assert.ok(ent.length >= 3 && ent.every(o => ['entreprise', 'équipe', 'école'].includes(o)), '« une grande ___ » : féminins seulement, ' + ent.join(', '));
+  const pap = opts(W['Les papiers']); assert.ok(pap.every(o => ['papiers', 'loisirs', 'animaux'].includes(o)), '« mes ___ » : pluriels seulement, ' + pap.join(', '));
+  const emp = opts(W['Un emploi']); assert.ok(emp.every(o => ['emploi', 'entretien', 'avis'].includes(o)), '« un ___ » : masculins qui commencent par une voyelle, ' + emp.join(', '));
+  const cv = opts(W['Un CV']); assert.ok(cv.every(o => o === 'CV' || /^\p{Ll}/u.test(o)), 'la casse des mots pièges suit celle de la réponse, sigle à part : ' + cv.join(', '));
+  assert.ok(!opts(W['Un emploi']).includes('De la paperasse') && !opts(W['Un CV']).some(o => /^de la/i.test(o)), 'article partitif retiré');
+  // job, boulot et taf sont trois variantes de « emploi » : aucun ne sert de mot piège aux deux autres
+  for (const [a, b] of [['Un job', 'Un boulot'], ['Un job', 'Un taf'], ['Un boulot', 'Un taf']]) assert.ok(W[a].neighbours.includes(W[b].id) && W[b].neighbours.includes(W[a].id), a + ' / ' + b);
+  const job = opts(W['Un job']); assert.ok(!job.includes('boulot') && !job.includes('taf') && !job.includes('emploi'), job.join(', '));
+  // coût borné : un paquet entier sous la même famille, ou aux définitions toutes identiques, se prépare vite
+  const t0 = Date.now(), fam = prepare({ name: 'f', lang: 'fr', level: 'A2', cards: Array.from({ length: 400 }, (_, i) => ({ word: 'mot' + i, definition: 'Même définition pour tous.', family: 'tout', pos: 'nom', examples: [] })) });
+  assert.ok(Date.now() - t0 < 4000, 'préparation de 400 fiches de même famille : ' + (Date.now() - t0) + ' ms'); assert.ok(fam.twins.length <= 200); assert.equal(fam.cards[0].neighbours.length, 399);
+  // le prompt porte les mêmes règles
+  const p = buildPrompts({ lang: 'fr', level: 'A2', topic: 'Le travail', count: 20 });
+  for (const k of ['file', 'cards']) for (const must of ['OBLIGATOIRE', 'au moins quatre fiches', 'Elle ne convient qu\'à CE mot', 'embaucher et recruter', 'Contrôle des catégories', 'Contrôle des définitions', 'un infinitif face à un infinitif']) assert.ok(p[k].includes(must), k + ' : ' + must);
+  assert.ok(p.review.includes('3 bis.') && p.review.includes('Lue seule'));
 });
 
 t('code d’accès enseignant : seule l’empreinte est gardée, un mauvais code ou une ligne abîmée ne laisse entrer personne', async () => {

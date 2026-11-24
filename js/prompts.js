@@ -17,6 +17,8 @@ export function buildPrompts({ lang = 'fr', level = 'A2', topic = '', count = 20
   const n = list.length || count, sitLang = ['B2', 'C1', 'C2'].includes(level) ? target : 'français';
   const theme = topic.trim() || '(à préciser)', title = `${topic.trim() || 'Thème'} (${level})`;
   const trJson = tr.length ? '{' + tr.map(k => `"${k}":""`).join(',') + '}' : '{}';
+  const twinsEx = lang === 'en' ? 'hire et recruit, job et work' : lang === 'es' ? 'contratar et emplear, trabajo et empleo' : 'embaucher et recruter, boulot et travail';
+  const defForm = lang === 'en' ? 'par exemple, tous les verbes définis par « to + verbe », tous les noms par un groupe nominal' : 'par exemple, tous les verbes définis par un infinitif, tous les noms par un groupe nominal';
   const shape = `{"elefiches":1,"name":"${title}","lang":"${lang}","level":"${level}","grid":"${grid}","cards":[\n{"word":"","definition":"","translations":${trJson},"pos":"","examples":["","","",""],"situation":"","distractors":["","",""],"theme":"","register":"","family":"","ipa":"","image":""}\n]}`;
   const head = `Tu es enseignant ${de}${target} langue étrangère à l'université et concepteur de tests de langue. Crée un paquet de ${n} fiches de vocabulaire pour l'application Éléfiches.
 
@@ -29,15 +31,15 @@ ${list.length ? `Mots imposés, dans cet ordre :\n${list.map(w => '- ' + w).join
 
 CHAQUE FICHE
 - "word" : le mot ou l'expression en ${target}, à la forme du dictionnaire, avec son article indéfini si c'est un nom.
-- "definition" : en ${target}. ${W.def[0].toUpperCase() + W.def.slice(1)}. Elle ne contient ni le mot ni un mot de sa famille.
+- "definition" : en ${target}. ${W.def[0].toUpperCase() + W.def.slice(1)}. Elle ne contient ni le mot ni un mot de sa famille. Elle ne convient qu'à CE mot : aucune autre fiche du paquet ne pourrait porter la même définition. Pour deux mots proches (${twinsEx}), chaque définition dit ce qui distingue le mot de son voisin : qui fait l'action, dans quelle situation, avec quel registre. Toutes les définitions d'une même catégorie ont la même forme (${defForm}), pour qu'aucune ne se repère à sa tournure.
 - "translations" : ${tr.length ? 'la traduction en ' + tr.map(k => NAMES[k]).join(' et en ') + ', telle qu\'un dictionnaire la donnerait, avec l\'article si le mot en a un.' : 'laisse {} : ce paquet est tout en français.'}
-- "pos" : la nature du mot, en français, parmi : nom, verbe, adjectif, adverbe, expression.
+- "pos" : OBLIGATOIRE. La catégorie grammaticale du mot, écrite exactement ainsi : nom, verbe, adjectif, adverbe ou expression (et préposition pour un mot grammatical comme « depuis » ou « jusqu'à »). Une locution verbale (« avoir du travail ») est un verbe, un nom précédé de son article est un nom ; « expression » est réservé aux formules figées qui ne sont ni l'un ni l'autre. L'application ne propose jamais ensemble deux mots de catégories différentes : un mot qui serait presque seul de sa catégorie n'aurait donc aucune question à choix. Compose le paquet pour que chaque catégorie présente compte au moins quatre fiches, ou retire-la.
 - "examples" : QUATRE ou CINQ phrases en ${target}, tirées de la vie d'un étudiant, qui montrent le mot sous des formes différentes. Elles servent aussi de modèles : quand l'étudiant écrit sa propre phrase, il la compare à celles-ci. Format : ${W.ex}. Voir les règles des phrases ci-dessous. Dans chaque phrase, entoure de crochets le mot tel qu'il apparaît, sans son article : « Je paie mon [loyer] demain. », « Elle a [déménagé] hier. »
 - "situation" : une phrase en ${sitLang}, à la deuxième personne, qui décrit le moment où l'on dirait la PREMIÈRE phrase d'exemple. Elle ne contient pas le mot. Elle ne peut convenir à aucune autre fiche du paquet.
 - "distractors" : trois mots pièges pour la question « quel mot remplace les crochets de la première phrase d'exemple ? ». Voir les règles ci-dessous.
 - "theme" : le sous-thème, en deux ou trois mots, en ${sitLang}.
 - "register" : courant, familier ou soutenu${sitLang === 'français' ? '' : ' (écris-le en ' + target + ')'}.
-- "family" : le même mot-clé pour deux fiches de sens très proche (elles ne seront pas apprises le même jour) ; sinon "".
+- "family" : le même mot-clé pour deux fiches de sens très proche (elles ne seront pas apprises le même jour, et jamais opposées dans une question) ; sinon "". Deux mots que l'on pourrait employer l'un pour l'autre dans la première phrase d'exemple portent TOUJOURS la même "family".
 - "ipa" : la transcription phonétique du mot seul, sans son article, entre barres obliques.`;
   const every = !!LIMITS[level]?.image;       // A1, A2 : une image pour chaque mot
   // Ce qu'un locuteur natif dit vraiment : le défaut le plus fréquent des paquets générés est la « phrase de manuel »,
@@ -61,7 +63,7 @@ CHAQUE FICHE
 
 RÈGLES DES MOTS PIÈGES ("distractors")
 Ce sont des mots qui existent en ${target}, correctement orthographiés. Jamais de faute d'orthographe, jamais de mot inventé.
-1. Même forme. Chaque mot piège s'écrit exactement comme il apparaîtrait à la place des crochets de la première phrase d'exemple : sans article si l'article est hors des crochets, à la même forme conjuguée ou accordée, avec le même nombre de mots autant que possible.
+1. Même forme. Chaque mot piège s'écrit exactement comme il apparaîtrait à la place des crochets de la première phrase d'exemple : sans article si l'article est hors des crochets, à la même forme conjuguée ou accordée (un infinitif face à un infinitif, un participe face à un participe, un pluriel face à un pluriel), avec le même nombre de mots autant que possible. Dans la PREMIÈRE phrase d'exemple, emploie de préférence le mot à sa forme de base (infinitif, singulier) : c'est elle qui sert aux questions à choix.
 2. Même catégorie grammaticale, même genre, même nombre, même construction que le mot de la fiche : un nom face à des noms, un verbe face à des verbes. La phrase reste grammaticalement correcte avec chacun d'eux.
 3. Même début. Si le mot de la fiche commence par une voyelle${lang === 'en' ? '' : ' ou un h muet'}, les trois mots pièges aussi ; s'il commence par une consonne, eux aussi. Ainsi ${startCue} ne trahit jamais la réponse. Quand le thème le permet, choisis des mots qui commencent par la même lettre.
 4. Même thème. Les mots pièges appartiennent au même thème que le mot de la fiche : pour un animal de la ferme, d'autres animaux de la ferme ; pour un mot du travail, d'autres mots du travail. L'étudiant ne doit pouvoir écarter aucun mot piège par la grammaire, par l'orthographe ou par le thème : il ne lui reste que le sens.
@@ -71,7 +73,7 @@ Ce sont des mots qui existent en ${target}, correctement orthographiés. Jamais 
 
 MÉTHODE
 Travaille en deux temps, sans montrer ton brouillon. D'abord, rédige toutes les fiches. Ensuite, relis-les une à une comme un relecteur exigeant et corrige : le mot figure entre crochets dans ses quatre ou cinq exemples, sous des formes variées (règle 5) ; la définition ne contient pas le mot ; chaque phrase respecte les six règles des phrases (naturelle, correcte, premier exemple avec un indice propre au mot, formes variées) et le format du niveau ${level} ; la définition est plus simple que le mot défini ;${every ? ' chaque fiche a son image ;' : ''} chaque mot piège respecte les sept règles (remplace-le mentalement dans la phrase pour vérifier, puis demande-toi si un étudiant pourrait l'écarter sans connaître le sens) ; chaque situation ne convient qu'à sa fiche.
-Termine par deux contrôles, fiche par fiche. Contrôle de substitution : dans la PREMIÈRE phrase, remplace le mot entre crochets par chacun des autres mots du paquet ; si la phrase reste possible avec l'un d'eux (${swap}). Contrôle du naturel : relis chaque phrase en te demandant « est-ce qu'une personne dirait cela, telle quelle, dans la vie ? » ; si elle ressemble à une phrase de manuel, réécris-la.`;
+Termine par quatre contrôles, fiche par fiche. Contrôle des catégories : chaque fiche a son "pos", et aucune catégorie ne compte moins de quatre fiches. Contrôle des définitions : lis chaque définition seule, sans le mot, et demande-toi quel mot du paquet elle désigne ; si deux mots sont possibles, réécris-la. Contrôle de substitution : dans la PREMIÈRE phrase, remplace le mot entre crochets par chacun des autres mots du paquet ; si la phrase reste possible avec l'un d'eux (${swap}). Contrôle du naturel : relis chaque phrase en te demandant « est-ce qu'une personne dirait cela, telle quelle, dans la vie ? » ; si elle ressemble à une phrase de manuel, réécris-la.`;
   const json = `Règles du JSON : guillemets droits doubles pour les clés et les valeurs ; à l'intérieur d'un texte, n'utilise jamais de guillemet droit (écris « » ou une apostrophe) ; pas de commentaire ; pas de virgule après la dernière fiche.`;
   const drawable = `si le mot désigne un objet, un lieu, une personne ou une action que l'on reconnaît sur un dessin sans légende`;
   // Au niveau débutant, l'image porte le sens : chaque fiche en a une.
@@ -122,7 +124,8 @@ Pour chaque fiche, vérifie et corrige :
 1. Chaque phrase d'exemple est celle qu'un locuteur natif dirait vraiment, avec le temps et le déterminant naturels.${natural}
 2. Dans la première phrase d'exemple, aucun autre mot du paquet ne pourrait remplacer le mot entre crochets : essaie chaque autre mot du paquet à sa place, et ajoute un indice propre au mot si l'un d'eux convient.
 2 bis. Chaque fiche a quatre ou cinq phrases d'exemple, qui montrent le mot sous des formes différentes (singulier et pluriel, déterminants différents : ${articles} ; pour un verbe, des sujets différents et une phrase négative ou une question). Complète les fiches qui en ont moins, sans jamais sacrifier le naturel.
-3. La définition respecte ce format : ${W.def}. Elle ne contient ni le mot ni un mot de sa famille.
+3. La définition respecte ce format : ${W.def}. Elle ne contient ni le mot ni un mot de sa famille. Lue seule, elle ne désigne qu'un mot du paquet : si elle convient aussi à un autre (${twinsEx}), réécris-la pour dire ce qui les distingue, et donne aux deux fiches la même "family".
+3 bis. Chaque fiche a son "pos" (nom, verbe, adjectif, adverbe, expression, ou préposition pour un mot grammatical), et chaque catégorie présente compte au moins quatre fiches.
 4. Aucun des trois mots pièges ne conviendrait dans la première phrase. Chacun est de la même catégorie grammaticale et du même thème que le mot, et commence comme lui (voyelle ou consonne) : un étudiant ne doit pouvoir en écarter aucun par la grammaire ou par l'orthographe.${every ? `
 5. Chaque fiche a une image, qui montre le sens du mot sans ambiguïté.` : ''}
 Donne d'abord la liste des fiches corrigées, avec ce que tu as changé, en une ligne par fiche. Livre ensuite de nouveau le paquet COMPLET, sous la même forme que la première fois (le même fichier, ou le même bloc de code JSON).`,

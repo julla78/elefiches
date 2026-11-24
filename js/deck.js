@@ -296,11 +296,18 @@ export function prepare(deck) {
     if (c.translations && typeof c.translations === 'object') c.translations = Object.fromEntries(Object.entries(c.translations).filter(([k, v]) => safeKey(k) && typeof v === 'string'));
   }
   deck.cards.forEach(tidyCard);
+  const FILLER = new Set('un une des les le la de du et ou qui que pour dans sur avec par est sont pas plus tres the an of to and or that which for in on with is are not very el los las una y o para en con es son muy quelqu quelque chose something someone alguien algo'.split(' '));
   const tokSet = s => new Set(noAcc(norm(s || '')).split(/[^\p{L}\p{N}]+/u).filter(Boolean));
   const info = deck.cards.map(c => ({
     heads: heads(c.word).map(noAcc).filter(h => !h.includes(' ') && h.length >= 4),
     def: tokSet(c.definition),
+    // Mots pleins de la définition et traductions : deux fiches qui se définissent ou se traduisent presque de la même
+    // façon (« embaucher » et « recruter ») ne peuvent pas être départagées par leur sens : l'enseignant en est averti.
+    core: new Set([...tokSet(c.definition)].filter(w => (w.length > 2 || /\d/.test(w)) && !FILLER.has(w))),
+    tr: new Set(Object.values(c.translations || (c.translation ? { '*': c.translation } : {})).map(x => noAcc(norm(String(x || '')))).filter(Boolean)),
   }));
+  const alikeDef = (a, b) => { if (a.size < 2 || b.size < 2) return false; let n = 0; for (const w of a) if (b.has(w)) n++; return n / (a.size + b.size - n) >= 0.75; };   // « mot familier qui signifie travail » et « … entreprise » ne diffèrent que d'un mot, mais c'est le mot qui compte : seuil haut
+  deck.twins = [];
   deck.cards.forEach((c, i) => {
     c.translations ??= c.translation ? { '*': c.translation } : {};
     c.examples ??= [];
@@ -321,10 +328,23 @@ export function prepare(deck) {
       // définie à l'aide de l'autre (« boulot : mot familier pour un emploi ») sont jugées proches.
       const mention = info[j].heads.some(h => info[i].def.has(h)) || info[i].heads.some(h => info[j].def.has(h));
       const variant = mention && c.theme === d.theme && c.register && d.register && c.register !== d.register;
+      // Signalées dans le contrôle du paquet, sans effet sur le calendrier : la séance écarte elle-même, question par
+      // question, les sens qui s'affichent presque à l'identique (voir sameSense dans session.js).
+      if (i < j && deck.twins.length < 200 && (alikeDef(info[i].core, info[j].core) || [...info[i].tr].some(x => info[j].tr.has(x)))) deck.twins.push([c.word, d.word]);      // liste bornée : au-delà, le paquet est à refaire, pas à détailler
       if (fam || variant) nb.add(d.id);
     });
     c.neighbours = [...nb];
   });
+  // Deux variantes d'un même mot sont voisines entre elles : « job », « boulot » et « taf » sont chacun définis à l'aide
+  // de « emploi », donc aucun des trois ne peut servir de mot piège aux deux autres (« Ce ___ étudiant lui permet de
+  // payer son loyer » les accepterait tous). Un seul niveau : pas de chaîne qui avalerait tout un thème.
+  // Coût borné : un paquet entier rangé sous la même « famille » (des centaines de voisines) ne doit pas figer l'appli ;
+  // ces fiches sont de toute façon déjà voisines deux à deux.
+  const cardOf = new Map(deck.cards.map(c => [c.id, c])), direct = new Map(deck.cards.map(c => [c.id, [...c.neighbours]]));
+  for (const hub of deck.cards) {
+    const group = direct.get(hub.id); if (group.length < 2 || group.length > 30) continue;
+    for (const a of group) { const A = cardOf.get(a), have = new Set(A.neighbours); for (const b of group) if (a !== b && !have.has(b)) { A.neighbours.push(b); have.add(b); } }
+  }
   const seen = new Map();
   for (const c of deck.cards) seen.set(c.key, (seen.get(c.key) || 0) + 1);
   deck.homographs = new Set([...seen].filter(([, n]) => n > 1).map(([k]) => k));   // deux fiches « En »
@@ -364,6 +384,7 @@ export function audit(deck) {
     add('auBookish', deck.cards.filter(c => c.examples.some(bookish)), true, deck.cards.flatMap(c => c.examples.filter(bookish)));
     add('auScene', deck.cards.filter(c => c.examples.some(sceneLike)), false, deck.cards.flatMap(c => c.examples.filter(sceneLike)));
   }
+  add('auTwins', deck.cards.filter(c => (deck.twins || []).some(p => p.includes(c.word))), true, (deck.twins || []).map(p => p.join(' / ')));
   add('auFewExamples', deck.cards.filter(c => c.examples.length && c.examples.length < 4), false);
   add('auNoSituation', deck.cards.filter(c => !c.situation), false);
   add('auNoTraps', deck.cards.filter(c => !(c.distractors || []).length), false);
@@ -374,7 +395,7 @@ export function audit(deck) {
 export function serialize(deck) {
   return {
     id: deck.id, name: deck.name, lang: deck.lang, level: deck.level, grid: deck.grid, fields: deck.fields, demo: deck.demo,
-    cards: deck.cards.map(({ clozes, neighbours, bare, key, ...c }) => c),   // helpLangs et byId sont recalculés
+    cards: deck.cards.map(({ clozes, neighbours, bare, key, ...c }) => c),   // helpLangs, byId et twins sont recalculés
   };
 }
 

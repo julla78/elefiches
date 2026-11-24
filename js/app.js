@@ -2,7 +2,7 @@
 import * as store from './store.js';
 import { deckFromCSV, deckFromJSON, deckFromAnki, mergeDecks, audit, safeKey, deckToJSON, looksJSON, levelIn, prepare, serialize, hash, demoDeck, MODELS, safeUrl, LEVELS } from './deck.js';
 import { summary, boxOf, dueInDays, isNew, stageOf, HERD_BOX } from './scheduler.js';
-import { Session, Challenge, Tour, meaning, gloss, pickNew, judge, roomFor, buildActivity, SELF } from './session.js';
+import { Session, Challenge, Tour, meaning, gloss, pickNew, judge, roomFor, buildActivity, SELF, kindOf } from './session.js';
 import { clozeParts, norm, noAcc, noArt, diffParts, remark, spoken, slug } from './match.js';
 import { unzip, typeOf } from './zip.js';
 import { buildPrompts, GRIDS, gridOf } from './prompts.js';
@@ -603,7 +603,14 @@ async function cutSheets(deck, sheets) {
 
 // Contrôle du paquet : ce que l'application peut vérifier seule (images, longueur des définitions, exemples).
 function auditView(d) {
-  const found = audit(d), warn = found.filter(f => f.warn);
+  const found = audit(d);
+  // Catégories grammaticales : une fiche dont la catégorie reste inconnue, ou seule de sa catégorie, n'aura jamais de
+  // question à choix (on ne mêle pas les catégories). L'enseignant le voit ici.
+  const kinds = d.cards.map(c => kindOf(c, d.lang)), size = k => kinds.filter(x => x === k).length;
+  const unknown = d.cards.filter((c, i) => kinds[i] === 'autre'), alone = d.cards.filter((c, i) => kinds[i] !== 'autre' && size(kinds[i]) < 3);
+  if (unknown.length) found.push({ key: 'auNoKind', cards: unknown, warn: true });
+  if (alone.length) found.push({ key: 'auAlone', cards: alone, warn: false });
+  const warn = found.filter(f => f.warn);
   if (!found.length) return `<p class="audit ok">${t('auOk')}</p>`;
   const names = f => f.cards.slice(0, 4).map(c => esc(c.bare)).join(', ') + (f.cards.length > 4 ? '…' : '');
   return `<details class="audit${warn.length ? ' warn' : ''}"><summary>${t(warn.length ? 'auTitle' : 'auInfo', warn.length || found.length)}</summary>
@@ -657,6 +664,7 @@ function editView() {
 function cardView() {
   const d = editing(), c = d.byId[S.cardId] || { translations: {}, examples: [] }, isNew = !d.byId[S.cardId];
   const langs = [...new Set([...Object.keys(LANG_NAMES).filter(l => l !== d.lang), ...Object.keys(c.translations)])];
+  const raw = isNew ? 'autre' : kindOf({ word: c.word, clozes: c.clozes, translations: c.translations }, d.lang), guessed = Object.hasOwn(STR.fr, 'pos_' + raw) ? t('pos_' + raw) : raw;
   const field = (name, label, value, attrs = '') => `<label>${label} <input name="${name}" value="${esc(value || '')}" autocomplete="off" ${attrs}></label>`;
   return `<button class="link" data-action="edit" data-id="${d.id}">← ${esc(d.name)}</button>
     <h1>${t(isNew ? 'cTitleNew' : 'cTitle')}</h1>
@@ -669,6 +677,8 @@ function cardView() {
       ${field('situation', t('fSit'), c.situation)}${field('distractors', t('fTraps'), (c.distractors || []).join(' | '))}
       <div class="two">${field('theme', t('fTheme'), c.theme)}${field('register', t('fReg'), c.register)}</div>
       <div class="two">${field('family', t('fFam'), c.family)}${field('ipa', t('fIpa'), c.ipa)}</div>
+      <label>${t('fPos')} <select name="pos">${['', 'nom', 'verbe', 'adjectif', 'adverbe', 'expression', 'préposition', 'déterminant', ...(c.pos && !['nom', 'verbe', 'adjectif', 'adverbe', 'expression', 'préposition', 'déterminant'].includes(kindOf(c, d.lang)) ? [kindOf(c, d.lang)] : [])].map(k => `<option value="${esc(k)}" ${(c.pos ? kindOf(c, d.lang) : '') === k ? 'selected' : ''}>${k ? (Object.hasOwn(STR.fr, 'pos_' + k) ? t('pos_' + k) : esc(k)) : t('posAuto', isNew ? '…' : guessed)}</option>`).join('')}</select></label>
+      <p class="sethint">${t('fPosHint')}</p>
       <fieldset><legend>${t('fImg')}</legend>
         <img class="illus" data-preview="image" src="${esc(S.draft.image || '')}" alt="" ${S.draft.image ? '' : 'hidden'}>
         <input type="file" data-file="image" accept="image/*" aria-label="${t('fImg')}">
@@ -690,7 +700,7 @@ async function saveCard(form) {
   if (!v('word') || !(v('definition') || Object.keys(translations).length)) { S.notice = { bad: true, text: t('errCard') }; return toast(t('errCard')); }
   const data = { word: v('word'), definition: v('definition') || undefined, translations, examples: v('examples').split(/\n+/).map(x => x.trim()).filter(Boolean),
     situation: v('situation') || undefined, distractors: v('distractors').split('|').map(x => x.trim()).filter(Boolean),
-    theme: v('theme') || undefined, register: v('register') || undefined, family: v('family') || undefined, ipa: v('ipa') || undefined,
+    theme: v('theme') || undefined, register: v('register') || undefined, family: v('family') || undefined, ipa: v('ipa') || undefined, pos: v('pos') || undefined,
     image: safeUrl(S.draft.image) || undefined, audio: safeUrl(S.draft.audio) || undefined };
   const old = d.byId[S.cardId];
   if (old) { delete old.marks; Object.assign(old, data); } else d.cards.push({ id: 'c' + hash(data.word + Date.now()), extra: {}, ...data });
@@ -960,8 +970,8 @@ function activityView(step, lang) {
   // Écoute : un gros bouton pour réentendre le mot, et une sortie pour qui ne peut pas écouter maintenant.
   const ear = `<p class="earrow"><button type="button" class="earbtn" data-action="speak" data-id="${card.id}" aria-label="${t('listenAgain')}">${bird(30)}${ICON.sound} <span>${t('listenAgain')}</span></button></p>`;
   const quiet = fb ? '' : `<button type="button" class="link" data-action="cant-listen">${t('cantListen')}</button>`;
-  const selfRow = `<p class="askline">${t(a.type === 'speak' ? 'selfSpeak' : 'selfSentence')}</p><div class="row felt"><button class="primary" data-action="self" data-v="good">${t('selfGood')}</button><button class="secondary" data-action="self" data-v="again">${t('selfAgain')}</button></div>
-    <button type="button" class="link" data-action="self-retry">${t(a.type === 'speak' ? 'speakRetry' : 'sentenceRetry')}</button>`;
+  const selfRow = `<p class="askline">${t(a.type === 'speak' ? 'selfSpeak' : a.type === 'recall' ? 'selfRecall' : 'selfSentence')}</p><div class="row felt"><button class="primary" data-action="self" data-v="good">${t('selfGood')}</button><button class="secondary" data-action="self" data-v="again">${t('selfAgain')}</button></div>
+    ${a.type === 'recall' ? '' : `<button type="button" class="link" data-action="self-retry">${t(a.type === 'speak' ? 'speakRetry' : 'sentenceRetry')}</button>`}`;
   // Rappel de tête : l'étudiant cherche d'abord sa réponse, les choix n'arrivent qu'ensuite pour la vérifier.
   const gate = () => `<div class="gate"><p>${t('gateWord')}</p>
     <div class="row"><button class="primary" data-action="reveal" autofocus>${t('reveal')}</button>${skip}</div></div>`;
@@ -984,6 +994,11 @@ function activityView(step, lang) {
           <li><span class="meta">${t('shadowHow')}</span><button type="button" class="secondary" data-action="shadow">${ICON.play} ${t('shadowGo')}</button></li>
         </ol>
         ${fb ? '' : selfRow}`;
+  } else if (a.type === 'recall') {
+    // Rappel de tête : dernier recours quand la fiche ne peut être ni choisie parmi des mots de sa catégorie, ni écrite.
+    body = !L.phase && !fb ? `<p class="question">${t('qRecall')}</p>${illus(card)}${sense(card, lang, 'def big')}
+        <div class="row"><button class="primary" data-action="reveal-self">${t('seeAnswer')}</button>${skip}</div>`
+      : `<p class="question">${t('qRecallCheck')}</p>${pic(card)}<h2 class="word" lang="${lang}">${esc(card.bare)} ${listenBtn(card)}</h2>${sense(card, lang)}${fb ? '' : selfRow}`;
   } else if (a.type === 'sentence') {
     // Phrase libre : l'étudiant compose sa phrase, puis la compare aux phrases modèles et se juge lui-même.
     body = !L.phase && !fb ? `<p class="question">${t('qSentence')}</p>${pic(card)}<h2 class="word" lang="${lang}">${esc(card.bare)} ${listenBtn(card)}</h2>${sense(card, lang)}

@@ -44,6 +44,12 @@ def play(page, right=True, shots=None, near=False):
         if page.locator('[data-action=reveal]').count():
             kinds.add('gate'); shot('gate'); assert not page.locator('.option').count(), 'les choix restent cachés avant le rappel de tête'
             page.click('[data-action=reveal]')
+        if kind == 'recall':      # dernier recours : retrouver le mot de tête, le découvrir, se juger
+            word = page.evaluate("window.__elefiches.step.card.bare")
+            assert not page.locator('.study h2.word').count(), 'rappel de tête : le mot n’est pas montré avant'
+            page.click('[data-action=reveal-self]'); assert word in page.inner_text('.study h2.word'); shot('recall', True)
+            page.click('[data-action=self][data-v=good]' if right else '[data-action=self][data-v=again]')
+            continue
         if kind in ('speak', 'sentence'):         # formes où l'étudiant se juge lui-même en comparant avec un modèle
             shot(kind, True)
             before = page.evaluate("window.__elefiches.state.session.stats.answered")

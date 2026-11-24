@@ -44,15 +44,47 @@ const BEFORE = {      // le mot qui précède la forme étudiée, dans une phras
   adjectif: /(?:^|[\s'’])(?:très|trop|assez|plus|moins|si|est|sont|suis|es|êtes|sommes|était|very|too|so|quite|is|are|am|was|were|muy|más|menos|está|están|soy|eres|era)\s*$/i,
 };
 const VERB_END = { fr: /(?:er|ir|re|oir)$/i, es: /(?:ar|er|ir|arse|erse|irse)$/i, en: /^$/ };
+// Mots grammaticaux : des listes fermées, donc reconnaissables sans se tromper. Une préposition (« depuis », « jusqu'à »,
+// « au mois de ») n'est jamais proposée avec un nom ou un verbe, ni un article seul (« le ») avec une préposition.
+const PREP = {
+  fr: 'à au aux de du des d en dans sur sous vers chez pour par avec sans entre avant après depuis pendant durant dès jusque jusqu contre malgré selon envers parmi devant derrière',
+  en: 'in on at for since during until till by from to with without before after between among under over above below into onto through across towards toward against near of off',
+  es: 'a al de del en con sin por para desde durante hasta sobre entre hacia ante tras bajo contra según',
+};
+const PREP_END = { fr: ['de', 'd', 'à', 'au', 'aux', 'du', 'des'], en: ['of', 'to', 'from', 'with'], es: ['de', 'a', 'del', 'al'] };
+const PREP_PHRASE = { fr: ['il y a'], en: [], es: ['hace'] };
+// Premier mot des locutions prépositives courantes : « près de », « grâce à », « because of », « cerca de ».
+const PREP_HEAD = { fr: 'près loin grâce lors afin autour hors face quant auprès', en: 'because instead out next close according due ahead', es: 'cerca lejos junto dentro fuera delante detrás encima debajo alrededor después antes frente' };
+const DET = {
+  fr: 'le la les l un une des du ce cet cette ces mon ma mes ton ta tes son sa ses notre nos votre vos leur leurs quel quelle quels quelles chaque',
+  en: 'the a an this that these those some any my your his her its our their each every',
+  es: 'el la los las un una unos unas este esta estos estas ese esa mi mis tu tus su sus cada',
+};
+const sets = new Map(), setOf = (table, lang) => { const key = table === PREP ? 'p' + lang : 'd' + lang; if (!sets.has(key)) sets.set(key, new Set((table[lang] || table.fr).split(' '))); return sets.get(key); };
+function closedClass(word, lang) {
+  const w = word.toLowerCase().replace(/…|\.\.\./g, ' ').trim(), toks = w.split(/[\s']+/).filter(Boolean);
+  if (!toks.length) return '';
+  const prep = setOf(PREP, lang), det = setOf(DET, lang);
+  if ((PREP_PHRASE[lang] || []).includes(toks.join(' '))) return 'préposition';
+  if (toks.every(x => det.has(x)) && !toks.every(x => prep.has(x))) return 'déterminant';
+  if (toks.every(x => prep.has(x))) return 'préposition';
+  const head = (PREP_HEAD[lang] || PREP_HEAD.fr).split(' ');
+  if (toks.length > 1 && (prep.has(toks[0]) || head.includes(toks[0])) && (PREP_END[lang] || PREP_END.fr).includes(toks.at(-1)) && !det.has(toks[1])) return 'préposition';   // « au mois de », « à partir de », « in front of »
+  return '';
+}
+// L'article qui annonce un nom, langue par langue : « a menudo » n'est pas un nom en espagnol, « de la paperasse » en est un en français.
+const ART_OF = { fr: /^(?:un|une|des|du|le|la|les|de la|de l'|l')(?:\s+|(?<=')\s*)\S/i, en: /^(?:a|an|the)\s+\S/i, es: /^(?:el|la|los|las|un|una|unos|unas)\s+\S/i };
 const kinds = new WeakMap();
 export function kindOf(c, lang = 'fr') {
-  if (kinds.has(c)) return kinds.get(c);
-  const put = k => { kinds.set(c, k); return k; };
+  const sig = `${c.pos || ''}|${c.word}|${lang}|${(c.clozes || []).length}`, known = kinds.get(c);      // une fiche modifiée dans l'éditeur est réexaminée
+  if (known && known.sig === sig) return known.kind;
+  const put = kind => { kinds.set(c, { sig, kind }); return kind; };
   const pos = typeof c.pos === 'string' ? c.pos.trim() : '';
   if (pos) return put((POS.find(([, re]) => re.test(pos)) || [pos.toLowerCase()])[0]);
   const word = apos(String(c.word || '')).replace(/\s\([^)]*\)/g, '').trim(), parts = word.split(/\s+/);
   if (/^(?:to|se)\s/i.test(word) || /^s'/i.test(word)) return put('verbe');
-  if (ARTS.test(word)) return put('nom');
+  const closed = closedClass(word, lang); if (closed) return put(closed);
+  if ((ART_OF[lang] || ARTS).test(word)) return put('nom');      // « de la paperasse » : article partitif
   const end = VERB_END[lang] || VERB_END.fr;
   if (parts.length > 1) return put(end.test(parts[0]) && end.source !== '^$' ? 'verbe' : 'expression');
   // Un seul mot, sans article : sa place dans les phrases d'exemple tranche.
@@ -86,22 +118,50 @@ export function cluster(deck, cards, n, rnd, min = 3) {
   return [seed, ...group.slice(1).map((c, k) => ({ c, k, v: alike(deck, seed, c, seed.bare, c.bare) })).sort((x, y) => y.v - x.v || x.k - y.k).slice(0, n - 1).map(x => x.c)];
 }
 // Le mot qui précède le trou impose-t-il le début ou le genre du mot attendu ? « l'___ », « an ___ », « une ___ » : oui.
-const TIGHT = { en: /(?:^|\s)an?\s$/i, fr: /(?:['’]|(?:^|\s)(?:le|la|de|je|ne|que|se|me|te|ce|du|au|un|une|mon|ma|ton|ta|son|sa|cette)\s)$/i, es: /(?:^|\s)(?:el|la|un|una|del|al|este|esta)\s$/i };
+const TIGHT = { en: /(?:^|\s)an?\s$/i, fr: /(?:['’]|(?:^|\s)(?:le|la|de|je|ne|que|se|me|te|ce|cet|du|au|un|une|mon|ma|ton|ta|son|sa|cette|bel|nouvel|vieil|beau|nouveau|vieux)\s)$/i, es: /(?:^|\s)(?:el|la|un|una|del|al|este|esta)\s$/i };
+// Ce que le mot placé juste avant le trou impose au mot manquant, en plus de son début : un genre (« un ___ », « sa ___ »).
+const GENDERED = { fr: /(?:^|\s)(?:un|une|le|la|mon|ma|ton|ta|son|sa|ce|cet|cette|du|au|quel|quelle|aucun|aucune|tout|toute)\s(?:\S+\s){0,2}$/i, es: /(?:^|\s)(?:el|la|un|una|los|las|unos|unas|este|esta|ese|esa|del|al|mucho|mucha)\s(?:\S+\s){0,2}$/i };      // « une grande ___ » : l'adjectif entre les deux ne change rien
+export const genderGap = (cloze, lang) => !!cloze && !!GENDERED[lang] && GENDERED[lang].test(apos(cloze.text.slice(0, cloze.spans[0].start)));
+// Nombre d'une fiche, lu sur son article (« les papiers », « des loisirs ») ; sans article pluriel, c'est un singulier.
+export const numberOf = c => (/^(?:les|des|mes|ses|los|las|unos|unas)\s/i.test(String(c.word || '')) ? 'p' : 's');
+// Terminaison d'une forme verbale : « virée » et « recrutée » vont dans la même phrase, « travaille » non.
+const SHAPES = { fr: ['ées', 'és', 'ée', 'é', 'er', 'ir', 'oir', 're', 'ons', 'ez', 'ent', 'aient', 'ait', 'ais', 'ant'], en: ['ing', 'ed', 's'],
+  es: ['ando', 'iendo', 'ados', 'adas', 'idos', 'idas', 'ado', 'ada', 'ido', 'ida', 'ar', 'er', 'ir', 'amos', 'emos', 'imos', 'an', 'en', 'as', 'es'] };
+const shapeOf = (form, lang, verb) => { const f = String(form).trim().toLowerCase(); return (verb && (SHAPES[lang] || []).find(x => f.endsWith(x))) || f.slice(-1); };
+// Même casse que la réponse : un mot piège en majuscule parmi des minuscules se repère sans lire (les sigles restent tels quels).
+const caseLike = (f, answer) => (!f || /^\p{Lu}{2}/u.test(f) ? f : /^\p{Ll}/u.test(answer) || /^\p{Lu}{2}/u.test(answer) ? f[0].toLowerCase() + f.slice(1) : /^\p{Lu}/u.test(answer) ? f[0].toUpperCase() + f.slice(1) : f);
 export const tightGap = (cloze, lang) => !!cloze && !!TIGHT[lang] && TIGHT[lang].test(apos(cloze.text.slice(0, cloze.spans[0].start)));
+// Deux sens qui s'affichent presque à l'identique (« donner un travail à quelqu'un » pour embaucher et pour recruter) :
+// les opposer dans une question donnerait deux bonnes réponses.
+const FILLER = new Set('un une des les le la de du et ou qui que pour dans sur avec par est sont pas plus tres the an of to and or that which for in on with is are not very el los las una y o para en con es son muy quelqu quelque chose something someone alguien algo'.split(' '));
+const core = s => new Set(String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[^\p{L}\p{N}]+/u).filter(w => (w.length > 2 || /\d/.test(w)) && !FILLER.has(w)));
+export function sameSense(a, b) {
+  if (!a || !b) return false;
+  const x = core(a), y = core(b);
+  if (!x.size || !y.size) return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+  let n = 0; for (const w of x) if (y.has(w)) n++;
+  return n === x.size && n === y.size || (x.size >= 2 && y.size >= 2 && n / (x.size + y.size - n) >= 0.75);
+}
 // form : les options sont des mots de la langue étudiée (et non des sens) ; le début et le genre comptent alors.
+// sense : fonction qui donne le sens affiché d'une fiche ; une fiche de sens presque identique n'est jamais proposée.
 // strict : le mot d'avant le trou les impose ; un mot piège qui ne s'y plie pas se verrait tout de suite, il passe en dernier.
-function distractors(deck, card, n, rnd, textOf, prefer = [], { form = false, strict = false, mixed = false } = {}) {
+function distractors(deck, card, n, rnd, textOf, prefer = [], { form = false, strict = false, mixed = false, sense = null, gender = false, number = false } = {}) {
   const mine = textOf(card), used = new Set([mine]), out = [], kind = kindOf(card, deck.lang);
   // Règle : même catégorie grammaticale, toujours. « mixed » n'est qu'un dernier recours, quand aucune forme d'exercice
   // n'a pu être construite autrement (fiche seule de sa catégorie) : la fiche doit tout de même pouvoir être révisée.
-  const same = d => mixed || kindOf(d, deck.lang) === kind;
-  const ok = d => d.id !== card.id && d.key !== card.key && same(d);
+  const same = d => mixed || (kind !== 'autre' && kindOf(d, deck.lang) === kind);
+  // Dans une phrase à trou, ce que la phrase impose n'est pas une préférence mais un filtre : le début du mot après
+  // « l' » ou « an » (strict), le genre après « un » ou « sa » (gender), le nombre d'un nom (number). Un mot piège qui
+  // ne tiendrait pas dans la phrase s'élimine sans connaître son sens ; mieux vaut alors une autre forme d'exercice.
+  const fits = (d, t) => (!strict || startOf(t, deck.lang) === startOf(mine, deck.lang)) && (!gender || (!!genderOf(card) && genderOf(d) === genderOf(card))) && (!number || (numberOf(d) === numberOf(card) && !(genderOf(card) && genderOf(d) && genderOf(d) !== genderOf(card))));      // un nom : jamais un genre contraire, l'accord peut être n'importe où dans la phrase
+  const ok = d => d.id !== card.id && d.key !== card.key && same(d) && !(sense && sameSense(sense(d), sense(card)));
   const score = (d, t) => (form && startOf(t, deck.lang) === startOf(mine, deck.lang) ? (strict ? 100 : 8) : 0)
-    + (form && genderOf(card) && genderOf(d) && genderOf(d) !== genderOf(card) ? 0 : strict ? 60 : 4) + (card.theme && d.theme === card.theme ? 2 : 0) + (prefer.includes(d.id) ? 1 : 0);
+    + (form && genderOf(card) && genderOf(d) && genderOf(d) !== genderOf(card) ? 0 : strict ? 60 : 4) + (form && numberOf(d) === numberOf(card) ? 3 : 0) + (card.theme && d.theme === card.theme ? 2 : 0) + (prefer.includes(d.id) ? 1 : 0);
   const ranked = (pool) => shuffle(pool, rnd).map((d, k) => ({ d, k, t: textOf(d) })).filter(x => x.t).map(x => ({ ...x, v: score(x.d, x.t) })).sort((x, y) => y.v - x.v || x.k - y.k);
-  // Les fiches de sens voisin (même famille) ne servent qu'en second, quand les autres ne suffisent pas.
-  for (const pool of [deck.cards.filter(d => ok(d) && !card.neighbours.includes(d.id)), deck.cards.filter(ok)]) for (const { d, t } of ranked(pool)) {
-    if (used.has(t)) continue;
+  // Les fiches de sens voisin (même famille, mots définis l'un par l'autre) ne sont jamais proposées
+  // face à face : deux réponses seraient défendables. Mieux vaut moins de choix, ou une autre forme d'exercice.
+  for (const pool of [deck.cards.filter(d => ok(d) && !card.neighbours.includes(d.id) && !d.neighbours.includes(card.id))]) for (const { d, t } of ranked(pool)) {
+    if (used.has(t) || !fits(d, t)) continue;
     used.add(t); out.push({ text: t, id: d.id });
     if (out.length === n) return out;
   }
@@ -192,7 +252,7 @@ function ladder(deck, card, box, { audio = false, alt = false } = {}) {
 }
 const hashInt = id => [...String(id)].reduce((a, ch) => (a * 31 + ch.charCodeAt(0)) >>> 0, 7);
 // Formes où l'étudiant se juge lui-même en comparant avec un modèle.
-export const SELF = ['speak', 'sentence'];
+export const SELF = ['speak', 'sentence', 'recall'];
 
 // opts.force : forme imposée (rattrapage, phrase « bonus » du jour, défi, aperçu). opts.contrast : {text, id} de la
 // mauvaise réponse donnée juste avant ; le rattrapage oppose alors la bonne réponse à cette erreur précise.
@@ -203,6 +263,16 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
   const first = card.clozes.find(c => card.examples[0] && c.text === apos(card.examples[0]));      // phrase à trous du premier exemple
   const cl = card.clozes.length ? pick(card.clozes, rnd) : null;
   const surface = d => (d.clozes.length ? lowerFirst(pick(d.clozes, rnd).answer, d.word) : null);
+  // Forme d'un mot piège pour le trou d'une phrase. Si la réponse est le mot à sa forme de base (« embaucher », « cow »),
+  // le mot piège est donné à sa forme de base lui aussi. Si la réponse est fléchie (« embauché », « cows »), il faut une
+  // forme du mot piège qui se termine de la même façon (« licencié », « pigs »). Aucune forme convenable : la fiche n'est
+  // pas proposée, plutôt qu'un mot qui ne tiendrait pas dans la phrase.
+  const lemma = c => apos(c.bare).replace(/^de (?:la\s+|l')/i, '').replace(ARTICLE, '').trim(), count = x => x.trim().split(/\s+/).length, verb = kindOf(card, deck.lang) === 'verbe', last = x => shapeOf(x, deck.lang, verb);
+  const formFor = (answer, d) => {
+    const base = answer.toLowerCase() === lemma(card).toLowerCase();
+    const pool = base ? [lemma(d)] : d.clozes.filter(x => !x.multi).map(x => lowerFirst(x.answer, d.word)).filter(f => f.toLowerCase() !== lemma(d).toLowerCase() && last(f) === last(answer));
+    return caseLike(pool.find(f => f && count(f) === count(answer)) || null, answer);
+  };
   const hint = answer => hintOf(answer, help ? 'pattern' : L.hint);
   const choice = (answer, ds, extra = {}) => {
     if (!answer || ds.length < (mixed || contrast ? 1 : Math.min(2, lures))) return null;
@@ -215,10 +285,10 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
   const meanings = extra => {
     const shown = c => /^data:image\//i.test(c.image || '');      // image intégrée au paquet : elle s'affichera à coup sûr
     if (LIMITS[deck.level]?.image && shown(card)) {
-      const ds = distractors(deck, card, lures, rnd, d => (shown(d) ? mean(d) : null), prefer, { mixed });
+      const ds = distractors(deck, card, lures, rnd, d => (shown(d) ? mean(d) : null), prefer, { mixed, sense: mean });
       if (ds.length === lures) return choice(mean(card), ds, { pics: Object.fromEntries([[mean(card), card.image], ...ds.map(d => [d.text, deck.byId[d.id].image])]), ...extra });
     }
-    return choice(mean(card), distractors(deck, card, lures, rnd, mean, prefer, { mixed }), extra);
+    return choice(mean(card), distractors(deck, card, lures, rnd, mean, prefer, { mixed, sense: mean }), extra);
   };
   const sayable = !isNumber(card.definition);
   const make = {
@@ -236,7 +306,7 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
       const models = card.examples.slice(0, 5).map(apos);
       return models.length ? { answer: card.bare, models, modelClozes: models.map(m => card.clozes.find(c => c.text === m) || null), self: true } : null;
     },
-    'qcm-rev': () => choice(card.bare, distractors(deck, card, lures, rnd, d => d.bare, prefer, { form: true, mixed })),
+    'qcm-rev': () => choice(card.bare, distractors(deck, card, lures, rnd, d => d.bare, prefer, { form: true, mixed, sense: mean })),
     // Phrase à compléter par un choix. Quand la fiche fournit des mots pièges écrits pour son premier exemple, ce sont
     // eux les leurres : ils s'insèrent dans la phrase sans faute de grammaire. Sinon, les leurres sont des mots du paquet.
     'cloze-choice': () => {
@@ -245,7 +315,7 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
       const own = first ? [...new Set((card.distractors || []).map(fit))].filter(w => w && w.toLowerCase() !== first.answer.toLowerCase() && (!tightGap(first, deck.lang) || startOf(w, deck.lang) === startOf(first.answer, deck.lang))).slice(0, lures) : [];
       const c = own.length ? first : cl; if (!c) return null;
       const answer = lowerFirst(c.answer, card.word), mine = shuffle(own, rnd).map(text => ({ text }));
-      const rest = distractors(deck, card, lures, rnd, d => (d.id === card.id ? answer : surface(d)), prefer, { form: true, strict: tightGap(c, deck.lang), mixed }).filter(d => !own.includes(d.text));
+      const rest = distractors(deck, card, lures, rnd, d => (d.id === card.id ? answer : formFor(answer, d)), prefer, { form: true, strict: tightGap(c, deck.lang), gender: kindOf(card, deck.lang) === 'nom' && genderGap(c, deck.lang), number: kindOf(card, deck.lang) === 'nom', mixed, sense: mean }).filter(d => !own.includes(d.text));
       return choice(answer, [...mine, ...rest].slice(0, lures), { cloze: c });
     },
     'cloze-type': () => written(pick(card.clozes.filter(typable), rnd)),
@@ -280,8 +350,10 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
   // Aucune forme de l'échelle n'est possible en respectant la règle des catégories (fiche seule de sa catégorie) :
   // plutôt que de mêler les catégories, on demande d'écrire le mot (phrase à trou, sinon le mot d'après son sens).
   if (!mixed) for (const type of ['cloze-type', 'type']) { const a = make[type]?.(); if (a) return { type, cardId: card.id, gated: false, ...a }; }
-  // Dernier recours, seulement si rien ne peut être écrit non plus : catégories mêlées, pour que la fiche reste révisable.
-  return mixed ? null : buildActivity(deck, card, box, rnd, { force, prefer, contrast, help, gate, audio, vary, turn, mixed: true });
+  // Dernier recours, quand rien ne peut être choisi ni écrit (fiche seule de sa catégorie, sans phrase, mot en deux parties) :
+  // un rappel de tête. L'étudiant retrouve le mot d'après son sens, le découvre, puis se juge. Aucune catégorie n'est mêlée
+  // et aucune fiche ne reste sans exercice.
+  return { type: 'recall', cardId: card.id, gated: false, answer: card.bare, self: true };
 }
 
 // Tableau d'association (mots et sens) et banque de mots : formes à plusieurs fiches, sans effet sur les boîtes.
