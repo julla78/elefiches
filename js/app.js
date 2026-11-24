@@ -9,6 +9,7 @@ import { buildPrompts, GRIDS, gridOf } from './prompts.js';
 import { openSqlite } from './sqlite.js';
 import { buildICS } from './remind.js';
 import { makeBackup, readBackup, mergeProgress, cleanProgress, countReplaced, countAdded } from './backup.js';
+import { ACCESS, MIN_CODE, validAccess, makeAccess, checkAccess } from './acces.js';
 import { STR, LANG_NAMES } from './i18n.js';
 
 const app = document.getElementById('app');
@@ -16,11 +17,17 @@ const app = document.getElementById('app');
 if (window.top !== window.self && /\.github\.io$/i.test(location.hostname)) { document.body.textContent = ''; throw new Error('cadre'); }
 // Deux interfaces sur le même code : index.html pour les étudiants (jouer), enseignant.html pour créer et modifier les paquets.
 const TEACHER = document.body.dataset.mode === 'teacher';
+// Version de l'application : Éléfiches VOC' (vocabulaire). Une version GRAM' (grammaire) est prévue, avec sa propre méthode.
+const EDITION = 'voc’';
+// Espace enseignant sur code d'accès (voir js/acces.js). Sur un poste de développement, le verrou ne s'applique que si
+// l'adresse le demande (?verrou), pour que les tests automatiques puissent parcourir l'éditeur.
+const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+const GATED = TEACHER && validAccess(ACCESS) && (!LOCAL || new URLSearchParams(location.search).has('verrou'));
 const siteBase = () => location.origin + location.pathname.replace(/[^/]*\.html$/, '');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const S = { lang: 'auto', minutes: 5, maxNew: 3, help: 'fr', sound: true, voice: true, remind: { time: '18:00', days: 'daily' }, savedAt: 0, decks: [], progress: {}, view: 'home', notice: null, toast: null, confirmReset: null, confirmDel: null, editId: null, cardId: null, draft: {}, local: null, gate: false, builder: { lang: 'fr', level: '', topic: '', count: 20, words: '', grid: '3x3' }, sheets: [], loose: [], perm: 0 };
+const S = { locked: GATED, lang: 'auto', minutes: 5, maxNew: 3, help: 'fr', sound: true, voice: true, remind: { time: '18:00', days: 'daily' }, savedAt: 0, decks: [], progress: {}, view: 'home', notice: null, toast: null, confirmReset: null, confirmDel: null, editId: null, cardId: null, draft: {}, local: null, gate: false, builder: { lang: 'fr', level: '', topic: '', count: 20, words: '', grid: '3x3' }, sheets: [], loose: [], perm: 0 };
 // Langue des consignes et du feedback. En mode automatique : français jusqu'au niveau B1,
-// langue apprise à partir de B2 (règle fixée par Julie). L'étudiant peut toujours choisir lui-même.
+// langue apprise à partir de B2 (règle fixée par la responsable du projet). L'étudiant peut toujours choisir lui-même.
 function uiLang() {
   if (S.lang !== 'auto') return S.lang;
   const d = (S.view === 'session' || S.view === 'done') && S.session?.deck;
@@ -108,9 +115,11 @@ const croc = (size = 60) => `<svg class="croc" width="${Math.round(size * 1.7)}"
 // Le petit oiseau blanc qui accompagne les éléphants : il « souffle » le mot dans les exercices d'écoute.
 const bird = (size = 26) => `<svg class="birdy" width="${Math.round(size * 1.2)}" height="${size}" viewBox="38 12 22 20" aria-hidden="true"><path d="M44 26v4M48 26v4" stroke="#6b6878" stroke-width="1"/><ellipse cx="46" cy="23" rx="5.500" ry="3.600" fill="#fff" stroke="#d8d2c8" stroke-width=".5"/><circle cx="51.500" cy="18.500" r="2.400" fill="#fff" stroke="#d8d2c8" stroke-width=".5"/><path d="M53.500 18l4.500 1-4.500 1z" fill="#f2a33a"/><circle cx="52" cy="18" r=".6" fill="#2b2a33"/></svg>`;
 // Décor de l'accueil : un coin de savane, discret, derrière l'éléphanteau.
-const SAVANNA = `<svg class="savanna" viewBox="0 0 400 120" preserveAspectRatio="xMaxYMax slice" aria-hidden="true"><circle cx="392" cy="2" r="34" fill="#f6d58a" opacity=".5"/>
-  <path d="M0 106q100-12 200-4t200-6v24H0z" fill="#e3e6c4" opacity=".75"/>
-  <g fill="#b9c49a" opacity=".7"><path d="M8 110q1-14 7-19q0 11-3 19zM18 110q6-11 14-13q-4 9-10 13zM148 110q2-13 8-17q-1 10-4 17zM158 110q6-9 13-11q-4 7-9 11zM366 108q2-12 7-16q0 9-3 16zM376 108q5-9 12-10q-4 7-8 10z"/></g></svg>`;
+// Bandeau de savane : une bande d'herbe réservée tout en bas de l'en-tête. Rien ne passe derrière le titre, la phrase
+// d'accroche, l'éléphanteau ni le bouton des règles : le texte se lit sur un fond uni.
+const SAVANNA = `<svg class="savanna" viewBox="0 0 800 34" preserveAspectRatio="xMidYMax slice" aria-hidden="true"><circle cx="524" cy="20" r="13" fill="#f3cf7c" opacity=".7"/>
+  <path d="M0 20q100-9 200-3t200-2t200 3t200-4v20H0z" fill="#dfe3bd"/>
+  <g fill="#aebb8c"><path d="M60 26q1-13 7-18q0 10-3 18zM70 26q6-10 13-12q-4 8-9 12zM236 24q2-12 7-16q0 9-3 16zM246 24q5-9 12-10q-4 7-8 10zM392 25q1-13 7-18q0 10-3 18zM402 25q6-10 13-12q-4 8-9 12zM486 24q2-11 6-15q0 9-2 15zM700 25q1-13 7-18q0 10-3 18zM710 25q6-10 13-12q-4 8-9 12z"/></g></svg>`;
 // Paire de défenses : la récompense d'un défi d'étape réussi.
 const tusks = (size = 30, on = true) => `<svg class="tusks${on ? '' : ' off'}" width="${size}" height="${Math.round(size * 0.8)}" viewBox="0 0 40 32" aria-hidden="true"><path d="M12 3c-7 3-10 12-6 19 3 5 9 7 13 6-5-2-8-6-8-11 0-5 1-9 4-13z"/><path d="M28 3c7 3 10 12 6 19-3 5-9 7-13 6 5-2 8-6 8-11 0-5-1-9-4-13z"/></svg>`;
 const FOOT = '<svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><ellipse cx="13" cy="15" rx="9" ry="8.500" fill="currentColor"/><ellipse cx="5.500" cy="6.500" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="10.500" cy="3.800" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="15.800" cy="3.800" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="20.700" cy="6.500" rx="2.300" ry="2.800" fill="currentColor"/></svg>';
@@ -121,7 +130,7 @@ const trunkBar = (pct, cls, label) => `<div class="trunk" role="progressbar" ari
 
 let voices = [], audioCtx = null;
 const loadVoices = () => { try { voices = speechSynthesis.getVoices(); } catch { voices = []; } };
-try { loadVoices(); speechSynthesis.addEventListener('voiceschanged', () => { loadVoices(); if (S.view === 'home' && !S.session) render(); }); } catch { /* pas de synthèse vocale */ }
+try { loadVoices(); speechSynthesis.addEventListener('voiceschanged', () => { loadVoices(); if (S.view === 'home' && !S.session && !S.locked) render(); /* porte fermée : pas de redessin, la saisie du code serait effacée */ }); } catch { /* pas de synthèse vocale */ }
 
 // Choix de la voix : la langue du paquet d'abord (variante attendue, sinon une autre variante de la même langue),
 // puis les voix de bonne qualité ; les voix fantaisie de certains systèmes sont écartées.
@@ -190,7 +199,7 @@ async function recStart() {
       stopMic(); rec = null;
       if (S.step !== step || !S.session) return;
       S.local = { ...(S.local || {}), recording: false, phase: 1, rec: URL.createObjectURL(new Blob(chunks, { type: r.mimeType || 'audio/webm' })) };
-      S.spoke = S.step; render(); speak(S.step.card, S.session.deck.lang, { auto: true });
+      S.spoke = S.step; render(); sayText(S.step.activity.model, S.session.deck.lang, { auto: true });      // le modèle : la phrase entière
     };
     r.start(); rec = r; recTimer = setTimeout(() => { try { r.stop(); } catch { /* déjà arrêté */ } }, 30000);   // jamais plus de trente secondes
     S.local = { ...(S.local || {}), recording: true }; render();
@@ -212,7 +221,7 @@ function keepInputs() { for (const el of app.querySelectorAll('[data-keep]')) S.
 const canListen = deck => !S.quiet && (deck.cards.every(c => c.audio) || ('speechSynthesis' in window && !(voices.length && !voiceFor(deck.lang))));
 
 // Chaque mot s'entend sans rien demander : à sa découverte, puis après chaque réponse (réglage « Prononciation automatique »).
-function autoSpeak() { const c = S.step?.card; if (!S.voice || !c || !S.session || S.spoke === S.step) return; S.spoke = S.step; speak(c, S.session.deck.lang, { auto: true }); }
+function autoSpeak() { const c = S.step?.card; if (!S.voice || !c || !S.session || S.spoke === S.step || S.step.activity?.multi) return; S.spoke = S.step; speak(c, S.session.deck.lang, { auto: true }); }
 
 function sfx(kind) {
   if (!S.sound) return;
@@ -240,6 +249,7 @@ function sfx(kind) {
 // ---------- Données ----------
 
 async function load() {
+  if (GATED && (await store.get('access')) === ACCESS) S.locked = false;      // cet appareil a déjà saisi le code en vigueur
   const set = (await store.get('settings')) || {};
   Object.assign(S, { lang: set.lang || 'auto', minutes: set.minutes || 5, maxNew: set.maxNew || 3, help: set.help || 'fr', sound: set.sound ?? true, voice: set.voice ?? true, remind: { time: '18:00', days: 'daily', ...(set.remind || {}) }, savedAt: set.savedAt || 0 });
   const saved = (await store.get('decks')) || [];
@@ -256,8 +266,8 @@ async function load() {
       if (!res.ok && slug(ref.replace(/\.json$/i, '')) !== plain) res = await fetch(`paquets/${slug(ref.replace(/\.json$/i, ''))}.json`);   // lien tapé avec des accents ou des majuscules
       if (!res.ok) throw new Error('link');
       const deck = deckFromJSON(JSON.stringify(await res.json()));      // JSON strict : un fichier qui serait aussi lisible comme un script est refusé
+      S.progress[deck.id] ??= cleanProgress(await store.get('progress:' + deck.id));      // la progression d'abord : un redessin entre les deux ne doit jamais trouver un paquet sans elle
       S.decks = [...S.decks.filter(d => d.id !== deck.id && !(d.demo && !Object.keys(S.progress[d.id] || {}).length)), deck];
-      S.progress[deck.id] ??= cleanProgress(await store.get('progress:' + deck.id));
       await saveDecks(); S.notice = { text: t('opened', deck.name) };
     } catch { S.notice = { bad: true, text: t('errLink') }; }
   }
@@ -323,6 +333,7 @@ function pendingStage(d, P) {
 }
 
 function deckCard(d) {
+  if (!S.progress[d.id]) return '';      // paquet dont la progression n'est pas encore chargée : il s'affichera au prochain dessin
   const P = S.progress[d.id], s = summary(d, P), canStart = s.due + pickNew(d, P, S.maxNew).length > 0;
   const nextDays = Math.min(...d.cards.map(c => dueInDays(P[c.id])).filter(n => n > 0), 999);
   const pct = Math.round(100 * s.stage.seen / s.stage.size);
@@ -387,8 +398,9 @@ const banners = () => `${store.isPersistent() ? '' : `<p class="banner warn">${t
   ${S.notice ? `<p class="banner ${S.notice.bad ? 'warn' : 'good'}" role="status">${esc(S.notice.text)}</p>` : ''}`;
 
 function home() {
-  return `${TEACHER ? `<button class="link" data-action="teacher">← ${t('eBack')}</button>` : ''}<header class="top">${SAVANNA}${mascot(96, 'idle', 2)}<div class="brand"><h1>Éléfiches</h1><p>${t('tagline')}</p></div>
-      <button class="rulesbtn" data-action="rules">${FOOT}<span>${t('rules')}</span></button></header>
+  return `${TEACHER ? `<button class="link" data-action="teacher">← ${t('eBack')}</button>` : ''}<header class="top">${mascot(147, 'idle', 2)}<h1>Éléfiches<span class="edition">${EDITION}</span></h1>
+      <p class="tagline">${t('tagline')}</p>
+      <button class="rulesbtn" data-action="rules">${FOOT}<span>${t('rules')}</span></button>${SAVANNA}</header>
     ${banners()}
     <div class="appetite"><span class="aplabel">${NUT}${t('appetite')}</span>${seg('maxNew', S.maxNew, [[3, t('ap1')], [5, t('ap2')], [8, t('ap3')]])}</div>
     <section class="decks">${S.decks.map(deckCard).join('')}</section>
@@ -482,14 +494,15 @@ function teacherView() {
       ${row('Example 1<br>Example 2<br>Example 3', 'advised', 'cEx')}${row('Situation', 'advised', 'cSit')}${row('Distracteurs', 'advised', 'cTraps')}
       ${row('Category', 'advised', 'cCat')}${row('Famille', 'optional', 'cFam')}
       ${row('Image', 'optional', 'cImg')}${row('Audio', 'optional', 'cAudio')}${row('IPA', 'optional', 'cIpa')}
-      </tbody></table></div></details>`;
+      </tbody></table></div></details>
+    ${accessCard()}`;
 }
 
 async function addDeck(text, name, lang, json = false, level) {
   try {
     const deck = json ? deckFromJSON(text, name, level) : deckFromCSV(text, name, lang, level);
-    S.decks = [...S.decks.filter(d => d.id !== deck.id), deck];
     S.progress[deck.id] ??= cleanProgress(await store.get('progress:' + deck.id));
+    S.decks = [...S.decks.filter(d => d.id !== deck.id), deck];
     await saveDecks();
     S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped) };
     S.view = 'home';
@@ -549,8 +562,8 @@ async function importPacket({ files = [], text = '', name = '', lang = 'fr', lev
       }
       for (const f of images.filter(f => !used.has(f))) S.loose.push(await imageToDataURL(f.blob));
     }
-    S.decks = [...S.decks.filter(d => d.id !== deck.id), deck];
     S.progress[deck.id] ??= cleanProgress(await store.get('progress:' + deck.id));
+    S.decks = [...S.decks.filter(d => d.id !== deck.id), deck];
     await saveDecks();
     S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped) };
     const toCheck = S.sheets.length || S.loose.length || deck.cards.some(c => c.image || c.sheet);   // toute image se vérifie d'un coup d'œil
@@ -594,7 +607,7 @@ function auditView(d) {
   if (!found.length) return `<p class="audit ok">${t('auOk')}</p>`;
   const names = f => f.cards.slice(0, 4).map(c => esc(c.bare)).join(', ') + (f.cards.length > 4 ? '…' : '');
   return `<details class="audit${warn.length ? ' warn' : ''}"><summary>${t(warn.length ? 'auTitle' : 'auInfo', warn.length || found.length)}</summary>
-    <ul>${found.map(f => `<li class="${f.warn ? 'w' : ''}">${t(f.key, f.cards.length, d.cards.length, d.level)} <span class="meta" lang="${d.lang}">${names(f)}</span></li>`).join('')}</ul>
+    <ul>${found.map(f => `<li class="${f.warn ? 'w' : ''}">${t(f.key, f.cards.length, d.cards.length, d.level)} <span class="meta" lang="${d.lang}">${names(f)}</span>${f.lines?.length ? `<ul class="aulines" lang="${esc(d.lang)}">${f.lines.slice(0, 8).map(x => `<li>${esc(x)}</li>`).join('')}${f.lines.length > 8 ? '<li>…</li>' : ''}</ul>` : ''}</li>`).join('')}</ul>
     <p class="sethint">${t('auNote')}</p></details>`;
 }
 
@@ -908,6 +921,10 @@ function sentence(cl, lang, reveal) {
 const listenBtn = card => `<button class="icon" data-action="speak" data-id="${card.id}" aria-label="${t('listen')}" title="${t('listen')}">${ICON.sound}</button>`;
 const chips = c => `<p class="chips">${c.theme ? `<span class="chip theme">${esc(c.theme)}</span>` : ''}${c.register ? `<span class="chip">${esc(c.register)}</span>` : ''}</p>`;
 const illus = c => (c.image ? `<img class="illus" src="${esc(c.image)}" alt="">` : '');
+// Image d'appui, plus petite : partout où l'indice donné est le sens du mot, l'image l'accompagne.
+const pic = c => (c.image ? `<img class="illus mid" src="${esc(c.image)}" alt="">` : '');
+// Phrase avec le mot étudié en gras.
+const boldIn = (text, cloze, lang) => `<span lang="${lang}">${cloze ? clozeParts(cloze).map(p => (p.blank ? `<b class="target">${esc(p.text)}</b>` : esc(p.text))).join('') : esc(text)}</span>`;
 
 // Sens de la fiche : définition en langue apprise, puis traduction dans la langue d'aide si elle existe.
 function sense(card, lang, cls = 'def') {
@@ -943,7 +960,8 @@ function activityView(step, lang) {
   // Écoute : un gros bouton pour réentendre le mot, et une sortie pour qui ne peut pas écouter maintenant.
   const ear = `<p class="earrow"><button type="button" class="earbtn" data-action="speak" data-id="${card.id}" aria-label="${t('listenAgain')}">${bird(30)}${ICON.sound} <span>${t('listenAgain')}</span></button></p>`;
   const quiet = fb ? '' : `<button type="button" class="link" data-action="cant-listen">${t('cantListen')}</button>`;
-  const selfRow = `<p class="askline">${t(a.type === 'speak' ? 'selfSpeak' : 'selfSentence')}</p><div class="row felt"><button class="primary" data-action="self" data-v="good">${t('selfGood')}</button><button class="secondary" data-action="self" data-v="again">${t('selfAgain')}</button></div>`;
+  const selfRow = `<p class="askline">${t(a.type === 'speak' ? 'selfSpeak' : 'selfSentence')}</p><div class="row felt"><button class="primary" data-action="self" data-v="good">${t('selfGood')}</button><button class="secondary" data-action="self" data-v="again">${t('selfAgain')}</button></div>
+    <button type="button" class="link" data-action="self-retry">${t(a.type === 'speak' ? 'speakRetry' : 'sentenceRetry')}</button>`;
   // Rappel de tête : l'étudiant cherche d'abord sa réponse, les choix n'arrivent qu'ensuite pour la vérifier.
   const gate = () => `<div class="gate"><p>${t('gateWord')}</p>
     <div class="row"><button class="primary" data-action="reveal" autofocus>${t('reveal')}</button>${skip}</div></div>`;
@@ -953,32 +971,40 @@ function activityView(step, lang) {
   if (a.type === 'qcm') body = `<p class="question">${t('qMeaning')}</p><h2 class="word" lang="${lang}">${esc(card.bare)} ${listenBtn(card)}</h2>${options()}`;
   else if (a.type === 'listen') body = `<p class="question">${t('qListen')}</p>${ear}${fb ? `<h2 class="word" lang="${lang}">${esc(card.bare)}</h2>` : ''}${options()}${quiet}`;
   else if (a.type === 'speak') {
-    // Oral : dire le mot à partir de son sens, écouter la voix, puis répéter une phrase en même temps qu'elle (shadowing).
-    const can = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder) && !L.noMic;
-    body = !L.phase && !fb ? `<p class="question">${t('qSpeak')}</p>${illus(card)}${sense(card, lang, 'def big')}
-        <div class="row">${L.recording ? `<button class="primary rec on" data-action="rec-stop">${ICON.stop} ${t('recStop')}</button>` : `${can ? `<button class="primary rec" data-action="rec-start">${ICON.mic} ${t('recStart')}</button>` : ''}<button class="${can ? 'secondary' : 'primary'}" data-action="reveal-self">${t('saidIt')}</button>`}</div>
-        ${L.recording ? `<p class="again" role="status">${t('recOn')}</p>` : `<p class="sethint oral">${t(can ? 'recHint' : 'noRecHint')}</p>`}${skip}${quiet}`
-      : `<p class="question">${t('qSpeakCheck')}</p>${illus(card)}<h2 class="word" lang="${lang}">${esc(card.bare)} ${listenBtn(card)}</h2>
-        ${L.rec ? `<p class="mine"><span class="meta">${t('myVoice')}</span><audio controls src="${esc(L.rec)}"></audio></p>` : ''}
-        ${a.model ? `<div class="shadow"><p class="meta">${t('shadowHow')}</p><p class="example" lang="${lang}">${esc(a.model)}</p><button type="button" class="secondary" data-action="shadow">${ICON.play} ${t('shadowGo')}</button></div>` : ''}
+    // Oral : l'étudiant dit la phrase entière, qu'il a sous les yeux ; il écoute ensuite le modèle, compare avec sa voix,
+    // puis répète en même temps que la voix (shadowing). Tout porte sur la même phrase, du début au retour.
+    const can = !!(navigator.mediaDevices?.getUserMedia && window.MediaRecorder) && !L.noMic, phrase = `<p class="saythis">${boldIn(a.model, a.cloze, lang)}</p>`;
+    body = !L.phase && !fb ? `<p class="question">${t('qSpeak')}</p>${pic(card)}${phrase}
+        <div class="stack">${L.recording ? `<button class="primary rec on" data-action="rec-stop">${ICON.stop} ${t('recStop')}</button>` : `${can ? `<button class="primary rec" data-action="rec-start">${ICON.mic} ${t('recStart')}</button>` : ''}<button class="${can ? 'secondary' : 'primary'}" data-action="reveal-self">${t('saidIt')}</button>`}</div>
+        ${L.recording ? `<p class="again" role="status">${t('recOn')}</p>` : `<p class="sethint oral">${t(can ? 'recHint' : 'noRecHint')}</p>`}${quiet}`
+      : `<p class="question">${t('qSpeakCheck')}</p>${pic(card)}${phrase}
+        <ol class="steps">
+          <li><span class="meta">${t('stepModel')}</span><button type="button" class="secondary" data-action="say-sentence">${ICON.sound} ${t('hearModel')}</button></li>
+          ${L.rec ? `<li><span class="meta">${t('stepMine')}</span><audio controls src="${esc(L.rec)}"></audio></li>` : ''}
+          <li><span class="meta">${t('shadowHow')}</span><button type="button" class="secondary" data-action="shadow">${ICON.play} ${t('shadowGo')}</button></li>
+        </ol>
         ${fb ? '' : selfRow}`;
   } else if (a.type === 'sentence') {
     // Phrase libre : l'étudiant compose sa phrase, puis la compare aux phrases modèles et se juge lui-même.
-    body = !L.phase && !fb ? `<p class="question">${t('qSentence')}</p><h2 class="word" lang="${lang}">${esc(card.bare)} ${listenBtn(card)}</h2>${sense(card, lang)}
+    body = !L.phase && !fb ? `<p class="question">${t('qSentence')}</p>${pic(card)}<h2 class="word" lang="${lang}">${esc(card.bare)} ${listenBtn(card)}</h2>${sense(card, lang)}
         <label class="mysentence">${t('mySentence')}<textarea name="mine" rows="2" lang="${lang}" autocomplete="off" autocapitalize="sentences" spellcheck="false" data-keep="mine">${esc(L.mine || '')}</textarea></label>
         <div class="row"><button class="primary" data-action="reveal-self">${t('seeModel')}</button>${skip}</div>`
       : `<p class="question">${t('qSentenceCheck')}</p>${L.mine ? `<p class="mine"><span class="meta">${t('yours')}</span><span lang="${lang}">${esc(L.mine)}</span></p>` : ''}
-        <ul class="models">${a.models.map((m, i) => `<li lang="${lang}"><button type="button" class="icon small" data-action="say-model" data-i="${i}" aria-label="${t('listen')}">${ICON.sound}</button> ${esc(m)}</li>`).join('')}</ul>
+        <ul class="models">${a.models.map((m, i) => `<li><button type="button" class="icon small" data-action="say-model" data-i="${i}" aria-label="${t('listen')}">${ICON.sound}</button> ${boldIn(m, a.modelClozes?.[i], lang)}</li>`).join('')}</ul>
         ${fb ? '' : selfRow}`;
   }
   else if (a.type === 'qcm-rev') body = `<p class="question">${t('qWord')}</p>${illus(card)}${sense(card, lang, 'def big')}${choice()}`;
   else if (a.type === 'cloze-choice') body = `<p class="question">${t('qCloze')}</p>${sentence(a.cloze, lang, !!fb)}${hint}${choice()}`;
-  else if (a.type === 'situation') body = `<p class="question">${t('qSituation')}</p><p class="situation">${esc(a.situation)}</p>${options()}`;
+  else if (a.type === 'situation') body = `<p class="question">${t('qSituation')}</p>${pic(card)}<p class="situation">${esc(a.situation)}</p>${options()}`;
   else if (a.type === 'order') {
     const picked = L.picked || [], lock = L.lock || 0, by = k => a.chunks.find(c => c.k === k);
-    const chip = (c, fixed) => `<button type="button" class="chunk${fixed ? ' locked' : ''}" data-action="chunk" data-k="${c.k}" lang="${lang}" ${fb || fixed ? 'disabled' : ''}>${esc(c.text)}</button>`;
-    body = `<p class="question">${t('qOrder')}</p>
-      <div class="line" data-zone="line" role="group" aria-label="${t('yourSentence')}">${fb ? `<span lang="${lang}">${esc(a.answer)}</span>` : picked.map((k, i) => chip(by(k), i < lock)).join('') || `<span class="placeholder">${t('tapWords')}</span>`}</div>
+    // Dans la phrase en construction, le premier morceau reçoit sa majuscule et la ponctuation s'ajoute toute seule :
+    // les morceaux à choisir, eux, ne donnent aucun indice sur le début ni sur la fin.
+    const up = x => x.charAt(0).toUpperCase() + x.slice(1);
+    const chip = (c, fixed, first) => `<button type="button" class="chunk${fixed ? ' locked' : ''}" data-action="chunk" data-k="${c.k}" lang="${lang}" ${fb || fixed ? 'disabled' : ''}>${esc(first ? up(c.text) : c.text)}</button>`;
+    const punct = x => (x ? `<span class="punct" lang="${lang}">${esc(x)}</span>` : '');
+    body = `<p class="question">${t('qOrder')}</p>${pic(card)}
+      <div class="line" data-zone="line" role="group" aria-label="${t('yourSentence')}">${fb ? `<span lang="${lang}">${esc(a.answer)}</span>` : picked.length ? punct(a.lead) + picked.map((k, i) => chip(by(k), i < lock, i === 0)).join('') + punct(a.tail) : `<span class="placeholder">${t('tapWords')}</span>`}</div>
       ${fb ? '' : `<div class="bank" data-zone="bank">${a.chunks.filter(c => !picked.includes(c.k)).map(c => chip(c)).join('')}</div>
       ${L.again ? `<p class="again" role="status">${t('orderAgain')}</p>` : ''}
       <div class="row"><button class="primary" data-action="check-order" ${picked.length === a.chunks.length ? '' : 'disabled'}>${t('validate')}</button>${skip}</div>`}`;
@@ -991,7 +1017,7 @@ function activityView(step, lang) {
       ${fb ? '' : `<div class="row"><button class="primary">${t('validate')}</button>${skip}</div>`}</form>`;
     if (a.type === 'cloze-type') body = `<p class="question">${t('qClozeType')}</p>${sentence(a.cloze, lang, !!fb)}${hint}${typed}`;
     else if (a.type === 'listen-type') body = `<p class="question">${t('qListenType')}</p>${ear}${typed}${quiet}`;
-    else if (a.type === 'situation-type') body = `<p class="question">${t('qSitType')}</p><p class="situation">${esc(a.situation)}</p>${sentence(a.cloze, lang, !!fb)}${typed}`;
+    else if (a.type === 'situation-type') body = `<p class="question">${t('qSitType')}</p>${pic(card)}<p class="situation">${esc(a.situation)}</p>${sentence(a.cloze, lang, !!fb)}${typed}`;
     else if (a.type === 'type') body = `<p class="question">${t('qType')}</p>${illus(card)}${sense(card, lang, 'def big')}${typed}`;
     else body = `<p class="question">${t('qNumber')}</p><h2 class="word" lang="${lang}">${esc(card.bare)} ${listenBtn(card)}</h2>${typed}`;
   }
@@ -1012,11 +1038,16 @@ function matchView(step, lang) {
 // Défi d'étape : compléter plusieurs phrases avec une banque de mots commune (deux mots sont en trop).
 function bankView(step, lang) {
   const a = step.activity, fb = S.feedback, L = S.local || {}, fill = L.fill || a.items.map(() => null), cur = L.cur ?? 0;
-  const rows = a.items.map((it, i) => `<li>${clozeParts(it.cloze).map(p => (!p.blank ? esc(p.text)
+  // Premier essai sans indice : il faut lire la phrase. Si une phrase est manquée, son indice de sens (image, traduction)
+  // apparaît et l'étudiant réessaie une fois : un mot manquant contestable ne coûte donc jamais la réponse.
+  const kept = L.kept || [];
+  const cue = it => { const c = S.session.deck.byId[it.id]; return `<span class="cue" lang="">${c.image ? `<img src="${esc(c.image)}" alt="">` : ''}${esc(gloss(c, S.session.deck.help) || meaning(c, S.session.deck.help))}</span>`; };
+  const rows = a.items.map((it, i) => `<li>${fb ? `<button type="button" class="icon small" data-action="say-line" data-i="${i}" aria-label="${t('listen')}">${ICON.sound}</button> ` : ''}${clozeParts(it.cloze).map(p => (!p.blank ? esc(p.text)
     : fb ? `<mark>${esc(p.text)}</mark> <span class="mark">${(L.missed || []).includes(it.id) ? '✗' : '✓'}</span>`
-      : `<button type="button" class="slot${i === cur ? ' cur' : ''}" data-action="bank-gap" data-i="${i}" aria-label="${t('gapN', i + 1)}">${fill[i] === null ? '&nbsp;'.repeat(9) : esc(a.bank[fill[i]])}</button>`)).join('')}</li>`).join('');
+      : `<button type="button" class="slot${i === cur ? ' cur' : ''}" data-action="bank-gap" data-i="${i}" aria-label="${t('gapN', i + 1)}" ${kept.includes(i) ? 'disabled' : ''}>${fill[i] === null ? '&nbsp;'.repeat(9) : esc(a.bank[fill[i]])}</button>`)).join('')}${fb || (L.cue || []).includes(i) ? cue(it) : ''}</li>`).join('');
   return `<div class="card study" style="--th:${hue(step.card.theme)}"><p class="question">${t('qBank')}</p>
     <ol class="banklist" lang="${lang}">${rows}</ol>
+    ${L.again && !fb ? `<p class="again" role="status">${t('bankAgain')}</p>` : ''}
     ${fb ? '' : `<div class="bank">${a.bank.map((w, k) => `<button type="button" class="chunk" data-action="bank-word" data-k="${k}" lang="${lang}" ${fill.includes(k) ? 'disabled' : ''}>${esc(w)}</button>`).join('')}</div>
     <div class="row"><button class="primary" data-action="check-bank" ${fill.includes(null) ? 'disabled' : ''}>${t('validate')}</button></div>`}</div>${fb ? feedbackView(step, lang) : ''}`;
 }
@@ -1037,7 +1068,7 @@ function feedbackView(step, lang) {
   // Réponse écrite à une lettre près : on montre l'endroit de l'écart dans la bonne orthographe.
   let sp = null;
   if (a.cloze && fb.typed && (fb.note === 'near' || fb.near)) { const d = diffParts(a.answer.toLowerCase(), fb.typed.trim().toLowerCase()), i = d[0].length, j = i + d[1].length; sp = [a.answer.slice(0, i), a.answer.slice(i, j), a.answer.slice(j)]; }
-  const ex = a.type === 'order' ? '' : card.examples.find(e => !a.cloze || e.replace(/[’`´]/g, "'") !== a.cloze.text) || card.examples[0];
+  const ex = a.type === 'order' ? '' : a.type === 'speak' ? a.model : card.examples.find(e => !a.cloze || e.replace(/[’`´]/g, "'") !== a.cloze.text) || card.examples[0];
   const move = fb.retry ? '' : fb.boxAfter > fb.boxBefore ? t('boxUp', fb.boxAfter) : fb.boxAfter < fb.boxBefore ? t('boxDown', fb.boxAfter) : '';
   const when = s.challenge || fb.ask ? '' : fb.ok && !fb.retry ? t('nextIn', Math.max(1, fb.days)) : fb.ok ? '' : t('nextSoon');
   const wins = [fb.joined ? t('joined') : '', fb.tamed ? t('tamed', card.word, s.tamed.length, s.today.length) : '',
@@ -1190,7 +1221,44 @@ function render() {
       ${onHome ? `<ul class="decklist">${S.decks.map(d => `<li><span>${esc(d.name)}</span><button class="link danger" data-action="rescue-del" data-id="${esc(d.id)}">${esc(STR.fr.rescueDel)}</button></li>`).join('')}</ul>` : `<button class="primary" data-action="home">${esc(STR.fr.home)}</button>`}</div>`;
   }
 }
+// Porte de l'espace enseignant : tant que le code n'a pas été saisi sur cet appareil, rien d'autre ne s'affiche.
+function gateView() {
+  const G = S.door || {};
+  return `<div class="card gate-card">${mascot(96, 'idle', 2)}<h1>${t('gTitle')}</h1><p>${t('gLead')}</p>
+    <form data-submit="gate" class="stack"><input name="username" autocomplete="username" value="enseignant" hidden><label>${t('gLabel')} <input name="code" type="password" autocomplete="current-password" autocapitalize="off" autocorrect="off" spellcheck="false" required ${G.busy ? 'disabled' : 'autofocus'}></label>
+      ${G.error ? `<p class="again" role="alert">${t(G.error)}</p>` : ''}
+      <button class="primary" ${G.busy ? 'disabled' : ''}>${t(G.busy ? 'gBusy' : 'gEnter')}</button></form>
+    <p class="sethint">${t('gHelp')}</p>
+    <p><a class="link" href="./">${t('gStudent')}</a></p></div>`;
+}
+// Dans l'espace enseignant : créer la ligne à ranger dans js/acces.js pour définir ou changer le code.
+function accessCard() {
+  const G = S.door || {}, on = validAccess(ACCESS);
+  return `<details class="card more"${G.line || G.makeError ? ' open' : ''}><summary>${t('gCardTitle')} ${on ? `<span class="tag ok">${t('gOn')}</span>` : `<span class="tag warn">${t('gOff')}</span>`}</summary>
+    <p>${t(on ? 'gCardOn' : 'gCardOff')}</p>
+    <form data-submit="gate-make" class="stack"><input name="username" autocomplete="username" value="enseignant" hidden><label>${t('gNew')} <input name="code" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" minlength="${MIN_CODE}" required><span class="sethint">${t('gNewHint', MIN_CODE)}</span></label>
+      <label>${t('gNew2')} <input name="again" type="password" autocomplete="new-password" autocapitalize="off" autocorrect="off" spellcheck="false" required></label>
+      ${G.makeError ? `<p class="again" role="alert">${t(G.makeError, MIN_CODE)}</p>` : ''}
+      <button class="secondary">${t('gMake')}</button></form>
+    ${G.line ? `<p>${t('gLineHow')}</p><textarea class="codeline" readonly rows="3" data-line>${esc(G.line)}</textarea><button class="secondary small" data-action="gate-copy">${t('copy')}</button>` : ''}
+    <p class="sethint">${t('gLimits')}</p></details>`;
+}
+async function openGate(code) {
+  S.door = { busy: true }; render();
+  const fails = S.doorFails || 0;
+  if (fails) await new Promise(r => setTimeout(r, Math.min(8000, 1000 * fails)));      // chaque erreur allonge l'attente
+  let ok = false; try { ok = await checkAccess(code); } catch { ok = false; }
+  if (ok) { S.locked = false; S.door = null; S.doorFails = 0; await store.set('access', ACCESS); }
+  else { S.doorFails = fails + 1; S.door = { error: window.crypto?.subtle ? 'gWrong' : 'gNoCrypto' }; }
+  render();
+}
+async function makeGate(code, again) {
+  if (code !== again) S.door = { makeError: 'gDiffer' };
+  else { try { S.door = { line: await makeAccess(code) }; } catch (e) { S.door = { makeError: e.message === 'short' ? 'gShort' : e.message === 'weak' ? 'gWeak' : 'gNoCrypto' }; } }
+  render();
+}
 function paint() {
+  if (S.locked) { document.documentElement.lang = 'fr'; app.innerHTML = gateView(); app.querySelector('[autofocus]')?.focus({ preventScroll: true }); return; }
   document.documentElement.lang = uiLang();
   const open = app.querySelector('details.settings')?.open;
   app.innerHTML = (S.view === 'session' ? sessionView() : S.view === 'done' ? doneView() : S.view === 'teacher' ? teacherView() : S.view === 'rules' ? rulesView() : S.view === 'herd' ? herdView() : S.view === 'images' ? imagesView() : S.view === 'edit' ? editView() : S.view === 'card' ? cardView() : S.view === 'race' ? raceView() : S.view === 'privacy' ? privacyView() : home());
@@ -1204,9 +1272,10 @@ function paint() {
 // Une confirmation n'est acceptée qu'un instant après la demande : un double-clic ne peut pas tout effacer par accident.
 const armed = () => Date.now() - (S.armedAt || 0) >= 800;
 app.addEventListener('click', e => {
-  const b = e.target.closest('[data-action]'); if (!b) return;
+  const b = e.target.closest('[data-action]'); if (!b || S.locked) return;      // porte fermée : aucun geste de l'appli n'est possible
   const { action, id, model } = b.dataset;
   if (action === 'start') startSession(id);
+  else if (action === 'gate-copy') { navigator.clipboard?.writeText(S.door?.line || '').then(() => toast(t('copied')), () => app.querySelector('[data-line]')?.select()); }
   else if (action === 'start-force') startSession(id, true);
   else if (action === 'next') advance();
   else if (action === 'home' || action === 'quit') { stopRace(); dropRecording(); if (S.session) saveProgress(S.session.deck.id); S.view = 'home'; S.session = null; window.scrollTo?.(0, 0); render(); }
@@ -1249,8 +1318,11 @@ app.addEventListener('click', e => {
   else if (action === 'cant-listen' && !S.feedback) cantListen();
   else if (action === 'rec-start') recStart();
   else if (action === 'rec-stop') rec?.stop();
-  else if (action === 'reveal-self' && !S.feedback) { keepInputs(); S.local = { ...(S.local || {}), phase: 1 }; S.spoke = S.step; render(); if (S.step.activity.type === 'speak') speak(S.step.card, S.session.deck.lang, { auto: true }); }
+  else if (action === 'reveal-self' && !S.feedback) { keepInputs(); S.local = { ...(S.local || {}), phase: 1 }; S.spoke = S.step; render(); if (S.step.activity.type === 'speak') sayText(S.step.activity.model, S.session.deck.lang, { auto: true }); }
   else if (action === 'shadow') sayText(S.step.activity.model, S.session.deck.lang, { rate: 0.8 });
+  else if (action === 'say-sentence') sayText(S.step.activity.model, S.session.deck.lang);
+  else if (action === 'say-line') sayText(S.step.activity.items[+b.dataset.i].cloze.text, S.session.deck.lang);
+  else if (action === 'self-retry' && !S.feedback) { const mine = S.local?.mine; dropRecording(); S.local = mine ? { mine } : null; render(); }      // recommencer tout de suite, sans être noté
   else if (action === 'say-model') sayText(S.step.activity.models[+b.dataset.i], S.session.deck.lang);
   else if (action === 'self' && !S.feedback) {
     // L'étudiant se juge en comparant avec le modèle : « comme le modèle », « j'ai hésité » ou « à revoir ».
@@ -1275,6 +1347,7 @@ app.addEventListener('click', e => {
   else if (action === 'match' && !S.feedback) {
     const a = S.step.activity, L = S.local ??= { done: [], errors: [] }, side = b.dataset.side;
     L.bad = null;
+    if (side === 'l' && S.voice) speak(S.session.deck.byId[id], S.session.deck.lang, { auto: true });      // chaque mot se fait entendre quand on le touche
     if (!L.sel || L.sel.side === side) L.sel = { side, id };
     else {
       const word = side === 'l' ? id : L.sel.id, sense = side === 'r' ? id : L.sel.id;
@@ -1287,14 +1360,19 @@ app.addEventListener('click', e => {
   }
   else if ((action === 'bank-word' || action === 'bank-gap') && !S.feedback) {
     const L = S.local ??= { fill: S.step.activity.items.map(() => null), cur: 0 };
-    if (action === 'bank-gap') { L.cur = +b.dataset.i; L.fill[L.cur] = null; }
+    if (action === 'bank-gap') { if ((L.kept || []).includes(+b.dataset.i)) return; L.cur = +b.dataset.i; L.fill[L.cur] = null; }
     else if (L.cur >= 0) { L.fill[L.cur] = +b.dataset.k; L.cur = L.fill.indexOf(null); }
     render();
   }
   else if (action === 'check-bank' && !S.feedback) {
     const a = S.step.activity, L = S.local;
-    L.missed = a.items.filter((it, i) => a.bank[L.fill[i]] !== it.answer).map(it => it.id);
-    cheer(commit({ ok: !L.missed.length }, { missed: L.missed })); render();
+    const wrong = a.items.map((it, i) => (a.bank[L.fill[i]] !== it.answer ? i : -1)).filter(i => i >= 0);
+    if (wrong.length && !L.again) {      // second essai : les phrases justes restent, les autres reçoivent leur indice de sens
+      L.again = true; L.kept = a.items.map((_, i) => i).filter(i => !wrong.includes(i)); L.cue = wrong;
+      wrong.forEach(i => { L.fill[i] = null; }); L.cur = wrong[0]; sfx('steps'); return render();
+    }
+    L.missed = wrong.map(i => a.items[i].id);
+    cheer(commit({ ok: !L.missed.length }, { missed: L.missed, assisted: !!L.again })); render();
   }
   else if (action === 'challenge') startChallenge(id, +b.dataset.stage);
   else if (action === 'copy-prompt') {
@@ -1319,6 +1397,9 @@ app.addEventListener('click', e => {
 app.addEventListener('submit', e => {
   e.preventDefault();
   const kind = e.target.dataset.submit;
+  if (kind === 'gate') { if (S.locked && !S.door?.busy) openGate(e.target.code.value); return; }
+  if (S.locked) return;
+  if (kind === 'gate-make') { makeGate(e.target.code.value, e.target.again.value); return; }
   if (kind === 'import') { const f = e.target; importPacket({ files: [...f.files.files], text: f.text.value, name: f.name.value.trim(), lang: f.lang.value, level: f.level.value }); }
   else if (kind === 'card') saveCard(e.target);
   else if (kind === 'rename') { const d = editing(), n = e.target.name.value.trim(); if (n) { d.name = n; d.lang = e.target.lang.value; d.level = e.target.level.value; d.demo = false; saveDecks(); S.notice = { text: t('saved') }; render(); } }
@@ -1339,6 +1420,7 @@ app.addEventListener('error', e => {
   if (options) options.classList.add('nopics'); else img.remove();
 }, true);
 app.addEventListener('change', e => {
+  if (S.locked) return;
   if (e.target.dataset.file) return attach(e.target);
   if (e.target.dataset.remind) { S.remind = { ...S.remind, time: e.target.value || '18:00' }; return saveSettings(); }
   if (e.target.dataset.grid) {                 // grille des planches : colonnes ou rangées
@@ -1348,6 +1430,7 @@ app.addEventListener('change', e => {
   }
 });
 app.addEventListener('input', e => {
+  if (S.locked) return;
   const k = e.target.dataset?.b;
   if (k) { S.builder[k] = k === 'count' ? Math.min(500, Math.max(3, Math.round(+e.target.value) || 20)) : e.target.value; return refreshPrompts(); }
   if (e.target.dataset.input !== 'search') return;
@@ -1355,6 +1438,7 @@ app.addEventListener('input', e => {
   for (const li of app.querySelectorAll('.cardlist li')) li.hidden = !!q && !li.dataset.text.includes(q);
 });
 document.addEventListener('keydown', e => {
+  if (S.locked) return;
   if (S.view === 'race' && !S.race?.over) { const k = ['1', '2', '3', '4'].indexOf(e.key); if (k >= 0) racePick(k); return; }
   if (S.view !== 'session' || S.feedback || !S.step?.activity?.options) return;
   const i = ['1', '2', '3', '4'].indexOf(e.key);
@@ -1366,7 +1450,7 @@ document.addEventListener('keydown', e => {
 let drag = null;
 app.addEventListener('pointerdown', e => {
   const c = e.target.closest?.('.chunk[data-action="chunk"]:not(:disabled)');
-  if (c && !S.feedback) drag = { k: +c.dataset.k, x: e.clientX, y: e.clientY, el: c, ghost: null };
+  if (c && !S.feedback && !S.locked) drag = { k: +c.dataset.k, x: e.clientX, y: e.clientY, el: c, ghost: null };
 });
 document.addEventListener('pointermove', e => {
   if (!drag) return;

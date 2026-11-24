@@ -29,8 +29,8 @@ export const LIMITS = { A1: { def: 10, image: true }, A2: { def: 14, image: true
 export const WRITING = {
   A1: { words: 'mots concrets et très fréquents, liés à des situations précises de la vie quotidienne',
     def: '4 à 8 mots, sur le modèle « C\'est un animal de la ferme. » ou « C\'est pour dormir. » (à transposer dans la langue du paquet), avec seulement les mots les plus fréquents de la langue (être, avoir, faire, aller, manger, grand, petit, une personne, un animal, une chose) ; jamais un mot plus difficile que le mot défini',
-    ex: '4 à 7 mots, une seule proposition (sujet, verbe, complément)',
-    traps: 'des mots très courants, de sens nettement différent, qu\'un débutant connaît déjà' },
+    ex: '3 à 7 mots, une seule proposition (sujet, verbe, complément)',
+    traps: 'des mots très courants du même thème, de sens nettement différent, qu\'un débutant connaît déjà' },
   A2: { words: 'mots courants des besoins quotidiens (achats, logement, études, loisirs, déplacements)',
     def: '6 à 12 mots, une phrase simple, avec des mots plus fréquents que le mot défini',
     ex: '5 à 9 mots, au présent, au passé composé ou au futur proche, une seule proposition ou deux reliées par « et », « mais », « parce que »',

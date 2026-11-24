@@ -336,14 +336,35 @@ export function prepare(deck) {
 
 // Contrôle d'un paquet : ce qu'une machine peut vérifier. La justesse et le naturel des phrases restent à relire.
 // Renvoie une liste de constats { key, cards } (fiches concernées), du plus gênant au moins gênant.
+// Phrases « de manuel » en anglais. Deux repérages, de fiabilité différente.
+// 1. bookish : sujet en « a / an » + présent simple + un ancrage dans une scène précise (lieu défini, possessif, « this »).
+//    « A rabbit eats carrots in the garden. » est signalée ; la définition « A nurse helps sick people. » ne l'est pas.
+// 2. sceneLike : sujet précis (« the », « my ») + verbe d'action au présent simple, sans repère d'habitude.
+//    « The dog plays with my friends. » : action en cours (présent continu) ou habitude sans repère ? À relire.
+const bare1 = ex => String(ex).replace(/[\[\]]/g, '').replace(/[’`´]/g, "'").trim();
+const ANCHOR = /\b(?:this|that|these|those|my|your|his|her|our|their|here|now|today|tonight)\b|\b(?:in|on|at|under|behind|near|next to|with|into|by|from)\s+(?:the|us|me|him|them)\b/i;
+const A_SUBJECT = /^an?\s+[a-z-]+\s+(?!is\b|was\b|has\b|does\b)[a-z]+[^s\W]s\b(.*)$/i;
+export const bookish = ex => { const m = A_SUBJECT.exec(bare1(ex)); return !!m && ANCHOR.test(m[1]); };
+const ACTIONS = new Set('play eat run sleep read cook drink walk swim jump sit stand watch write drive ride dance sing cry laugh bark fly wash clean carry pull push roll look wait climb draw paint talk listen cut open close throw catch kick hide dig'.split(' '));
+const HABIT = /\b(?:always|usually|often|sometimes|never|rarely|every|each|once|twice|when|whenever|if)\b|\bon \w+days\b|\bat (?:night|weekends?)\b|\bin the (?:morning|afternoon|evening)\b|\ba (?:day|week|month|year)\b/i;
+const THE_SUBJECT = /^(?:the|my|our|his|her|their|your)\s+[a-z-]+\s+([a-z]+s)\b/i;
+const stem = v => v.toLowerCase().replace(/ies$/, 'y').replace(/(ch|sh|x|ss|o)es$/, '$1').replace(/s$/, '');
+export const sceneLike = ex => { const p = bare1(ex), m = THE_SUBJECT.exec(p); return !!m && ACTIONS.has(stem(m[1])) && !HABIT.test(p); };
 export function audit(deck) {
   const lim = LIMITS[deck.level] || {}, wc = t => (t || '').trim().split(/\s+/).filter(Boolean).length, out = [];
-  const add = (key, cards, warn = true) => { if (cards.length) out.push({ key, cards, warn }); };
+  const add = (key, cards, warn = true, lines) => { if (cards.length) out.push({ key, cards, warn, lines }); };
   add('auNoImage', deck.cards.filter(c => !c.image && !c.sheet), !!lim.image);
   add('auLongDef', deck.cards.filter(c => c.definition && lim.def && wc(c.definition) > lim.def));
   add('auNoExample', deck.cards.filter(c => !c.examples.length));
   add('auNoCloze', deck.cards.filter(c => c.examples.length && !c.clozes.length));
   add('auDefHasWord', deck.cards.filter(c => c.definition && c.key.length >= 4 && noAcc(norm(c.definition)).split(/[^\p{L}\p{N}]+/u).includes(c.key.split(' ').pop())));
+  // « A rabbit eats carrots in the garden. » : sujet en a/an suivi d'un présent simple. Naturel pour une définition
+  // (« A nurse helps sick people. »), pas pour une scène : ces phrases sont à relire par l'enseignant.
+  if (deck.lang === 'en') {
+    add('auBookish', deck.cards.filter(c => c.examples.some(bookish)), true, deck.cards.flatMap(c => c.examples.filter(bookish)));
+    add('auScene', deck.cards.filter(c => c.examples.some(sceneLike)), false, deck.cards.flatMap(c => c.examples.filter(sceneLike)));
+  }
+  add('auFewExamples', deck.cards.filter(c => c.examples.length && c.examples.length < 4), false);
   add('auNoSituation', deck.cards.filter(c => !c.situation), false);
   add('auNoTraps', deck.cards.filter(c => !(c.distractors || []).length), false);
   return out;

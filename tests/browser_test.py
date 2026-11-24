@@ -46,14 +46,33 @@ def play(page, right=True, shots=None, near=False):
             page.click('[data-action=reveal]')
         if kind in ('speak', 'sentence'):         # formes où l'étudiant se juge lui-même en comparant avec un modèle
             shot(kind, True)
+            before = page.evaluate("window.__elefiches.state.session.stats.answered")
+            if kind == 'speak':      # la phrase entière est à l'écran dès le début, avec le mot en gras
+                model = page.evaluate("window.__elefiches.step.activity.model")
+                assert page.inner_text('.saythis').strip() == model and len(model.split()) >= 2, ('oral : la phrase entière', model)
+                assert page.locator('.saythis b.target').count() == 1, 'oral : le mot étudié est en gras dans la phrase'
             if kind == 'sentence': page.fill('textarea[name=mine]', 'Ma phrase.')
             page.click('[data-action=reveal-self]'); shot(kind + '_check', True)
-            if kind == 'sentence': assert 'Ma phrase.' in page.inner_text('.mine'), 'la phrase de l’étudiant est gardée pour la comparaison'
+            if kind == 'speak':
+                assert page.locator('[data-action=say-sentence]').count() == 1 and page.locator('[data-action=shadow]').count() == 1, 'oral : écouter le modèle, puis répéter avec la voix'
+                assert page.inner_text('.saythis').strip() == model, 'oral : la même phrase avant et après'
+            if kind == 'sentence':
+                assert 'Ma phrase.' in page.inner_text('.mine'), 'la phrase de l’étudiant est gardée pour la comparaison'
+                n = page.evaluate("window.__elefiches.step.activity.models.length"); assert page.locator('.models li').count() == n <= 4
+                assert page.locator('.models b.target').count() >= 1, 'le mot étudié est en gras dans les phrases modèles'
+            # « Recommencer » ramène au début de l'exercice sans rien noter
+            page.click('[data-action=self-retry]')
+            assert page.locator('[data-action=reveal-self]').count() == 1 and not page.locator('.feedback').count(), 'recommencer : retour au début'
+            assert page.evaluate("window.__elefiches.state.session.stats.answered") == before, 'recommencer ne compte pas comme une réponse'
+            if kind == 'sentence': assert page.input_value('textarea[name=mine]') == 'Ma phrase.', 'la phrase écrite reste là pour être corrigée'
+            page.click('[data-action=reveal-self]')
             page.click('[data-action=self][data-v=good]' if right else '[data-action=self][data-v=again]')
             continue
         if kind == 'listen': assert not page.locator('.study h2.word').count(), 'écoute : le mot ne doit pas être écrit avant la réponse'
         if kind == 'order':
             sol = page.evaluate("window.__elefiches.step.activity.solution")
+            texts = page.locator('.bank .chunk').all_inner_texts()
+            assert not any(re.search(r'[.!?…]$', x) for x in texts), ('morceaux sans ponctuation finale', texts)
             if not right: page.click('[data-action=skip]')
             else:
                 first = True
@@ -68,13 +87,37 @@ def play(page, right=True, shots=None, near=False):
                     first = False
                 shot('order'); page.click('[data-action=check-order]')
         elif kind == 'match':
-            shot('match', True)
+            shot('match', True); page.wait_for_timeout(250)
+            assert not page.evaluate("window.__spoken.length"), ('association : aucun son avant de toucher un mot', page.evaluate("window.__spoken"))
             for pid in page.evaluate("window.__elefiches.step.activity.left.map(p => p.id)"):
-                page.click(f'.tile[data-side=l][data-id="{pid}"]'); page.click(f'.tile[data-side=r][data-id="{pid}"]')
+                page.evaluate("window.__spoken.length = 0"); page.click(f'.tile[data-side=l][data-id="{pid}"]')
+                said = page.evaluate("window.__spoken.slice()"); word = page.evaluate("id => window.__elefiches.state.session.deck.byId[id].bare", pid)
+                if page.evaluate("window.__elefiches.state.voice"): assert len(said) == 1 and said[0].strip(), ('association : chaque mot touché se fait entendre, et lui seul', word, said)
+                page.evaluate("window.__spoken.length = 0"); page.click(f'.tile[data-side=r][data-id="{pid}"]')
         elif kind == 'bank':
+            n = page.evaluate("window.__elefiches.step.activity.items.length")
+            page.wait_for_timeout(250)
+            assert page.locator('.banklist .cue').count() == 0, 'phrases à compléter : aucun indice au premier essai, il faut lire la phrase'
+            answers = page.evaluate("window.__elefiches.step.activity.items.map(i => i.answer)")
+            if 'bank-retry' not in kinds and len(set(answers)) == len(answers):      # une fois : deux réponses échangées, puis second essai avec indice
+                kinds.add('bank-retry')
+                for ans in [answers[1], answers[0]] + answers[2:]:
+                    page.locator('.bank .chunk:not(:disabled)', has_text=re.compile('^' + re.escape(ans) + '$')).first.click()
+                page.click('[data-action=check-bank]')
+                assert page.locator('p.again').count() == 1 and not page.locator('.feedback').count(), 'second essai proposé, rien n’est encore noté'
+                assert page.locator('.banklist .cue').count() == 2 and all(x.strip() for x in page.locator('.banklist .cue').all_inner_texts()), 'indice de sens sur les deux phrases manquées seulement'
+                assert page.locator('.banklist .slot:disabled').count() == n - 2, 'les phrases justes sont gardées'
+                shot('bank_retry', True)
+                for ans in answers[:2]:
+                    page.locator('.bank .chunk:not(:disabled)', has_text=re.compile('^' + re.escape(ans) + '$')).first.click()
+                page.click('[data-action=check-bank]'); page.evaluate("window.__spoken.length = 0")
+                assert page.locator('.feedback').count() == 1 and page.locator('[data-action=say-line]').count() == n and page.locator('.banklist .cue').count() == n
+                continue
+            assert not page.evaluate("window.__spoken.length"), ('phrases à compléter : aucun son automatique', page.evaluate("window.__spoken"))
             for ans in page.evaluate("window.__elefiches.step.activity.items.map(i => i.answer)"):
                 page.locator('.bank .chunk:not(:disabled)', has_text=re.compile('^' + re.escape(ans) + '$')).first.click()
-            shot('bank', True); page.click('[data-action=check-bank]')
+            shot('bank', True); page.click('[data-action=check-bank]'); page.evaluate("window.__spoken.length = 0")
+            assert page.locator('[data-action=say-line]').count() == n, 'après validation : un bouton d’écoute par phrase'
         elif kind in ('cloze-type', 'situation-type', 'type', 'number', 'listen-type'):
             ans = page.evaluate("(a => a.cloze || a.type === 'number' ? a.answer : a.accepted[0])(window.__elefiches.step.activity)")
             shot(kind)
@@ -100,6 +143,8 @@ def play(page, right=True, shots=None, near=False):
 with sync_playwright() as p:
     b = p.chromium.launch(executable_path='/usr/bin/google-chrome', args=['--no-sandbox'])
     page = b.new_page(viewport={'width': 420, 'height': 860})
+    # Journal de ce que l'appli demande à la voix : sert à vérifier quel son part, et quand.
+    page.add_init_script("window.__spoken = []; /* seulement les sons demandés pendant un exercice à plusieurs mots */ try { const s = speechSynthesis.speak.bind(speechSynthesis); speechSynthesis.speak = u => { if (!window.__elefiches?.step?.activity?.multi) return s(u); window.__spoken.push(u.text); return s(u); }; } catch (e) {}")
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.on('console', lambda m: errors.append(m.text) if m.type == 'error' else None)
     page.goto(url); page.wait_for_selector('.deck')

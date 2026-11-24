@@ -28,15 +28,80 @@ export function pickNew(deck, progress, max) {
 
 // Leurres : [{text, id}]. Des leurres qu'on peut vraiment confondre avec la réponse obligent à retrouver
 // ce qu'on sait de chacun pour l'écarter : c'est ce qui rend un choix utile à la mémoire.
-function distractors(deck, card, n, rnd, textOf, prefer = []) {
-  const used = new Set([textOf(card)]); const out = [];
-  const ok = d => d.id !== card.id && d.key !== card.key && !card.neighbours.includes(d.id);
-  // Les mots de même nature d'abord (un nom face à des noms), puis ceux découverts le même jour, puis ceux du même thème.
-  const same = d => ok(d) && card.pos && d.pos === card.pos;
-  const pools = [deck.cards.filter(d => same(d) && prefer.includes(d.id)), deck.cards.filter(d => same(d) && d.theme === card.theme), deck.cards.filter(same), deck.cards.filter(d => ok(d) && prefer.includes(d.id)), deck.cards.filter(d => ok(d) && d.theme === card.theme), deck.cards.filter(ok), deck.cards.filter(d => d.id !== card.id && d.key !== card.key)];
-  for (const pool of pools) for (const d of shuffle(pool, rnd)) {
-    const t = textOf(d);
-    if (!t || used.has(t)) continue;
+const apos = s => s.replace(/[’`´]/g, "'");
+// Ce qui permet d'écarter un mot piège sans connaître le sens : sa nature (un verbe parmi des noms), son genre
+// (« une ___ » devant un masculin) et son début (« l'___ » ou « an ___ » devant une consonne). Les mots proposés
+// ensemble partagent donc ces trois traits, et de préférence le thème : il ne reste que le sens pour choisir.
+const ARTS = /^(?:un|une|des|du|le|la|les|l'|a|an|the|to|el|los|las|una|unos|unas)(?:\s+|(?<=')\s*)/i;
+// Catégorie grammaticale d'une fiche. Celle du paquet (« pos ») fait foi, quelle que soit son écriture ; à défaut elle
+// est déduite du mot (article, « to »), puis de sa place dans ses phrases d'exemple, puis de sa terminaison.
+// Deux mots ne sont proposés ensemble que s'ils ont la même catégorie : c'est une règle, pas une préférence.
+const POS = [['nom', /^(n\b|nom|noun|sust|subst)/i], ['verbe', /^(v\b|verb)/i], ['adjectif', /^adj/i], ['adverbe', /^adv/i], ['expression', /^(expr|locution|phrase|idiom|frase)/i],
+  ['préposition', /^pr[ée]p/i], ['conjonction', /^conj/i], ['pronom', /^pron/i], ['déterminant', /^(d[ée]t|article)/i], ['nombre', /^(num|nombre|chiffre|number)/i], ['interjection', /^interj/i]];
+const BEFORE = {      // le mot qui précède la forme étudiée, dans une phrase d'exemple
+  nom: /(?:^|[\s'’])(?:le|la|les|l|un|une|des|du|au|aux|mon|ma|mes|ton|ta|tes|son|sa|ses|notre|nos|votre|vos|leur|leurs|ce|cet|cette|ces|quel|quelle|the|a|an|my|your|his|her|its|our|their|this|that|these|those|some|el|los|las|unos|unas|mi|mis|tu|tus|su|sus|este|esta|del|al)['’]?\s*$/i,
+  verbe: /(?:^|[\s'’])(?:je|j|tu|il|elle|on|nous|vous|ils|elles|ne|n|i|you|he|she|it|we|they|to|will|can|could|must|should|don't|doesn't|didn't|yo|tú|él|ella|nosotros|ellos|ellas|no|me|te|se)['’]?\s*$/i,
+  adjectif: /(?:^|[\s'’])(?:très|trop|assez|plus|moins|si|est|sont|suis|es|êtes|sommes|était|very|too|so|quite|is|are|am|was|were|muy|más|menos|está|están|soy|eres|era)\s*$/i,
+};
+const VERB_END = { fr: /(?:er|ir|re|oir)$/i, es: /(?:ar|er|ir|arse|erse|irse)$/i, en: /^$/ };
+const kinds = new WeakMap();
+export function kindOf(c, lang = 'fr') {
+  if (kinds.has(c)) return kinds.get(c);
+  const put = k => { kinds.set(c, k); return k; };
+  const pos = typeof c.pos === 'string' ? c.pos.trim() : '';
+  if (pos) return put((POS.find(([, re]) => re.test(pos)) || [pos.toLowerCase()])[0]);
+  const word = apos(String(c.word || '')).replace(/\s\([^)]*\)/g, '').trim(), parts = word.split(/\s+/);
+  if (/^(?:to|se)\s/i.test(word) || /^s'/i.test(word)) return put('verbe');
+  if (ARTS.test(word)) return put('nom');
+  const end = VERB_END[lang] || VERB_END.fr;
+  if (parts.length > 1) return put(end.test(parts[0]) && end.source !== '^$' ? 'verbe' : 'expression');
+  // Un seul mot, sans article : sa place dans les phrases d'exemple tranche.
+  const votes = { nom: 0, verbe: 0, adjectif: 0 };
+  for (const cl of (c.clozes || []).slice(0, 4)) { const before = apos(cl.text.slice(0, cl.spans[0].start)); for (const k in votes) if (BEFORE[k].test(before)) { votes[k]++; break; } }
+  const best = Object.keys(votes).sort((x, y) => votes[y] - votes[x])[0];
+  if (votes[best]) return put(best);
+  if (lang === 'en' ? /ly$/i.test(word) : lang === 'es' ? /mente$/i.test(word) : /ment$/i.test(word)) return put('adverbe');
+  if (end.test(word)) return put('verbe');
+  const fr = apos(String(c.translations?.fr || ''));
+  if (ARTS.test(fr)) return put('nom');
+  if (lang !== 'fr' && /(?:er|ir|re|oir)$/i.test(fr.split(/\s+/)[0] || '')) return put('verbe');
+  return put('autre');
+}
+export const genderOf = c => (/^(?:un|le|el|los|unos)\s/i.test(c.word) ? 'm' : /^(?:une|la|una|las|unas)\s/i.test(c.word) ? 'f' : '');
+export const startOf = (text, lang) => {
+  const w = String(text || '').replace(/[’`´]/g, "'").replace(ARTS, '').trim().toLowerCase().normalize('NFD');
+  return !w ? '' : /^[aeiouœæ]/.test(w) || (lang !== 'en' && w[0] === 'h') ? 'V' : 'C';
+};
+// Ressemblance entre deux fiches pour un même exercice : nature d'abord, puis début, genre, thème.
+const alike = (deck, a, b, ta, tb) => (startOf(ta, deck.lang) === startOf(tb, deck.lang) ? 8 : 0)
+  + (!genderOf(a) || !genderOf(b) || genderOf(a) === genderOf(b) ? 4 : 0) + (a.theme && a.theme === b.theme ? 2 : 0);
+// Réunit jusqu'à n fiches de la MÊME catégorie grammaticale, de préférence de même début et de même thème, autour d'une
+// fiche tirée au sort. S'il n'existe pas « min » fiches d'une même catégorie, renvoie une liste vide : mieux vaut pas
+// d'exercice de groupe qu'un groupe où la grammaire donne la réponse.
+export function cluster(deck, cards, n, rnd, min = 3) {
+  const pool = shuffle(cards, rnd), by = new Map();
+  for (const c of pool) { const k = kindOf(c, deck.lang); by.set(k, [...(by.get(k) || []), c]); }
+  const groups = [...by.values()].filter(g => g.length >= min); if (!groups.length) return [];
+  const group = groups.find(g => g.includes(pool[0])) || groups.sort((x, y) => y.length - x.length)[0], seed = group[0];
+  return [seed, ...group.slice(1).map((c, k) => ({ c, k, v: alike(deck, seed, c, seed.bare, c.bare) })).sort((x, y) => y.v - x.v || x.k - y.k).slice(0, n - 1).map(x => x.c)];
+}
+// Le mot qui précède le trou impose-t-il le début ou le genre du mot attendu ? « l'___ », « an ___ », « une ___ » : oui.
+const TIGHT = { en: /(?:^|\s)an?\s$/i, fr: /(?:['’]|(?:^|\s)(?:le|la|de|je|ne|que|se|me|te|ce|du|au|un|une|mon|ma|ton|ta|son|sa|cette)\s)$/i, es: /(?:^|\s)(?:el|la|un|una|del|al|este|esta)\s$/i };
+export const tightGap = (cloze, lang) => !!cloze && !!TIGHT[lang] && TIGHT[lang].test(apos(cloze.text.slice(0, cloze.spans[0].start)));
+// form : les options sont des mots de la langue étudiée (et non des sens) ; le début et le genre comptent alors.
+// strict : le mot d'avant le trou les impose ; un mot piège qui ne s'y plie pas se verrait tout de suite, il passe en dernier.
+function distractors(deck, card, n, rnd, textOf, prefer = [], { form = false, strict = false, mixed = false } = {}) {
+  const mine = textOf(card), used = new Set([mine]), out = [], kind = kindOf(card, deck.lang);
+  // Règle : même catégorie grammaticale, toujours. « mixed » n'est qu'un dernier recours, quand aucune forme d'exercice
+  // n'a pu être construite autrement (fiche seule de sa catégorie) : la fiche doit tout de même pouvoir être révisée.
+  const same = d => mixed || kindOf(d, deck.lang) === kind;
+  const ok = d => d.id !== card.id && d.key !== card.key && same(d);
+  const score = (d, t) => (form && startOf(t, deck.lang) === startOf(mine, deck.lang) ? (strict ? 100 : 8) : 0)
+    + (form && genderOf(card) && genderOf(d) && genderOf(d) !== genderOf(card) ? 0 : strict ? 60 : 4) + (card.theme && d.theme === card.theme ? 2 : 0) + (prefer.includes(d.id) ? 1 : 0);
+  const ranked = (pool) => shuffle(pool, rnd).map((d, k) => ({ d, k, t: textOf(d) })).filter(x => x.t).map(x => ({ ...x, v: score(x.d, x.t) })).sort((x, y) => y.v - x.v || x.k - y.k);
+  // Les fiches de sens voisin (même famille) ne servent qu'en second, quand les autres ne suffisent pas.
+  for (const pool of [deck.cards.filter(d => ok(d) && !card.neighbours.includes(d.id)), deck.cards.filter(ok)]) for (const { d, t } of ranked(pool)) {
+    if (used.has(t)) continue;
     used.add(t); out.push({ text: t, id: d.id });
     if (out.length === n) return out;
   }
@@ -47,7 +112,6 @@ const lowerFirst = (s, word) => (/^\p{Lu}/u.test(word.replace(/^\S+\s/, '')) || 
 // Article en tête d'un mot piège : retiré quand le trou de la phrase ne contient pas d'article.
 const ARTICLE = /^(?:un|une|des|du|le|la|les|l'|a|an|the|to|el|los|las|una|unos|unas)(?:\s+|(?<=')\s*)/i;
 const isNumber = s => /^\d[\d\s.,]*$/.test(s || '');
-const apos = s => s.replace(/[’`´]/g, "'");
 
 // Découpe une phrase en morceaux à remettre dans l'ordre (la ponctuation reste collée au mot qui la précède).
 export function chunks(text, max) {
@@ -58,6 +122,30 @@ export function chunks(text, max) {
   for (let i = 0; i < k; i++) out.push(w.slice(Math.round(i * w.length / k), Math.round((i + 1) * w.length / k)).join(' '));
   return out;
 }
+
+// Phrase à reconstruire « sans indices » : la majuscule du début et la ponctuation de la fin désigneraient le premier
+// et le dernier morceau. On les retire des morceaux ; l'écran les remet tout seul autour de la phrase construite.
+const STARTERS = {
+  en: "the a an my your his her its our their this that these those there here we you he she it they what where when why who how is are do does did can will in on at for with from to some any many every all no yes please now today tomorrow yesterday sometimes often always never then if and but so because let's don't can't",
+  fr: "le la les l' un une des du de d' mon ma mes ton ta tes son sa ses notre nos votre vos leur leurs ce cet cette ces je j' tu il elle on nous vous ils elles c'est il y a qui que quand où comment pourquoi est-ce aujourd'hui demain hier parfois souvent toujours maintenant ici là dans sur à en pour avec chez sans chaque tous toutes quel quelle oui non merci et mais donc alors si ne n' quelques plusieurs beaucoup au aux",
+  es: 'el la los las un una unos unas mi mis tu tus su sus nuestro nuestra este esta estos estas yo tú él ella nosotros vosotros ellos ellas hay qué quién cuándo dónde cómo por no hoy mañana ayer siempre nunca ahora aquí en con para sin cada todos todas sí y pero porque si cuando muchos muchas algunos algunas del al me te se nos le lo',
+};
+export function neutral(parts, lang, known = new Set()) {
+  const out = [...parts]; let lead = '', tail = '';
+  // Ponctuation finale cherchée depuis la fin. Les phrases d'exemple sont coupées à 300 caractères à l'import : le coût reste négligeable.
+  const last = out[out.length - 1], end = last.match(/[.!?…]+["»”)]*$/), body = end ? last.slice(0, end.index).trimEnd() : '';
+  if (end && body) { out[out.length - 1] = body; tail = end[0]; }
+  const start = out[0].match(/^([¿¡«"“(]+\s*)(.+)$/);
+  if (start) { lead = start[1].trim(); out[0] = start[2]; }
+  // Le premier mot perd sa majuscule seulement si c'est sans risque : mot-outil courant, ou mot vu en minuscules ailleurs
+  // dans le paquet. Un nom propre (« Paris », « Marie ») et le « I » anglais gardent la leur.
+  const first = (out[0].match(/^[^\s'’]+['’]?/) || [''])[0], low = first.toLowerCase().replace('’', "'");
+  const safe = first !== low && !/^I(['’]|$)/.test(first) && (` ${STARTERS[lang] || ''} `.includes(` ${low} `) || known.has(low) || (low.length > 4 && low.endsWith('s') && known.has(low.slice(0, -1))));
+  if (safe) out[0] = first.toLowerCase() + out[0].slice(first.length);
+  return { parts: out, lead, tail };
+}
+// Mots vus en minuscules à l'intérieur des phrases du paquet (donc pas des noms propres).
+const lowerWords = deck => (deck._lower ??= new Set(deck.cards.flatMap(c => [...c.examples.flatMap(e => e.split(/\s+/).slice(1)), ...c.word.split(/\s+/), ...(c.definition || '').split(/\s+/).slice(1)]).map(w => w.replace(/[^\p{L}'’-]/gu, '')).filter(w => w && w === w.toLowerCase())));
 
 // Aide à l'écriture : la première lettre, avec ou sans la longueur du mot. Jamais plus : on n'épelle pas à la place de l'étudiant.
 export function hintOf(answer, mode) {
@@ -109,7 +197,7 @@ export const SELF = ['speak', 'sentence'];
 // opts.force : forme imposée (rattrapage, phrase « bonus » du jour, défi, aperçu). opts.contrast : {text, id} de la
 // mauvaise réponse donnée juste avant ; le rattrapage oppose alors la bonne réponse à cette erreur précise.
 // opts.help : aide maximale à l'écriture (rattrapage). opts.gate : impose le rappel de tête (aperçu des exercices).
-export function buildActivity(deck, card, box, rnd = Math.random, { force = null, prefer = [], contrast = null, help = false, gate = false, audio = false, vary = false, turn = 0 } = {}) {
+export function buildActivity(deck, card, box, rnd = Math.random, { force = null, prefer = [], contrast = null, help = false, gate = false, audio = false, vary = false, turn = 0, mixed = false } = {}) {
   const mean = c => meaning(c, deck.help), L = spec(deck), lures = L.options - 1;
   const typable = c => c && !c.multi && c.n <= 3, discontinuous = /…|\.\.\./.test(card.word);
   const first = card.clozes.find(c => card.examples[0] && c.text === apos(card.examples[0]));      // phrase à trous du premier exemple
@@ -117,7 +205,7 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
   const surface = d => (d.clozes.length ? lowerFirst(pick(d.clozes, rnd).answer, d.word) : null);
   const hint = answer => hintOf(answer, help ? 'pattern' : L.hint);
   const choice = (answer, ds, extra = {}) => {
-    if (!answer || !ds.length) return null;
+    if (!answer || ds.length < (mixed || contrast ? 1 : Math.min(2, lures))) return null;
     const keep = contrast && contrast.text !== answer ? [contrast] : ds;
     return { answer, options: shuffle([answer, ...keep.map(d => d.text)], rnd), from: Object.fromEntries(keep.filter(d => d.id).map(d => [d.text, d.id])), ...extra };
   };
@@ -139,18 +227,25 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
     listen: () => (sayable ? meanings({ listen: true }) : null),
     'listen-type': () => (discontinuous || !sayable ? null : (v => ({ answer: card.word, accepted: v, hint: hint(v[0]), listen: true }))(variants(card.word))),
     // Oral : l'étudiant dit le mot à partir de son sens, compare avec la voix, puis répète une phrase en même temps qu'elle.
-    speak: () => (sayable ? { answer: card.bare, model: card.examples[0] ? apos(card.examples[0]) : '', self: true } : null),
+    speak: () => {
+      const cloze = card.clozes.find(c => !c.multi) || null, model = cloze ? cloze.text : card.examples[0] ? apos(card.examples[0]) : '';
+      return sayable && model ? { answer: card.bare, model, cloze, self: true } : null;
+    },
     // Phrase libre : l'étudiant compose une phrase avec le mot, puis la compare aux phrases modèles.
-    sentence: () => (card.examples.length ? { answer: card.bare, models: card.examples.map(apos), self: true } : null),
-    'qcm-rev': () => choice(card.bare, distractors(deck, card, lures, rnd, d => d.bare, prefer)),
+    sentence: () => {
+      const models = card.examples.slice(0, 5).map(apos);
+      return models.length ? { answer: card.bare, models, modelClozes: models.map(m => card.clozes.find(c => c.text === m) || null), self: true } : null;
+    },
+    'qcm-rev': () => choice(card.bare, distractors(deck, card, lures, rnd, d => d.bare, prefer, { form: true })),
     // Phrase à compléter par un choix. Quand la fiche fournit des mots pièges écrits pour son premier exemple, ce sont
     // eux les leurres : ils s'insèrent dans la phrase sans faute de grammaire. Sinon, les leurres sont des mots du paquet.
     'cloze-choice': () => {
       const fit = w => (first && !ARTICLE.test(first.answer) ? w.replace(ARTICLE, '') : w).trim();
-      const own = first ? [...new Set((card.distractors || []).map(fit))].filter(w => w && w.toLowerCase() !== first.answer.toLowerCase()).slice(0, lures) : [];
+      // Un mot piège écrit pour la fiche n'est gardé que s'il commence comme la réponse : sinon l'élision ou « a / an » le trahit.
+      const own = first ? [...new Set((card.distractors || []).map(fit))].filter(w => w && w.toLowerCase() !== first.answer.toLowerCase() && (!tightGap(first, deck.lang) || startOf(w, deck.lang) === startOf(first.answer, deck.lang))).slice(0, lures) : [];
       const c = own.length ? first : cl; if (!c) return null;
       const answer = lowerFirst(c.answer, card.word), mine = shuffle(own, rnd).map(text => ({ text }));
-      const rest = distractors(deck, card, lures, rnd, d => (d.id === card.id ? answer : surface(d)), prefer).filter(d => !own.includes(d.text));
+      const rest = distractors(deck, card, lures, rnd, d => (d.id === card.id ? answer : surface(d)), prefer, { form: true, strict: tightGap(c, deck.lang) }).filter(d => !own.includes(d.text));
       return choice(answer, [...mine, ...rest].slice(0, lures), { cloze: c });
     },
     'cloze-type': () => written(pick(card.clozes.filter(typable), rnd)),
@@ -158,11 +253,14 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
     type: () => (discontinuous || isNumber(card.definition) ? null : (v => ({ answer: card.word, accepted: v, hint: hint(v[0]) }))(variants(card.word))),
     order: () => {
       for (const text of shuffle(card.examples.map(apos), rnd)) {
-        const parts = chunks(text, L.chunks);
-        if (!parts) continue;
+        const raw = chunks(text, L.chunks);
+        if (!raw) continue;
+        // Le mot de la fiche lui-même, en tête de phrase (« Horses live on farms. »), perd sa majuscule comme les autres.
+        const all = lowerWords(deck), own = new Set(card.clozes.map(c => lowerFirst(c.answer, card.word).split(/\s+/)[0]).filter(w => w === w.toLowerCase()));
+        const { parts, lead, tail } = neutral(raw, deck.lang, { has: w => all.has(w) || own.has(w) });
         let mixed = parts.map((t, k) => ({ k, text: t }));
         for (let i = 0; i < 6; i++) { mixed = shuffle(mixed, rnd); if (mixed.map(c => c.text).join(' ') !== parts.join(' ')) break; }
-        return { answer: text, solution: parts, chunks: mixed };
+        return { answer: text, solution: parts, chunks: mixed, lead, tail };
       }
       return null;
     },
@@ -188,9 +286,10 @@ function matchStep(deck, ids, rnd) {
   return { card: deck.byId[ids[0]], activity: { type: 'match', multi: true, left: shuffle(pairs, rnd), right: shuffle(pairs, rnd) } };
 }
 function bankStep(deck, ids, pool, rnd) {
-  const items = ids.map(id => deck.byId[id]).map(c => { const cloze = pick(c.clozes.filter(x => !x.multi), rnd); return { id: c.id, cloze, answer: lowerFirst(cloze.answer, c.word) }; });
+  const items = ids.map(id => deck.byId[id]).map(c => { const cloze = c.clozes.find(x => !x.multi); return { id: c.id, cloze, answer: lowerFirst(cloze.answer, c.word) }; });
   const answers = items.map(i => i.answer), extra = [];
-  for (const c of shuffle(pool.filter(c => !ids.includes(c.id) && c.clozes.length), rnd)) {
+  const lead = deck.byId[ids[0]], near = shuffle(pool.filter(c => !ids.includes(c.id) && c.clozes.length), rnd).map((c, k) => ({ c, k, v: alike(deck, lead, c, lead.bare, c.bare) })).sort((x, y) => y.v - x.v || x.k - y.k).map(x => x.c);
+  for (const c of near) {
     const s = lowerFirst(c.clozes[0].answer, c.word);
     if (!answers.includes(s) && !extra.includes(s)) extra.push(s);
     if (extra.length === 2) break;
@@ -310,8 +409,10 @@ export class Challenge {
     this.served = 0; this.today = []; this.tamed = [];
     const cs = shuffle(cards, rnd), q = [];
     const half = cs.length >= 8 ? Math.ceil(cs.length / 2) : cs.length;
-    for (const part of [cs.slice(0, half), cs.slice(half)]) if (part.length >= 3) q.push({ kind: 'match', ids: part.slice(0, 5).map(c => c.id) });
-    const gaps = shuffle(cards.filter(c => c.clozes.some(x => !x.multi)), rnd).slice(0, 4);
+    // Les mots associés ou proposés ensemble se ressemblent (nature, début, thème) : on ne peut pas trier par la grammaire.
+    const g1 = cluster(deck, cs, 5, rnd), g2 = half < cs.length ? cluster(deck, cs.filter(c => !g1.includes(c)), 5, rnd) : [];
+    for (const part of [g1, g2]) if (part.length >= 3) q.push({ kind: 'match', ids: part.map(c => c.id) });
+    const gaps = cluster(deck, cards.filter(c => c.clozes.some(x => !x.multi)), 4, rnd);
     if (gaps.length >= 3) q.push({ kind: 'bank', ids: gaps.map(c => c.id) });
     const sit = shuffle(cards.filter(c => c.situation && c.examples[0]), rnd).slice(0, 2);
     const ord = shuffle(cards.filter(c => !sit.includes(c) && c.examples.length), rnd).slice(0, 2);
@@ -349,10 +450,11 @@ export class Tour {
     const used = new Set(), q = [];
     for (const [box, type] of [[1, 'qcm'], [1, 'cloze-choice'], [2, 'qcm-rev'], [2, 'listen'], [3, 'cloze-type'], [3, 'listen-type'], [4, 'order'], [4, 'speak'], [5, 'situation-type'], [5, 'type'], [5, 'sentence']]) {
       const fits = c => buildActivity(deck, c, box, rnd, { force: type })?.type === type;
-      const card = deck.cards.find(c => !used.has(c.id) && fits(c)) || deck.cards.find(fits);       // petit paquet : une fiche peut servir deux fois
+      const some = deck.cards.slice(0, 200);      // sur un très gros paquet, les 200 premières fiches suffisent à trouver un exemple de chaque forme
+      const card = some.find(c => !used.has(c.id) && fits(c)) || some.find(fits);       // petit paquet : une fiche peut servir deux fois
       if (card) { used.add(card.id); q.push({ kind: 'quiz', id: card.id, force: type, box }); }
     }
-    const ids = deck.cards.slice(0, 5).map(c => c.id), gaps = deck.cards.filter(c => c.clozes.some(x => !x.multi)).slice(0, 4).map(c => c.id);
+    const ids = cluster(deck, deck.cards, 5, rnd).map(c => c.id), gaps = cluster(deck, deck.cards.filter(c => c.clozes.some(x => !x.multi)), 4, rnd).map(c => c.id);
     q.push({ kind: 'match', ids, box: 0 });
     if (gaps.length >= 3) q.push({ kind: 'bank', ids: gaps, box: 0 });
     this.queue = q; this.total = q.length;

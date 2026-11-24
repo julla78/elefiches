@@ -1,15 +1,22 @@
 /* Éléfiches — feuille de style. Couleurs principales en variables pour faciliter une future charte. */
+/* Nunito (SIL Open Font License 1.1, voir fonts/LICENCE-Nunito.txt) : servie par l'appli elle-même, jamais par un autre site. */
+@font-face { font-family: 'Nunito'; font-style: normal; font-weight: 200 1000; font-display: swap; src: url('../fonts/nunito-latin-ext.woff2') format('woff2-variations');
+  unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'Nunito'; font-style: normal; font-weight: 200 1000; font-display: swap; src: url('../fonts/nunito-latin.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
 :root {
+  /* Couleurs de la version (VOC' : bleu-violet). Une autre version, comme GRAM', ne changera que ces lignes. */
+  --brand-text: #4f4796; --brand-line: #cfc7e6;
   --bg: #fbf7f1; --card: #ffffff; --ink: #2b2a33; --muted: #6b6878; --line: #e9e3da;
   --brand: #6c63b5; --brand-ink: #ffffff; --brand-soft: #eeecfa; --accent: #ff7a59; --accent-ink: #a8391f;
   --good: #1f8a5b; --good-soft: #e3f5ec; --soft: #fff3e2; --soft-ink: #8a5a12; --warn: #b3261e;
   --radius: 20px; --shadow: 0 6px 24px rgba(60, 50, 110, .08);
-  font-family: ui-rounded, "SF Pro Rounded", "Nunito", "Segoe UI", system-ui, sans-serif;
+  font-family: "Nunito", ui-rounded, "SF Pro Rounded", "Segoe UI", system-ui, sans-serif;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #17161d; --card: #22212b; --ink: #f1eff7; --muted: #a9a5b8; --line: #34323f;
-    --brand: #9d95e6; --brand-ink: #17161d; --brand-soft: #2c2a45; --accent-ink: #ffab94; --good: #5fd3a0; --good-soft: #1c3a2e;
+    --brand: #9d95e6; --brand-ink: #17161d; --brand-soft: #2c2a45; --brand-text: #b9b3f0; --brand-line: #4a4670; --accent-ink: #ffab94; --good: #5fd3a0; --good-soft: #1c3a2e;
     --soft: #3a2f1c; --soft-ink: #f2c77d; --warn: #ff8a80; --shadow: none; }
 }
 * { box-sizing: border-box; }
@@ -357,10 +364,18 @@ label.inline { display: inline-flex; align-items: center; gap: 6px; }
 .ic { vertical-align: -4px; flex: none; } .icon .ic { width: 24px; height: 24px; }
 .earbtn { display: inline-flex; align-items: center; gap: 8px; } .earbtn .ic { width: 28px; height: 28px; }
 .rec, .shadow .secondary, .remind .secondary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
-.top { position: relative; padding: 14px 14px 10px; border-radius: 22px; background: linear-gradient(180deg, #fdf3df, #f8eed9); overflow: hidden; }
-.top > * { position: relative; } .top .savanna { position: absolute; inset: 0; width: 100%; height: 100%; }
-.top .mascot { flex: none; filter: drop-shadow(0 2px 3px rgba(60, 40, 20, .12)); }
-@media (prefers-color-scheme: dark) { .top { background: linear-gradient(180deg, #2a2733, #24222c); } .top .savanna { opacity: .35; } }
+/* En-tête « éléphanteau au centre » : l'éléphanteau en grand, puis le titre et la marque de la version (voc'), la phrase
+   d'accroche et le bouton des règles, tout centré ; la bande d'herbe a sa place réservée tout en bas, sous le bouton. */
+.top { position: relative; display: flex; flex-direction: column; flex-wrap: nowrap; align-items: center; gap: 6px; padding: 20px 20px 56px; border-radius: 28px; background: #fdf3df; overflow: hidden; text-align: center; }
+.top .mascot { flex: none; width: clamp(140px, 45vw, 176px); height: auto; filter: drop-shadow(0 2px 3px rgba(60, 40, 20, .12)); }
+.top h1 { position: relative; display: inline-block; margin: 0; font-size: clamp(1.9rem, 9.2vw, 2.25rem); line-height: 1.05; font-weight: 800; letter-spacing: -.01em; color: #3a332b; white-space: nowrap; }
+.top h1 .edition { position: absolute; left: 100%; top: 1px; margin-left: 3px; font-size: .58em; line-height: 1; color: var(--brand-text); letter-spacing: 0; }
+.top .tagline { margin: 0; max-width: 16.5rem; color: #62584a; font-size: 1.03rem; line-height: 1.35; font-weight: 600; }
+.top .rulesbtn { flex: none; flex-direction: row; gap: 7px; margin: 8px 0 0; min-height: 44px; min-width: 0; padding: 0 15px 0 11px; border: 1.5px solid var(--brand-line); border-radius: 999px; background: #fffaf0; color: var(--brand-text); font-size: .97rem; font-weight: 800; white-space: nowrap; }
+.top .rulesbtn svg { width: 19px; height: 19px; }
+.top .savanna { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 36px; pointer-events: none; }
+@media (min-width: 560px) { .top .tagline { max-width: none; font-size: 1.15rem; } }
+@media (prefers-color-scheme: dark) { .top { background: #2a2733; } .top h1 { color: var(--ink); } .top .tagline { color: var(--muted); } .top .rulesbtn { background: transparent; } .top .savanna { opacity: .4; } }
 .rain i svg { width: 1.6em; height: 1em; }
 .track .hare svg, .track .finish svg { display: block; }
 
@@ -394,3 +409,31 @@ details.settings .stack, .privacy .stack { display: flex; flex-direction: column
 .option.pic .cap { display: inline; font-size: 1rem; text-align: left; }
 .option.pic img { width: 72px; height: 72px; }
 .options.nopics .option.pic img { display: none; }
+
+/* v11 : oral sur la phrase entière, modèles avec le mot en gras, indices de sens */
+.illus.mid { display: block; max-height: 150px; width: auto; max-width: 60%; margin: 0 auto 10px; border-radius: 14px; }
+.saythis { font-size: 1.35rem; line-height: 1.35; font-weight: 600; margin: 8px 0 14px; padding: 12px 14px; border-radius: 14px; background: var(--bg); }
+b.target { font-weight: 800; padding: 0 3px; border-radius: 5px; background: var(--brand-soft); }
+.steps { list-style: none; counter-reset: st; margin: 10px 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.steps li { counter-increment: st; display: flex; flex-direction: column; gap: 6px; }
+.steps li .meta::before { content: counter(st) ". "; font-weight: 700; }
+.steps li .secondary { display: inline-flex; align-items: center; justify-content: center; gap: 8px; align-self: stretch; }
+.steps audio { width: 100%; }
+.line .punct { align-self: center; font-size: 1.2rem; font-weight: 700; color: var(--muted); }
+.banklist li .cue { display: flex; align-items: center; gap: 8px; margin: 2px 0 10px; font-size: 1rem; color: var(--muted); }
+.banklist li .cue img { width: 40px; height: 40px; object-fit: contain; border-radius: 8px; background: #fff; flex: none; }
+.models li { align-items: flex-start; } .models li > span { padding-top: 9px; }
+
+/* Porte de l'espace enseignant */
+.gate-card { max-width: 440px; margin: 8vh auto 0; display: flex; flex-direction: column; gap: 12px; align-items: stretch; text-align: left; }
+.gate-card .mascot { align-self: center; } .gate-card h1 { font-size: 1.6rem; text-align: center; }
+.gate-card input, details.more input[type=password] { width: 100%; min-height: 48px; font-size: 1.1rem; padding: 10px 12px; border-radius: 12px; border: 2px solid var(--line); background: var(--card); color: var(--ink); }
+.codeline { width: 100%; font-family: ui-monospace, monospace; font-size: .85rem; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); overflow-wrap: anywhere; }
+summary .tag { font-size: .85rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-left: 6px; }
+summary .tag.ok { background: var(--good-soft); color: var(--good); } summary .tag.warn { background: var(--soft); color: var(--soft-ink); }
+.aulines { margin: 6px 0 2px; padding-left: 18px; font-size: .95rem; color: var(--ink); }
+.aulines li { margin: 2px 0; }
+.slot:disabled { opacity: 1; border-style: solid; background: var(--good-soft); color: var(--ink); }
+/* Appétit du jour : trois choix de même largeur sur une ligne, chacun sur une ligne de texte quand la place le permet */
+.appetite .seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
+.appetite .seg button { padding: 7px 4px; font-size: .94rem; line-height: 1.2; }

@@ -4,6 +4,8 @@ Application web pour mémoriser le vocabulaire d'une langue : répétition espac
 
 - Aucun compte, aucun serveur : la progression reste dans le navigateur, et se sauvegarde dans un fichier.
 - Deux adresses : `index.html` pour les étudiants, `enseignant.html` pour créer, importer et modifier les paquets.
+- La police Nunito (SIL Open Font License 1.1, texte dans `fonts/LICENCE-Nunito.txt`) est servie par l'application elle-même : aucun appel à un autre site.
+- L'espace enseignant peut demander un code d'accès, donné sur demande : seule son empreinte est rangée dans `js/acces.js`. C'est une porte fermée, pas un coffre-fort (site public, sans serveur) ; rien de confidentiel ne se trouve derrière.
 - Les exercices suivent la solidité du souvenir : choisir le sens (parmi des images aux niveaux A1 et A2), reconnaître le mot à l'oreille, compléter une phrase, écrire le mot, le dire à voix haute et répéter une phrase avec la voix, reconstruire une phrase, composer sa propre phrase.
 - Chaque mot est lu à voix haute dans la langue apprise, par la voix de synthèse de l'appareil ou par un fichier son joint à la fiche.
 - Un paquet de fiches est un seul fichier, fabriqué par une IA à partir d'un prompt fourni par l'espace enseignant : archive `.zip` (fiches et images), paquet Anki `.apkg`, `.json` ou `.csv`. L'application contrôle ce qu'une machine peut vérifier (images, longueur des définitions, exemples).

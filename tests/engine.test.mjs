@@ -5,7 +5,9 @@ import { check, variants, findSpans, clozes, clozeParts } from '../js/match.js';
 import { parseCSV, deckFromCSV, DEMO_CSV, serialize, prepare, demoDeck, MODELS, safeUrl, deckToJSON, deckFromJSON, mergeDecks, decode, audit } from '../js/deck.js';
 import { review, isDue, inHerd, summary, stageOf } from '../js/scheduler.js';
 import { guessLevel } from '../js/deck.js';
-import { Session, Challenge, Tour, pickNew, buildActivity, meaning, gloss, chunks, judge, hintOf, roomFor } from '../js/session.js';
+import { Session, Challenge, Tour, pickNew, buildActivity, meaning, gloss, chunks, judge, hintOf, roomFor, neutral } from '../js/session.js';
+import { bookish, sceneLike } from '../js/deck.js';
+import { kindOf, genderOf, startOf, cluster, tightGap } from '../js/session.js';
 import { diffParts, spoken, slug } from '../js/match.js';
 import { SPEC, WRITING } from '../js/levels.js';
 import { unzip } from '../js/zip.js';
@@ -110,7 +112,10 @@ t('activités : une forme par boîte, du choix à la réponse écrite', () => {
       assert.ok(judge(a.answer, a, demo).ok, c.word); assert.equal(a.hint, hintOf(a.answer, 'first'), 'A2 : première lettre');
     }
     if (a.type === 'order') {
-      assert.equal(a.solution.join(' '), a.answer); assert.notEqual(a.chunks.map(x => x.text).join(' '), a.answer);
+      // les morceaux ne portent ni la majuscule du début ni le point final : l'écran les remet autour de la phrase construite
+      const built = a.solution.join(' '), shown = (a.lead ? a.lead + ' ' : '') + built[0].toUpperCase() + built.slice(1) + a.tail;
+      assert.equal(shown.replace(/\s+([?!])/g, '$1'), a.answer.replace(/\s+([?!])/g, '$1')); assert.notEqual(a.chunks.map(x => x.text).join(' '), built);
+      assert.ok(!/[.!?…]$/.test(a.solution[a.solution.length - 1]), 'pas de ponctuation finale dans le dernier morceau');
       assert.ok(a.chunks.length >= 3 && a.chunks.length <= 4, 'niveau A : quatre morceaux au plus');
     }
     if (a.type === 'situation-type') { assert.equal(a.cloze.text, c.examples[0].replace(/’/g, "'")); assert.equal(a.situation, c.situation); }
@@ -511,7 +516,7 @@ z = zipfile.ZipFile('${out}', 'w', zipfile.ZIP_DEFLATED); z.write(p, 'collection
 }
 const fl = (...names) => names.map((name, ord) => ({ name, ord }));
 
-// Le paquet de Julie : champs « Picture, Expression, Definition, Category », sans phrase d'exemple.
+// Un paquet réel : champs « Picture, Expression, Definition, Category », sans phrase d'exemple.
 const dbExpr = await makeAnki({ models: { 11: { id: 11, name: 'Vocabulaire illustré A1', flds: fl('Picture', 'Expression', 'Definition', 'Category') } }, decks: { 1: { name: 'Default' }, 5: { name: 'À boire et à manger – A1' } },
   notes: [['<img src="food_01.jpg">', 'Une pomme', 'Un fruit rond, souvent rouge, vert ou jaune.', 'Les fruits'], ['<img src="food_02.jpg">', 'Un champignon', 'Un aliment qui pousse dans la terre.', 'Les légumes'], ['<img src="food_03.jpg">', 'Un citron', 'Un fruit jaune, au goût très acide.', 'Les fruits']].map(f => ({ mid: 11, did: 5, tags: ' A1 Les_fruits ', f })) });
 // Champs sans nom reconnu, apostrophes codées par l'outil qui a fabriqué le paquet, exemples réunis par des puces.
@@ -603,6 +608,122 @@ t('sécurité : progression forgée reconstruite, paquet démesuré refusé, tex
   const t0 = Date.now(), evil = deckFromAnki(await makeAnki({ models: { 20: { id: 20, name: 'Texte à trous', type: 1, flds: fl('Texte', 'Extra') } }, decks: { 1: { name: 'Default' }, 2: { name: 'Piège A1' } },
     notes: [{ mid: 20, did: 2, f: ['{{c1::'.repeat(4000), 'x'] }, { mid: 20, did: 2, f: ['Je paie mon {{c1::loyer}}.', 'Argent du logement.'] }, { mid: 20, did: 2, f: ['Elle signe le {{c1::bail}}.', 'Contrat.'] }, { mid: 20, did: 2, f: ['Il donne son {{c1::préavis}}.', 'Délai.'] }] }), '', 'fr', '');
   assert.ok(Date.now() - t0 < 3000, 'lecture en moins de trois secondes'); assert.ok(evil.cards.some(c => c.word === 'loyer'));
+});
+
+// Version 11 : chaque retour d'essai devient un test, pour que l'erreur ne revienne pas.
+const farm = () => prepare({ name: 'Farm (A1)', lang: 'en', level: 'A1', cards: [
+  ['a cow', 'cow', 'gives us milk', 'Cows'], ['a sheep', 'sheep', 'gives us wool', 'Sheep'], ['a hen', 'hen', 'lays an egg every day', 'Hens'],
+  ['a horse', 'horse', 'is pulling the cart', 'Horses'], ['a pig', 'pig', 'is rolling in the mud', 'Pigs'], ['a dog', 'dog', 'is barking at the postman', 'Dogs'],
+].map(([word, w, pred, plural], i) => ({ word, definition: 'It is a farm animal.', translations: { fr: 'mot' + i },
+  examples: [`The [${w}] ${pred}.`, `We have a [${w}] on our farm.`, `[${plural}] live on farms.`, `Where is my [${w}]?`], situation: 'Tu montres un animal.', image: 'data:image/png;base64,AAAA' })) });
+
+t('phrase à reconstruire : ni majuscule ni ponctuation pour deviner le début et la fin', () => {
+  assert.deepEqual(neutral(['A rabbit', 'eats carrots', 'in', 'the garden.'], 'en'), { parts: ['a rabbit', 'eats carrots', 'in', 'the garden'], lead: '', tail: '.' });
+  assert.equal(neutral(['Paris', 'est', 'belle.'], 'fr').parts[0], 'Paris', 'un nom propre garde sa majuscule');
+  assert.equal(neutral(['I', 'like', 'my dog.'], 'en').parts[0], 'I', 'le « I » anglais garde sa majuscule');
+  assert.equal(neutral(["L'appartement", 'est', 'grand.'], 'fr').parts[0], "l'appartement");
+  assert.deepEqual(neutral(['¿ Dónde', 'está', 'el baño ?'], 'es'), { parts: ['dónde', 'está', 'el baño'], lead: '¿', tail: '?' });
+  assert.equal(neutral(['Marie', 'habite', 'ici.'], 'fr', new Set(['habite'])).parts[0], 'Marie');
+  assert.equal(neutral(['Cows', 'give', 'milk.'], 'en', new Set(['cows'])).parts[0], 'cows', 'un mot vu en minuscules ailleurs dans le paquet');
+  const deck = farm();
+  for (let i = 0; i < 40; i++) {
+    const a = buildActivity(deck, deck.cards[i % 6], 4, Math.random, { force: 'order' });
+    assert.ok(a.chunks.every(c => !/[.!?]$/.test(c.text)), 'aucun morceau ne porte la ponctuation finale');
+    assert.ok(a.chunks.filter(c => /^\p{Lu}/u.test(c.text)).length === 0, 'aucun morceau ne porte une majuscule de début de phrase : ' + a.chunks.map(c => c.text).join(' | '));
+  }
+});
+
+t('oral : la phrase entière dès le début, avec le mot repéré', () => {
+  const deck = farm(), a = buildActivity(deck, deck.cards[0], 4, Math.random, { force: 'speak', audio: true });
+  assert.equal(a.model, 'The cow gives us milk.'); assert.equal(a.cloze.answer, 'cow'); assert.ok(a.self);
+  assert.equal(clozeParts(a.cloze).filter(p => p.blank).map(p => p.text).join(''), 'cow', 'le mot à mettre en gras');
+});
+
+t('phrase libre : quatre modèles, le mot repéré dans chacun, sous des formes variées', () => {
+  const deck = farm(), a = buildActivity(deck, deck.cards[0], 5, Math.random, { force: 'sentence' });
+  assert.equal(a.models.length, 4); assert.deepEqual(a.modelClozes.map(c => c.answer), ['cow', 'cow', 'Cows', 'cow']);
+});
+
+t('phrases à compléter : la première phrase de chaque fiche, celle qui porte l’indice propre au mot', () => {
+  const deck = farm(), tour = new Tour(deck, {}, { rnd: Math.random }), steps = []; let step;
+  while ((step = tour.next())) { steps.push(step); tour.answer(step, true); }
+  const bank = steps.find(s => s.activity.type === 'bank');
+  assert.ok(bank && bank.activity.multi, 'exercice à plusieurs fiches : pas de lecture automatique d’un seul mot');
+  for (const it of bank.activity.items) assert.equal(it.cloze.text, deck.byId[it.id].examples[0].replace(/[\[\]]/g, ''));
+  const match = steps.find(s => s.activity.type === 'match'); assert.ok(match.activity.multi);
+});
+
+t('contrôle automatique : phrase de manuel et fiches à moins de quatre phrases', () => {
+  for (const e of ['A [rabbit] eats carrots in the garden.', 'A [sheep] lives on this farm.', "A [pig] lives on my uncle's farm."]) assert.ok(bookish(e), e);
+  for (const e of ['The [rabbit] is eating a carrot.', '[Rabbits] eat carrots.', 'There is a [rabbit] in the garden.', 'A [cow] has four legs.', 'A [dog] is a good friend.', 'A glass of [milk], please.',
+    'A [nurse] helps sick people.', 'A [cow] gives us milk.', 'A [rabbit] eats carrots.', 'A [teacher] works in a school.']) assert.ok(!bookish(e), 'définition ou vérité générale, non signalée : ' + e);
+  assert.ok(bookish('A [sheep] eats next to us.'));
+  // second repérage, moins sûr : sujet précis + verbe d'action au présent simple, sans repère d'habitude
+  for (const e of ['The [dog] plays with my friends.', 'My [cat] sleeps on the sofa.']) assert.ok(sceneLike(e) && !bookish(e), e);
+  for (const e of ['The [dog] sleeps in the kitchen every night.', 'The [hen] lays an egg every day.', 'The [cow] gives us milk.', 'The [dog] is playing with my friends.', 'The [dog] always barks.']) assert.ok(!sceneLike(e), e);
+  assert.ok(!audit(farm()).some(a => a.key === 'auBookish' || a.key === 'auFewExamples'));
+  const bad = prepare({ name: 'x', lang: 'en', level: 'A1', cards: [{ word: 'a rabbit', definition: 'It is an animal.', examples: ['A [rabbit] eats carrots in the garden.'] }, { word: 'a cat', definition: 'It is an animal.', examples: ['The [cat] is sleeping.'] }] });
+  assert.equal(audit(bad).find(a => a.key === 'auBookish').cards.length, 1); assert.deepEqual(audit(bad).find(a => a.key === 'auBookish').lines, ['A rabbit eats carrots in the garden.']); assert.equal(audit(bad).find(a => a.key === 'auFewExamples').cards.length, 2);
+  const fr = prepare({ name: 'x', lang: 'fr', level: 'A1', cards: [{ word: 'un lapin', definition: 'C’est un animal.', examples: ['A [lapin] eats carrots.'] }] });
+  assert.ok(!audit(fr).some(a => a.key === 'auBookish'), 'alerte réservée aux paquets d’anglais');
+});
+
+t('prompt : quatre phrases variées, phrases de manuel interdites, contrôle de substitution', () => {
+  for (const lang of ['en', 'fr', 'es']) {
+    const p = buildPrompts({ lang, level: 'A1', topic: 'Les animaux', count: 12 });
+    for (const k of ['file', 'cards']) {
+      assert.ok(p[k].includes('"examples":["","","",""]'), k + ' : quatre phrases dans le modèle');
+      assert.ok(p[k].includes('QUATRE ou CINQ phrases'), k); assert.ok(p[k].includes('Même début') && p[k].includes('Même thème') && p[k].includes('Même catégorie grammaticale'), k + ' : règles des mots pièges'); assert.ok(p[k].includes('Contrôle de substitution'), k); assert.ok(p[k].includes('phrase de manuel'), k);
+    }
+    assert.ok(p.review.includes('quatre ou cinq phrases d\'exemple'), 'le prompt de correction complète les fiches'); assert.ok(p.review.includes('commence comme lui'));
+  }
+  const en = buildPrompts({ lang: 'en', level: 'A1', topic: 'Animals', count: 12 }).file;
+  for (const bad of ['A rabbit eats carrots in the garden.', 'A sheep lives on this farm.', 'The dog plays with my friends.']) assert.ok(en.includes(bad), 'contre-exemple cité : ' + bad);
+});
+
+t('mots pièges : même nature, même début, même genre, même thème ; rien ne s’élimine par la grammaire ou l’orthographe', () => {
+  assert.equal(startOf("l'appartement", 'fr'), 'V'); assert.equal(startOf('un hôtel', 'fr'), 'V'); assert.equal(startOf('une maison', 'fr'), 'C'); assert.equal(startOf('an hour', 'en'), 'C'); assert.equal(startOf('an owl', 'en'), 'V');
+  assert.equal(kindOf({ word: 'to run' }), 'verbe'); assert.equal(kindOf({ word: 'a cow' }), 'nom'); assert.equal(kindOf({ word: 'vite', pos: 'adverbe' }), 'adverbe');
+  assert.equal(genderOf({ word: 'une maison' }), 'f'); assert.equal(genderOf({ word: 'un loyer' }), 'm'); assert.equal(genderOf({ word: "l'appartement" }), '');
+  const mk = (word, ex, theme = 'logement', pos = 'nom') => ({ word, pos, theme, definition: 'définition de ' + word, translations: {}, examples: [ex] });
+  const deck = prepare({ name: 'Logement (A2)', lang: 'fr', level: 'A2', cards: [
+    mk("un appartement", "J'habite dans l'[appartement] du troisième étage."), mk("un immeuble", "L'[immeuble] a six étages."), mk("un étage", "Je monte à l'[étage] à pied."), mk("un ascenseur", "L'[ascenseur] est en panne."),
+    mk("un escalier", "L'[escalier] est très raide."), mk("une cuisine", "La [cuisine] est petite."), mk("une chambre", "Ma [chambre] donne sur la cour."), mk("un loyer", "Le [loyer] est cher."),
+    mk("payer", "Je dois [payer] demain.", 'logement', 'verbe'), mk("déménager", "Je vais [déménager] en juin.", 'logement', 'verbe'), mk("une pomme", "Je mange une [pomme].", 'nourriture'), mk("un orage", "L'[orage] arrive.", 'météo'),
+  ] });
+  const appart = deck.cards[0]; assert.ok(tightGap(appart.clozes[0], 'fr'), 'le trou suit « l’ » : le début est imposé');
+  for (let i = 0; i < 30; i++) {
+    const a = buildActivity(deck, appart, 1, Math.random, { force: 'cloze-choice' }), others = a.options.filter(o => o !== 'appartement');
+    assert.ok(others.every(o => startOf(o, 'fr') === 'V'), 'après « l’ », que des mots à voyelle : ' + others.join(', '));
+    assert.ok(others.every(o => !['payer', 'déménager'].includes(o)), 'aucun verbe face à un nom');
+    assert.ok(!others.includes('orage') || others.length === 3, 'le thème passe après la grammaire');
+    const cuisine = buildActivity(deck, deck.cards[5], 1, Math.random, { force: 'cloze-choice' }).options.filter(o => o !== 'cuisine');
+    assert.ok(cuisine.includes('chambre'), 'après « la », le féminin d’abord : ' + cuisine.join(', ')); assert.ok(cuisine.every(o => startOf(o, 'fr') === 'C'));
+    const rev = buildActivity(deck, deck.cards[8], 2, Math.random, { force: 'qcm-rev' }).options.filter(o => o !== 'payer');
+    assert.ok(rev.includes('déménager'), 'un verbe face au seul autre verbe du paquet : ' + rev.join(', '));
+  }
+  // un mot piège écrit pour la fiche est écarté s'il ne commence pas comme la réponse alors que l'élision le trahirait
+  const own = prepare({ name: 'x (A2)', lang: 'fr', level: 'A2', cards: [{ ...mk("un appartement", "J'habite dans l'[appartement]."), distractors: ['immeuble', 'studio', 'étage'] }, mk("un hôtel", "L'[hôtel] est complet."), mk("un avion", "L'[avion] décolle.")] });
+  for (let i = 0; i < 10; i++) assert.ok(!buildActivity(own, own.cards[0], 1, Math.random, { force: 'cloze-choice' }).options.includes('studio'), '« l’studio » se verrait tout de suite');
+  // regroupement : les mots associés ensemble sont de même nature
+  for (let i = 0; i < 20; i++) { const g = cluster(deck, deck.cards, 5, Math.random); assert.equal(new Set(g.map(kindOf)).size, g[0].pos === 'verbe' ? 2 : 1, g.map(c => c.word).join(', ')); }
+});
+
+t('phrase libre : jusqu’à cinq modèles', () => {
+  const d = prepare({ name: 'x', lang: 'en', level: 'A1', cards: [{ word: 'a cow', definition: 'It is an animal.', examples: ['The [cow] gives us milk.', 'We have a [cow].', '[Cows] eat grass.', 'Where is my [cow]?', 'I can see two [cows].', 'A sixth [cow] sentence.'] }] });
+  assert.equal(buildActivity(d, d.cards[0], 5, Math.random, { force: 'sentence' }).models.length, 5);
+});
+
+t('code d’accès enseignant : seule l’empreinte est gardée, un mauvais code ou une ligne abîmée ne laisse entrer personne', async () => {
+  const { ACCESS, makeAccess, checkAccess, validAccess } = await import('../js/acces.js');
+  assert.ok(ACCESS === '' || validAccess(ACCESS), 'la ligne du dépôt est vide ou bien formée');
+  const line = await makeAccess('quatre mots bien choisis', 1000), other = await makeAccess('quatre mots bien choisis', 1000);
+  assert.ok(validAccess(line)); assert.ok(!line.includes('quatre')); assert.notEqual(line, other, 'sel aléatoire : deux lignes différentes pour le même code');
+  assert.equal(await checkAccess('quatre mots bien choisis', line), true); assert.equal(await checkAccess('  quatre mots bien choisis ', line), true);
+  for (const bad of ['quatre mots', 'Quatre mots bien choisis', '', null]) assert.equal(await checkAccess(bad, line), false);
+  for (const broken of ['', null, 'pbkdf2$1$00$00', line.slice(0, -1), line.replace('pbkdf2', 'md5'), 'pbkdf2$99999999$' + '0'.repeat(32) + '$' + '0'.repeat(64)]) assert.equal(await checkAccess('quatre mots bien choisis', broken), false);
+  await assert.rejects(() => makeAccess('court'), /short/); await assert.rejects(() => makeAccess('123456789012'), /weak/); await assert.rejects(() => makeAccess('1234 5678 9012'), /weak/); await assert.rejects(() => makeAccess('aaaaaaaaaaaab'), /weak/);
+  for (const it of ['0000', '9999999']) assert.ok(!validAccess(line.replace('$1000$', '$' + it + '$')), 'une ligne qui ne pourrait jamais s’ouvrir n’active pas la porte');
 });
 
 await Promise.all(pending);
