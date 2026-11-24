@@ -74,16 +74,22 @@ function closedClass(word, lang) {
 }
 // L'article qui annonce un nom, langue par langue : « a menudo » n'est pas un nom en espagnol, « de la paperasse » en est un en français.
 const ART_OF = { fr: /^(?:un|une|des|du|le|la|les|de la|de l'|l')(?:\s+|(?<=')\s*)\S/i, en: /^(?:a|an|the)\s+\S/i, es: /^(?:el|la|los|las|un|una|unos|unas)\s+\S/i };
-const kinds = new WeakMap();
-export function kindOf(c, lang = 'fr') {
-  const sig = `${c.pos || ''}|${c.word}|${lang}|${(c.clozes || []).length}`, known = kinds.get(c);      // une fiche modifiée dans l'éditeur est réexaminée
+const hints = new WeakMap();
+const posOf = c => { const pos = typeof c.pos === 'string' ? c.pos.trim() : ''; return pos ? (POS.find(([, re]) => re.test(pos)) || [pos.toLowerCase()])[0] : ''; };
+// Catégorie grammaticale d'une fiche : celle que le paquet ou l'enseignant a donnée, et rien d'autre. L'application ne
+// devine jamais : une fiche sans catégorie reste « autre », n'a aucune question à choix, et l'enseignant est invité à la
+// classer (écran « Classer les mots »).
+export const kindOf = c => posOf(c) || 'autre';
+// Suggestion de catégorie, montrée à l'enseignant dans l'écran de classement. Elle ne sert à aucun exercice tant qu'il
+// ne l'a pas confirmée.
+export function suggestKind(c, lang = 'fr') {
+  const sig = `${c.word}|${c.theme || ''}|${lang}|${(c.clozes || []).length}`, known = hints.get(c);
   if (known && known.sig === sig) return known.kind;
-  const put = kind => { kinds.set(c, { sig, kind }); return kind; };
-  const pos = typeof c.pos === 'string' ? c.pos.trim() : '';
-  if (pos) return put((POS.find(([, re]) => re.test(pos)) || [pos.toLowerCase()])[0]);
+  const put = kind => { hints.set(c, { sig, kind }); return kind; };
   const word = apos(String(c.word || '')).replace(/\s\([^)]*\)/g, '').trim(), parts = word.split(/\s+/);
   if (/^(?:to|se)\s/i.test(word) || /^s'/i.test(word)) return put('verbe');
-  const closed = closedClass(word, lang); if (closed) return put(closed);
+  // « Le (jour ou date) », rangé par l'enseignant parmi les prépositions de temps : il se choisit contre « en », « à », « au ».
+  const closed = closedClass(word, lang); if (closed) return put(closed === 'déterminant' && /pr[ée]posi/i.test(c.theme || '') ? 'préposition' : closed);
   if ((ART_OF[lang] || ARTS).test(word)) return put('nom');      // « de la paperasse » : article partitif
   const end = VERB_END[lang] || VERB_END.fr;
   if (parts.length > 1) return put(end.test(parts[0]) && end.source !== '^$' ? 'verbe' : 'expression');
@@ -99,7 +105,13 @@ export function kindOf(c, lang = 'fr') {
   if (lang !== 'fr' && /(?:er|ir|re|oir)$/i.test(fr.split(/\s+/)[0] || '')) return put('verbe');
   return put('autre');
 }
-export const genderOf = c => (/^(?:un|le|el|los|unos)\s/i.test(c.word) ? 'm' : /^(?:une|la|una|las|unas)\s/i.test(c.word) ? 'f' : '');
+// Genre d'un nom : le champ « gender » de la fiche d'abord ; sinon l'article écrit sur la fiche quand il le dit sans
+// ambiguïté (« un », « une », « le », « la »). Avec « l' », « les » ou « des », l'article ne dit rien : le genre doit
+// être donné par le paquet ou par l'enseignant.
+export const genderOf = c => (c.gender === 'm' || c.gender === 'f' || c.gender === 'mf' ? c.gender : /^(?:un|le|el|los|unos)\s/i.test(c.word) ? 'm' : /^(?:une|la|una|las|unas)\s/i.test(c.word) ? 'f' : '');
+// Langues où le genre d'un nom compte dans les exercices.
+export const GENDERED_LANGS = ['fr', 'es'];
+export const needsGender = (c, lang) => GENDERED_LANGS.includes(lang) && kindOf(c) === 'nom' && !genderOf(c);
 export const startOf = (text, lang) => {
   const w = String(text || '').replace(/[’`´]/g, "'").replace(ARTS, '').trim().toLowerCase().normalize('NFD');
   return !w ? '' : /^[aeiouœæ]/.test(w) || (lang !== 'en' && w[0] === 'h') ? 'V' : 'C';
@@ -112,7 +124,7 @@ const alike = (deck, a, b, ta, tb) => (startOf(ta, deck.lang) === startOf(tb, de
 // d'exercice de groupe qu'un groupe où la grammaire donne la réponse.
 export function cluster(deck, cards, n, rnd, min = 3) {
   const pool = shuffle(cards, rnd), by = new Map();
-  for (const c of pool) { const k = kindOf(c, deck.lang); by.set(k, [...(by.get(k) || []), c]); }
+  for (const c of pool) { const k = kindOf(c, deck.lang); if (k !== 'autre') by.set(k, [...(by.get(k) || []), c]); }      // fiche sans catégorie : jamais dans un groupe
   const groups = [...by.values()].filter(g => g.length >= min); if (!groups.length) return [];
   const group = groups.find(g => g.includes(pool[0])) || groups.sort((x, y) => y.length - x.length)[0], seed = group[0];
   return [seed, ...group.slice(1).map((c, k) => ({ c, k, v: alike(deck, seed, c, seed.bare, c.bare) })).sort((x, y) => y.v - x.v || x.k - y.k).slice(0, n - 1).map(x => x.c)];
@@ -153,7 +165,11 @@ function distractors(deck, card, n, rnd, textOf, prefer = [], { form = false, st
   // Dans une phrase à trou, ce que la phrase impose n'est pas une préférence mais un filtre : le début du mot après
   // « l' » ou « an » (strict), le genre après « un » ou « sa » (gender), le nombre d'un nom (number). Un mot piège qui
   // ne tiendrait pas dans la phrase s'élimine sans connaître son sens ; mieux vaut alors une autre forme d'exercice.
-  const fits = (d, t) => (!strict || startOf(t, deck.lang) === startOf(mine, deck.lang)) && (!gender || (!!genderOf(card) && genderOf(d) === genderOf(card))) && (!number || (numberOf(d) === numberOf(card) && !(genderOf(card) && genderOf(d) && genderOf(d) !== genderOf(card))));      // un nom : jamais un genre contraire, l'accord peut être n'importe où dans la phrase
+  const single = x => apos(String(x)).trim().replace(ARTICLE, '').trim().split(/\s+/).length === 1;      // l'article ne compte pas : « l'addition » et « un café » sont deux mots seuls
+  // Propositions équilibrées : dans un choix entre des mots, un mot seul n'est jamais proposé avec des groupes de mots
+  // (un « le » seul face à trois groupes se repère sans rien savoir). Dans une phrase à trou, la règle est plus stricte
+  // encore : même nombre de mots que la réponse (voir formFor).
+  const fits = (d, t) => (!form || single(t) === single(mine)) && (!strict || startOf(t, deck.lang) === startOf(mine, deck.lang)) && (!gender || (!!genderOf(card) && genderOf(d) === genderOf(card))) && (!number || (numberOf(d) === numberOf(card) && !(genderOf(card) && genderOf(d) && genderOf(d) !== genderOf(card))));      // un nom : jamais un genre contraire, l'accord peut être n'importe où dans la phrase
   const ok = d => d.id !== card.id && d.key !== card.key && same(d) && !(sense && sameSense(sense(d), sense(card)));
   const score = (d, t) => (form && startOf(t, deck.lang) === startOf(mine, deck.lang) ? (strict ? 100 : 8) : 0)
     + (form && genderOf(card) && genderOf(d) && genderOf(d) !== genderOf(card) ? 0 : strict ? 60 : 4) + (form && numberOf(d) === numberOf(card) ? 3 : 0) + (card.theme && d.theme === card.theme ? 2 : 0) + (prefer.includes(d.id) ? 1 : 0);
@@ -312,7 +328,7 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
     'cloze-choice': () => {
       const fit = w => (first && !ARTICLE.test(first.answer) ? w.replace(ARTICLE, '') : w).trim();
       // Un mot piège écrit pour la fiche n'est gardé que s'il commence comme la réponse : sinon l'élision ou « a / an » le trahit.
-      const own = first ? [...new Set((card.distractors || []).map(fit))].filter(w => w && w.toLowerCase() !== first.answer.toLowerCase() && (!tightGap(first, deck.lang) || startOf(w, deck.lang) === startOf(first.answer, deck.lang))).slice(0, lures) : [];
+      const own = first ? [...new Set((card.distractors || []).map(fit))].filter(w => w && w.toLowerCase() !== first.answer.toLowerCase() && w.trim().split(/\s+/).length === first.answer.trim().split(/\s+/).length && (!tightGap(first, deck.lang) || startOf(w, deck.lang) === startOf(first.answer, deck.lang))).slice(0, lures) : [];
       const c = own.length ? first : cl; if (!c) return null;
       const answer = lowerFirst(c.answer, card.word), mine = shuffle(own, rnd).map(text => ({ text }));
       const rest = distractors(deck, card, lures, rnd, d => (d.id === card.id ? answer : formFor(answer, d)), prefer, { form: true, strict: tightGap(c, deck.lang), gender: kindOf(card, deck.lang) === 'nom' && genderGap(c, deck.lang), number: kindOf(card, deck.lang) === 'nom', mixed, sense: mean }).filter(d => !own.includes(d.text));
@@ -415,7 +431,16 @@ export class Session {
     let item = this.queue.shift();
     // Pour finir : un tableau d'association des mots du jour. Il ne déplace aucune fiche ; il fait revoir une dernière
     // fois, quelques minutes après la découverte, les mots qu'on vient d'apprendre, sous une autre forme.
-    if (!item && !this.recap && this.today.filter(id => !isNew(this.progress[id])).length >= 3) { this.recap = true; item = { kind: 'match', ids: this.today.filter(id => !isNew(this.progress[id])).slice(0, 5) }; }
+    if (!item && !this.recap && this.today.filter(id => !isNew(this.progress[id])).length >= 3) {
+      // Comme tout exercice de groupe : une seule catégorie grammaticale, et jamais de fiche sans catégorie. Si les mots
+      // du jour ne sont pas trois de la même catégorie, des mots déjà vus de cette catégorie complètent le tableau.
+      this.recap = true; const day = this.today.filter(id => !isNew(this.progress[id])).map(id => this.deck.byId[id]).filter(c => c && kindOf(c) !== 'autre'), by = new Map();
+      for (const c of day) by.set(kindOf(c), [...(by.get(kindOf(c)) || []), c]);
+      const main = [...by.values()].sort((x, y) => y.length - x.length)[0] || [];
+      const more = main.length && main.length < 3 ? shuffle(this.deck.cards.filter(c => !main.includes(c) && kindOf(c) === kindOf(main[0]) && this.progress[c.id] && !isNew(this.progress[c.id]) && !main.some(m => m.neighbours.includes(c.id) || c.neighbours.includes(m.id))), this.rnd).slice(0, 3 - main.length) : [];
+      const ids = [...main, ...more].slice(0, 5).map(c => c.id);
+      if (ids.length >= 3) item = { kind: 'match', ids };
+    }
     if (!item) return null;
     this.served++;
     if (item.kind === 'match') return { item, ...matchStep(this.deck, item.ids, this.rnd) };
@@ -531,7 +556,7 @@ export class Tour {
       if (card) { used.add(card.id); q.push({ kind: 'quiz', id: card.id, force: type, box }); }
     }
     const ids = cluster(deck, deck.cards, 5, rnd).map(c => c.id), gaps = cluster(deck, deck.cards.filter(c => c.clozes.some(x => !x.multi)), 4, rnd).map(c => c.id);
-    q.push({ kind: 'match', ids, box: 0 });
+    if (ids.length >= 3) q.push({ kind: 'match', ids, box: 0 });
     if (gaps.length >= 3) q.push({ kind: 'bank', ids: gaps, box: 0 });
     this.queue = q; this.total = q.length;
   }

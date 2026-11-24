@@ -2,12 +2,14 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { check, variants, findSpans, clozes, clozeParts } from '../js/match.js';
-import { parseCSV, deckFromCSV, DEMO_CSV, serialize, prepare, demoDeck, MODELS, safeUrl, deckToJSON, deckFromJSON, mergeDecks, decode, audit } from '../js/deck.js';
+import { parseCSV, deckFromCSV, DEMO_CSV, serialize, prepare, demoDeck, MODELS, safeUrl, deckToJSON, deckFromJSON, mergeDecks, decode, audit, normGender } from '../js/deck.js';
 import { review, isDue, inHerd, summary, stageOf } from '../js/scheduler.js';
 import { guessLevel } from '../js/deck.js';
 import { Session, Challenge, Tour, pickNew, buildActivity, meaning, gloss, chunks, judge, hintOf, roomFor, neutral } from '../js/session.js';
 import { bookish, sceneLike } from '../js/deck.js';
-import { kindOf, genderOf, startOf, cluster, tightGap, sameSense, SELF, genderGap, numberOf } from '../js/session.js';
+import { kindOf, suggestKind, genderOf, needsGender, startOf, cluster, tightGap, sameSense, SELF, genderGap, numberOf } from '../js/session.js';
+// L'enseignant confirme le rangement suggéré (écran « Classer les mots ») : sans cela, aucune fiche n'a de catégorie.
+const sorted = d => { for (const c of d.cards) if (!c.pos) { const k = suggestKind(c, d.lang); if (k !== 'autre') c.pos = k; } return prepare(d); };
 import { diffParts, spoken, slug } from '../js/match.js';
 import { SPEC, WRITING } from '../js/levels.js';
 import { unzip } from '../js/zip.js';
@@ -66,7 +68,7 @@ t('csv', () => {
 
 const demo = deckFromCSV(DEMO_CSV, 'Démo');
 t('deck', () => {
-  assert.equal(demo.cards.length, 12);
+  assert.equal(demo.cards.length, 15);
   const add = demo.cards.find(c => c.word === "L'addition"), note = demo.cards.find(c => c.word === 'La note');
   assert.equal(add.theme, 'Au café'); assert.equal(add.register, 'Registre courant');
   assert.ok(add.neighbours.includes(note.id) && note.neighbours.includes(add.id));
@@ -103,7 +105,9 @@ t('activités : une forme par boîte, du choix à la réponse écrite', () => {
   const want = { 1: 'qcm', 2: 'qcm-rev', 3: 'cloze-type', 4: 'order', 5: 'situation-type' };
   for (const c of demo.cards) for (let box = 1; box <= 5; box++) for (let k = 0; k < 5; k++) {
     const a = buildActivity(demo, c, box, rnd);
-    assert.equal(a.type, want[box], c.word);
+    // Seul adjectif du paquet : jamais de choix. Seul nom en plusieurs mots : pas de choix du mot (propositions équilibrées).
+    const lone = c.word === 'Cher / chère', odd = lone || c.word === 'Un serveur / une serveuse';
+    assert.equal(a.type, (box === 1 && lone) || (box === 2 && odd) ? 'cloze-type' : want[box], c.word);
     if (a.options) {
       assert.equal(a.options.length, 3, c.word + ' ' + a.type);
       assert.equal(new Set(a.options).size, 3);
@@ -119,7 +123,7 @@ t('activités : une forme par boîte, du choix à la réponse écrite', () => {
       assert.ok(a.chunks.length >= 3 && a.chunks.length <= 4, 'niveau A : quatre morceaux au plus');
     }
     if (a.type === 'situation-type') { assert.equal(a.cloze.text, c.examples[0].replace(/’/g, "'")); assert.equal(a.situation, c.situation); }
-    assert.equal(a.gated, box === 2, 'rappel de tête avant les choix en boîte 2');
+    assert.equal(a.gated, box === 2 && !odd, 'rappel de tête avant les choix en boîte 2');
   }
   const b1 = deckFromCSV(DEMO_CSV, 'Démo', 'fr', 'B1');
   assert.equal(buildActivity(b1, b1.cards[0], 1, rnd).options.length, 4, 'quatre options à partir de B1');
@@ -169,10 +173,11 @@ t('réponse écrite : tolérance réglée par le niveau du CECRL', () => {
   assert.equal(chunks('Oui merci', 4), null);
 });
 t('session : difficulté ressentie, récapitulatif du jour, aperçu', () => {
-  const now = Date.UTC(2026, 0, 1), P = {}; const s = new Session(demo, P, { now });
+  const now = Date.UTC(2026, 0, 1), P = {}; const s = new Session(demo, P, { now, maxNew: 4 });      // quatre mots du jour, dont trois noms
   let step, last = null; const kinds = [];
   while ((step = s.next(now))) { if (step.intro) continue; kinds.push(step.activity.type); last = step; s.answer(step, true, now, { hesitated: step.item.bonus }); }
   assert.equal(kinds.at(-1), 'match', 'la session se termine par un tableau des mots du jour'); assert.equal(last.activity.left.length, 3);
+  assert.deepEqual([...new Set(last.activity.left.map(p => kindOf(demo.byId[p.id])))], ['nom'], 'tableau du jour : une seule catégorie');
   for (const id of s.today) assert.equal(P[id].box, 2);
   const P2 = {}, s2 = new Session(demo, P2, { now }); while ((step = s2.next(now))) if (!step.intro) s2.answer(step, true, now);
   const mean = (Q, ids) => ids.reduce((x, id) => x + Q[id].fsrs.due, 0) / ids.length;
@@ -296,7 +301,7 @@ Au (siècle);Pour situer un événement dans un siècle.;Victor Hugo a vécu au 
 En (durée nécessaire);Indique le temps nécessaire pour faire une action.;J'ai terminé cet exercice en vingt minutes.;Temps · Grammaire
 En (mois, année, saison);Pour situer une action dans un mois ou une année.;Je suis né en 2004.;Temps · Grammaire
 Depuis;Indique qu'une action a commencé dans le passé et continue.;J'habite ici depuis trois ans.;Temps · Grammaire
-Pendant;Indique la durée complète d'une action.;J'ai dormi pendant huit heures.;Temps · Grammaire`, 'g');
+Pendant;Indique la durée complète d'une action.;J'ai dormi pendant huit heures.;Temps · Grammaire`, 'g'); sorted(g);
   const au = g.cards[0], en1 = g.cards[1];
   assert.equal(au.bare, 'Au'); assert.ok(g.homographs.has('en')); assert.ok(!g.homographs.has('au'));
   for (let k = 0; k < 20; k++) {
@@ -314,7 +319,7 @@ Pendant;Indique la durée complète d'une action.;J'ai dormi pendant huit heures
 });
 t('format json : aller-retour avec image', () => {
   const d = demoDeck(); const back = deckFromJSON(deckToJSON(d));
-  assert.equal(back.cards.length, 12); assert.equal(back.id, d.id);
+  assert.equal(back.cards.length, 15); assert.equal(back.id, d.id);
   assert.deepEqual(back.cards.map(c => c.id), d.cards.map(c => c.id));
   assert.ok(back.cards.find(c => c.word === 'Un café').image.startsWith('data:image/svg+xml'));
   assert.throws(() => deckFromJSON('{"cards":[{"word":"a","image":"javascript:1"}]}'));
@@ -614,7 +619,7 @@ t('sécurité : progression forgée reconstruite, paquet démesuré refusé, tex
 const farm = () => prepare({ name: 'Farm (A1)', lang: 'en', level: 'A1', cards: [
   ['a cow', 'cow', 'gives us milk', 'Cows'], ['a sheep', 'sheep', 'gives us wool', 'Sheep'], ['a hen', 'hen', 'lays an egg every day', 'Hens'],
   ['a horse', 'horse', 'is pulling the cart', 'Horses'], ['a pig', 'pig', 'is rolling in the mud', 'Pigs'], ['a dog', 'dog', 'is barking at the postman', 'Dogs'],
-].map(([word, w, pred, plural], i) => ({ word, definition: 'It is a farm animal.', translations: { fr: 'mot' + i },
+].map(([word, w, pred, plural], i) => ({ word, pos: 'nom', definition: 'It is a farm animal.', translations: { fr: 'mot' + i },
   examples: [`The [${w}] ${pred}.`, `We have a [${w}] on our farm.`, `[${plural}] live on farms.`, `Where is my [${w}]?`], situation: 'Tu montres un animal.', image: 'data:image/png;base64,AAAA' })) });
 
 t('phrase à reconstruire : ni majuscule ni ponctuation pour deviner le début et la fin', () => {
@@ -673,7 +678,7 @@ t('prompt : quatre phrases variées, phrases de manuel interdites, contrôle de 
     const p = buildPrompts({ lang, level: 'A1', topic: 'Les animaux', count: 12 });
     for (const k of ['file', 'cards']) {
       assert.ok(p[k].includes('"examples":["","","",""]'), k + ' : quatre phrases dans le modèle');
-      assert.ok(p[k].includes('QUATRE ou CINQ phrases'), k); assert.ok(p[k].includes('Même début') && p[k].includes('Même thème') && p[k].includes('Même catégorie grammaticale'), k + ' : règles des mots pièges'); assert.ok(p[k].includes('Contrôle de substitution'), k); assert.ok(p[k].includes('phrase de manuel'), k);
+      assert.ok(p[k].includes('QUATRE ou CINQ phrases'), k); assert.ok(p[k].includes('Même début') && p[k].includes('Même thème') && p[k].includes('Même catégorie grammaticale'), k + ' : règles des mots pièges'); assert.ok(p[k].includes('3. Substitution :'), k); assert.ok(p[k].includes('phrase de manuel'), k);
     }
     assert.ok(p.review.includes('quatre ou cinq phrases d\'exemple'), 'le prompt de correction complète les fiches'); assert.ok(p.review.includes('commence comme lui'));
   }
@@ -683,7 +688,8 @@ t('prompt : quatre phrases variées, phrases de manuel interdites, contrôle de 
 
 t('mots pièges : même nature, même début, même genre, même thème ; rien ne s’élimine par la grammaire ou l’orthographe', () => {
   assert.equal(startOf("l'appartement", 'fr'), 'V'); assert.equal(startOf('un hôtel', 'fr'), 'V'); assert.equal(startOf('une maison', 'fr'), 'C'); assert.equal(startOf('an hour', 'en'), 'C'); assert.equal(startOf('an owl', 'en'), 'V');
-  assert.equal(kindOf({ word: 'to run' }, 'en'), 'verbe'); assert.equal(kindOf({ word: 'a cow' }, 'en'), 'nom'); assert.equal(kindOf({ word: 'vite', pos: 'adverbe' }), 'adverbe');
+  assert.equal(suggestKind({ word: 'to run' }, 'en'), 'verbe'); assert.equal(suggestKind({ word: 'a cow' }, 'en'), 'nom'); assert.equal(kindOf({ word: 'vite', pos: 'adverbe' }), 'adverbe');
+  assert.equal(kindOf({ word: 'to run' }, 'en'), 'autre', 'sans catégorie donnée, l’appli ne devine pas');
   assert.equal(genderOf({ word: 'une maison' }), 'f'); assert.equal(genderOf({ word: 'un loyer' }), 'm'); assert.equal(genderOf({ word: "l'appartement" }), '');
   const mk = (word, ex, theme = 'logement', pos = 'nom') => ({ word, pos, theme, definition: 'définition de ' + word, translations: {}, examples: [ex] });
   const deck = prepare({ name: 'Logement (A2)', lang: 'fr', level: 'A2', cards: [
@@ -718,7 +724,8 @@ t('mots pièges : même nature, même début, même genre, même thème ; rien n
   // Catégorie écrite de plusieurs façons, ou absente : même classement.
   for (const [pos, k] of [['Nom masculin', 'nom'], ['n.', 'nom'], ['noun', 'nom'], ['Verbe', 'verbe'], ['v.', 'verbe'], ['verbo', 'verbe'], ['adj.', 'adjectif'], ['Adverbe', 'adverbe'], ['locution', 'expression']]) assert.equal(kindOf({ word: 'x', pos }, 'fr'), k, pos);
   const sans = prepare({ name: 'z', lang: 'fr', level: 'A2', cards: [{ word: 'embaucher', definition: 'Donner un travail à quelqu’un.', examples: ['Le patron veut [embaucher] deux personnes.'] }, { word: 'un salaire', definition: 'Argent reçu pour un travail.', examples: ['Mon [salaire] arrive le 30.'] }, { word: 'se lever', definition: 'Sortir du lit.', examples: ['Je [me lève] tôt.'] }] });
-  assert.deepEqual(sans.cards.map(c => kindOf(c, 'fr')), ['verbe', 'nom', 'verbe'], 'catégorie déduite quand le paquet ne la donne pas');
+  assert.deepEqual(sans.cards.map(c => kindOf(c, 'fr')), ['autre', 'autre', 'autre'], 'catégorie jamais devinée quand le paquet ne la donne pas');
+  assert.deepEqual(sans.cards.map(c => suggestKind(c, 'fr')), ['verbe', 'nom', 'verbe'], 'suggestion montrée à l’enseignant');
 });
 
 t('phrase libre : jusqu’à cinq modèles', () => {
@@ -752,7 +759,7 @@ t('questions à choix : sens jumeaux jamais opposés, forme du mot piège accord
   for (let box = 1; box <= 5; box++) { const a = buildActivity(lone, lone.cards[0], box, Math.random, { vary: true, audio: true }); assert.equal(a.type, 'recall'); assert.ok(SELF.includes('recall') && a.self && a.answer === 'De… à…'); }
   const s = new Session(lone, {}, { maxNew: 3, now: Date.UTC(2026, 0, 1) }); let step, n = 0; while ((step = s.next(Date.UTC(2026, 0, 1))) && n++ < 20) { assert.ok(step.intro || step.activity, 'aucune étape sans exercice'); if (!step.intro) s.answer(step, true, Date.UTC(2026, 0, 1)); }
   // mots grammaticaux reconnus par listes fermées ; une fiche de catégorie inconnue n'est jamais proposée avec d'autres
-  const kd = (word, lang = 'fr', extra = {}) => kindOf({ word, ...extra }, lang);
+  const kd = (word, lang = 'fr', extra = {}) => suggestKind({ word, ...extra }, lang);
   for (const w of ['Depuis', 'Pendant', "Jusqu'à", 'En (durée nécessaire)', 'Dans (délai)', 'À (heure)', 'Au (siècle)', 'De… à…', 'Au mois de', 'Il y a', 'à partir de', 'près de', 'grâce à']) assert.equal(kd(w), 'préposition', w);
   assert.equal(kd('next to', 'en'), 'préposition'); assert.equal(kd('avoir besoin de'), 'verbe'); assert.equal(kd('un tas de'), 'nom');
   assert.equal(kd('Le (jour ou date)'), 'déterminant'); assert.equal(kd('De la paperasse'), 'nom'); assert.equal(kd('Un boulot'), 'nom'); assert.equal(kd('Avoir du travail'), 'verbe');
@@ -786,8 +793,87 @@ t('questions à choix : sens jumeaux jamais opposés, forme du mot piège accord
   assert.ok(Date.now() - t0 < 4000, 'préparation de 400 fiches de même famille : ' + (Date.now() - t0) + ' ms'); assert.ok(fam.twins.length <= 200); assert.equal(fam.cards[0].neighbours.length, 399);
   // le prompt porte les mêmes règles
   const p = buildPrompts({ lang: 'fr', level: 'A2', topic: 'Le travail', count: 20 });
-  for (const k of ['file', 'cards']) for (const must of ['OBLIGATOIRE', 'au moins quatre fiches', 'Elle ne convient qu\'à CE mot', 'embaucher et recruter', 'Contrôle des catégories', 'Contrôle des définitions', 'un infinitif face à un infinitif']) assert.ok(p[k].includes(must), k + ' : ' + must);
+  for (const k of ['file', 'cards']) for (const must of ['OBLIGATOIRE', 'au moins quatre fiches', 'Elle ne convient qu\'à CE mot', 'embaucher et recruter', 'RÈGLES ÉLIMINATOIRES', 'RAPPORT DE CONTRÔLE', 'un infinitif face à un infinitif']) assert.ok(p[k].includes(must), k + ' : ' + must);
   assert.ok(p.review.includes('3 bis.') && p.review.includes('Lue seule'));
+});
+
+t('version 13 : catégorie jamais devinée, classement par l’enseignant, genre en champ', () => {
+  const csv = `Word;Definition;Example 1;Category
+Un emploi;Travail payé, régulier.;Elle cherche un [emploi] à Lyon.;Travail
+Un stage;Période de formation dans une entreprise.;Il fait un [stage] de trois mois.;Travail
+Un salaire;Argent reçu chaque mois pour un travail.;Mon [salaire] arrive le 30.;Travail
+L'entreprise;Organisation qui produit ou vend quelque chose.;Cette [entreprise] fabrique des vélos.;Travail
+Les horaires;Heures de début et de fin du travail.;Mes [horaires] changent chaque semaine.;Travail
+Embaucher;Signer un contrat de travail avec une personne.;Le patron veut [embaucher] deux vendeurs.;Travail
+Démissionner;Quitter son emploi de sa propre décision.;Elle va [démissionner] en juin.;Travail
+Postuler;Envoyer sa candidature pour un emploi.;Je vais [postuler] à cette offre.;Travail`;
+  const d = deckFromCSV(csv, 'Travail (A2)', 'fr', 'A2');
+  assert.ok(d.cards.every(c => kindOf(c) === 'autre'), 'aucune catégorie devinée à l’import');
+  for (const c of d.cards) for (let box = 1; box <= 5; box++) for (let k = 0; k < 6; k++) { const a = buildActivity(d, c, box, Math.random, { vary: true, audio: true }); assert.ok(a && !a.options, `fiche sans catégorie : pas de question à choix (${c.word}, ${a.type})`); }
+  for (let k = 0; k < 10; k++) assert.deepEqual(cluster(d, d.cards, 5, Math.random), [], 'fiche sans catégorie : jamais dans un groupe');
+  assert.deepEqual(d.cards.map(c => suggestKind(c, 'fr')), ['nom', 'nom', 'nom', 'nom', 'nom', 'verbe', 'verbe', 'verbe'], 'rangement suggéré à l’enseignant');
+  sorted(d);       // l'enseignant confirme
+  assert.deepEqual(d.cards.map(c => kindOf(c)), ['nom', 'nom', 'nom', 'nom', 'nom', 'verbe', 'verbe', 'verbe']);
+  let choices = 0; for (const c of d.cards) for (let k = 0; k < 6; k++) if (buildActivity(d, c, 1, Math.random).options) choices++;
+  assert.ok(choices > 0, 'une fois classées, les fiches retrouvent leurs questions à choix');
+  // Genre : l'article le dit (un, une), ou le champ « gender » ; « l' » et « les » ne disent rien.
+  const W = Object.fromEntries(d.cards.map(c => [c.word, c]));
+  assert.equal(genderOf(W['Un emploi']), 'm'); assert.ok(!needsGender(W['Un emploi'], 'fr'));
+  assert.ok(needsGender(W["L'entreprise"], 'fr') && needsGender(W['Les horaires'], 'fr'), 'nom sans genre : à compléter');
+  assert.ok(!needsGender(W['Embaucher'], 'fr'), 'un verbe n’a pas de genre'); assert.ok(!needsGender({ word: 'the firm', pos: 'nom' }, 'en'), 'pas de genre demandé en anglais');
+  W["L'entreprise"].gender = 'f'; W['Les horaires'].gender = 'm'; prepare(d);
+  assert.equal(genderOf(W["L'entreprise"]), 'f'); assert.ok(!d.cards.some(c => needsGender(c, 'fr')));
+  const back = deckFromJSON(deckToJSON(d)); assert.equal(back.cards.find(c => c.word === "L'entreprise").gender, 'f', 'le genre est gardé dans le fichier du paquet'); assert.equal(back.cards[0].pos, 'nom');
+  // Écritures du genre dans un paquet, et colonnes « Genre », « Doute » d'un tableau.
+  for (const [v, g] of [['m', 'm'], ['Masculin', 'm'], ['f', 'f'], ['féminin', 'f'], ['femenino', 'f'], ['mf', 'mf'], ['m/f', 'mf'], ['', ''], ['?', '']]) assert.equal(normGender(v), g, v);
+  const t2 = deckFromCSV('Word;Definition;Nature;Genre;Doute\nL\'eau;Liquide que l\'on boit.;nom;féminin;\nL\'arbre;Grande plante avec un tronc.;nom masculin;;\nLes gens;Les personnes en général.;nom;m;pluriel seulement\nVite;En peu de temps.;adverbe;;', 't2', 'fr', 'A2');
+  assert.deepEqual(t2.cards.map(c => [kindOf(c), c.gender || '']), [['nom', 'f'], ['nom', 'm'], ['nom', 'm'], ['adverbe', '']]);
+  const doubt = audit(t2).find(a => a.key === 'auDoubt'); assert.ok(doubt && doubt.warn); assert.deepEqual(doubt.lines, ['Les gens : pluriel seulement']);
+  const j = deckFromJSON(JSON.stringify({ elefiches: 1, name: 'j', lang: 'fr', level: 'A2', cards: [{ word: "l'hôtel", definition: 'a', pos: 'nom', gender: 'm', doubt: '<b>x</b>' }, { word: "l'école", definition: 'b', pos: 'nom', gender: 'zzz' }, { word: 'lent', definition: 'c', pos: 'adjectif', gender: 42 }] }));
+  assert.deepEqual(j.cards.map(c => c.gender), ['m', undefined, undefined], 'genre illisible : ignoré, la fiche reste à compléter'); assert.equal(j.cards[0].doubt, '<b>x</b>', 'le doute reste un texte, affiché comme tel');
+});
+
+t('version 13 : identifiant réservé, stockage abîmé', () => {
+  const d = prepare({ name: 'r (A2)', lang: 'fr', level: 'A2', cards: [{ id: 'new', word: 'un mot', definition: 'a', pos: 'nom' }, { id: '__proto__', word: 'un nom', definition: 'b', pos: 'nom', examples: 'pas une liste', translations: 'pas un objet' }, { word: 'un mur', definition: 'c', pos: '__proto__', gender: { x: 1 }, doubt: 7 }] });
+  assert.ok(d.cards.every(c => c.id !== 'new' && c.id !== '__proto__'), 'identifiants réservés réécrits');
+  assert.deepEqual(d.cards[1].examples, []); assert.deepEqual(d.cards[1].translations, {});
+  for (const k of ['__proto__', 'constructor', 'hasOwnProperty', 'toString', 'new']) assert.equal(d.byId[k], undefined, 'table des fiches sans prototype : ' + k);
+  assert.doesNotThrow(() => prepare({ name: 'x', cards: [null, 5, 'x', { word: 'un mot', definition: 'a', examples: [{ toString: 1 }, 'Voici un [mot].'] }] }));
+  assert.equal(d.cards[2].gender, undefined); assert.equal(d.cards[2].doubt, undefined); assert.equal(kindOf(d.cards[2]), '__proto__'); assert.equal(({}).pos, undefined);
+});
+
+t('version 13 : propositions équilibrées, un mot seul jamais face à des groupes de mots', () => {
+  const rows = [['Le (jour ou date)', 'Devant un jour précis ou une date.', 'Le cours commence [le] 3 mars.'], ['En (mois, saison, année)', 'Devant un mois ou une année.', 'Je suis né [en] 2004.'], ['Au (siècle)', 'Devant un siècle.', 'Ce château a été construit [au] XVIIe siècle.'],
+    ['À (heure)', 'Devant une heure précise.', 'Le train part [à] huit heures.'], ['Depuis', 'Début d’une action qui continue.', 'J’habite ici [depuis] trois ans.'], ['Pendant', 'Durée complète d’une action.', 'J’ai dormi [pendant] huit heures.'],
+    ['Au mois de', 'Devant le nom d’un mois.', 'Elle arrive [au mois de] mai.'], ['À partir de', 'Point de départ dans le temps.', 'Je travaille [à partir de] lundi.'], ['Au bout de', 'Après une durée.', 'Il est parti [au bout d’]une heure.'], ['Au début de', 'Dans les premiers moments.', 'On se voit [au début de] la semaine.']];
+  const d = prepare({ name: 'Temps (A2)', lang: 'fr', level: 'A2', cards: rows.map(([word, definition, ex]) => ({ word, definition, examples: [ex], theme: 'Prépositions de temps', pos: 'préposition', translations: {} })) });
+  assert.equal(suggestKind({ word: 'Le (jour ou date)', theme: 'Prépositions de temps' }, 'fr'), 'préposition', '« le » rangé avec « en », « à », « au » quand le thème le dit');
+  assert.equal(suggestKind({ word: 'Le (jour ou date)' }, 'fr'), 'déterminant');
+  const one = x => x.trim().split(/\s+/).length === 1; let seen = 0, le = 0;
+  for (const c of d.cards) for (const box of [1, 2, 3, 4, 5]) for (const force of [null, 'qcm-rev', 'cloze-choice']) for (let k = 0; k < 12; k++) {
+    const a = buildActivity(d, c, box, Math.random, { force });
+    if (!a.options || !['qcm-rev', 'cloze-choice'].includes(a.type)) continue;
+    seen++; if (a.options.some(o => o.toLowerCase() === 'le') && a.options.some(o => ['en', 'à', 'au', 'depuis', 'pendant'].includes(o.toLowerCase()))) le++;
+    assert.equal(new Set(a.options.map(one)).size, 1, `${a.type} : propositions déséquilibrées ${JSON.stringify(a.options)}`);
+  }
+  assert.ok(seen > 50 && le > 0, '« le » est bien proposé face aux autres marqueurs de temps en un mot');
+  // Un mot piège écrit pour la fiche est écarté s'il ne compte pas autant de mots que la réponse.
+  const own = prepare({ name: 'o (A2)', lang: 'fr', level: 'A2', cards: [{ word: 'un loyer', pos: 'nom', definition: 'Argent payé chaque mois pour un logement.', examples: ['Je paie mon [loyer] le premier du mois.'], distractors: ['salaire', 'ticket de bus', 'voisin'], translations: {} },
+    { word: 'un salaire', pos: 'nom', definition: 'Argent reçu pour un travail.', examples: ['Mon [salaire] arrive le 30.'], translations: {} }, { word: 'un voisin', pos: 'nom', definition: 'Personne qui habite à côté.', examples: ['Mon [voisin] fait du bruit.'], translations: {} }, { word: 'un bail', pos: 'nom', definition: 'Contrat de location.', examples: ['Je signe le [bail] demain.'], translations: {} }] });
+  for (let k = 0; k < 30; k++) { const a = buildActivity(own, own.cards[0], 1, Math.random, { force: 'cloze-choice' }); assert.ok(a.options && !a.options.includes('ticket de bus'), JSON.stringify(a.options)); }
+});
+
+t('version 13 : prompts en deux étapes, genre, doutes, rapport de contrôle', () => {
+  for (const lang of ['fr', 'es', 'en']) {
+    const p = buildPrompts({ lang, level: 'A2', topic: 'Le travail', count: 20 });
+    for (const k of ['file', 'cards']) {
+      for (const must of ['ÉTAPE 1, maintenant', 'ARRÊTE-TOI et attends ma réponse', 'RÈGLES ÉLIMINATOIRES', 'RAPPORT DE CONTRÔLE', 'Un simple « oui » ne suffit pas', '"doubt"', 'lots de dix fiches', 'L\'application ne devine jamais la catégorie', 'jamais un mot seul à côté de groupes de mots', 'sont tous rangés dans « préposition »']) assert.ok(p[k].includes(must), `${lang} ${k} : ${must}`);
+      assert.equal(p[k].includes('"gender":""'), lang !== 'en', lang + ' : champ du genre'); assert.equal(p[k].includes('"gender" : OBLIGATOIRE pour tout nom'), lang !== 'en');
+      assert.ok(!p[k].includes('sans montrer ton brouillon'), 'les contrôles ne sont plus faits en silence');
+    }
+    assert.ok(p.go.includes('ÉTAPE 2') && p.go.includes('RAPPORT DE CONTRÔLE') && p.go.includes('"doubt"'));
+    assert.ok(p.review.includes('4 bis.') && p.review.includes('compte le même nombre de mots')); assert.equal(p.review.includes('3 ter.'), lang !== 'en');
+  }
 });
 
 t('code d’accès enseignant : seule l’empreinte est gardée, un mauvais code ou une ligne abîmée ne laisse entrer personne', async () => {

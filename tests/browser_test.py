@@ -16,7 +16,7 @@ for i, col in enumerate(COLORS): im.paste(Image.new('RGB', (280, 280), col), (i 
 im.save(sheet)
 import json, zipfile, os
 PACKET = json.dumps({"elefiches": 1, "name": "Logement (B1)", "lang": "fr", "level": "B1", "cards": [
-    {"word": "Un " + w, "definition": d, "translations": {}, "examples": ["Je paie un [" + w + "] chaque mois ici.", "Le [" + w + "] est sur la table."], "situation": s, "distractors": ["garage", "voisin", "placard"], "theme": "Logement", "register": "courant", "image": im_}
+    {"word": "Un " + w, "pos": "nom", "definition": d, "translations": {}, "examples": ["Je paie un [" + w + "] chaque mois ici.", "Le [" + w + "] est sur la table."], "situation": s, "distractors": ["garage", "voisin", "placard"], "theme": "Logement", "register": "courant", "image": im_}
     for w, d, s, im_ in [("loyer", "Argent payé chaque mois pour habiter un logement.", "On est le premier du mois.", "P1-1"), ("bail", "Contrat entre le propriétaire et la personne qui loue.", "Tu signes un papier avec le propriétaire.", "P1-5"),
                          ("garant", "Personne qui promet de payer si tu ne peux pas.", "Le propriétaire veut une sécurité.", "P1-9"), ("préavis", "Délai à respecter avant de quitter un logement.", "Tu veux partir dans trois mois.", "")]]}, ensure_ascii=False)
 zpath = out + '/_paquet.zip'
@@ -267,6 +267,35 @@ with sync_playwright() as p:
     page.click('form[data-submit=import] button.primary')
     page.wait_for_selector('.deck')
     print('IMPORT:', page.locator('.banner.good').inner_text())
+    # Version 13 : ce tableau n'a pas de colonne « nature ». Le paquet est accepté, une alerte invite à classer les mots.
+    alert = page.locator('.banner.warn', has_text='à compléter'); assert alert.count() == 1, 'alerte de classement attendue'
+    alert.locator('[data-action=sort]').click(); page.wait_for_selector('.sortgroup')
+    page.screenshot(path=f'{out}/sort_before.png', full_page=True)
+    groups = page.locator('section[data-sort=kind] > fieldset.sortgroup legend').all_inner_texts(); print('CLASSEMENT SUGGÉRÉ:', groups)
+    assert any('nom' in g and '59' in g for g in groups) and any('verbe' in g for g in groups) and any('préposition' in g and '13' in g for g in groups), groups
+    # un mot mal rangé : on le coche et on le range ailleurs (action par lot), puis on le remet
+    page.click('[data-action=sort-move]'); assert page.locator('.toast').count() >= 0
+    box = page.locator('section[data-sort=kind] > fieldset.sortgroup', has_text='Suggestion : verbe').locator('input[name=pick]')
+    box.nth(0).check(); box.nth(1).check(); page.select_option('[data-sortkind]', 'expression'); page.click('[data-action=sort-move]')
+    page.wait_for_selector('.banner.good'); assert '2 fiche' in page.inner_text('.banner.good'), page.inner_text('.banner.good')
+    page.evaluate("document.querySelectorAll('section[data-sort=kind] details').forEach(d => { d.open = true; })")
+    done = page.locator('section[data-sort=kind] details fieldset', has_text='expression').locator('input[name=pick]'); assert done.count() == 2
+    done.nth(0).check(); done.nth(1).check(); page.select_option('[data-sortkind]', 'verbe'); page.click('[data-action=sort-move]'); page.wait_for_selector('.banner.good')
+    # chaque groupe suggéré est confirmé d'un geste
+    while page.locator('[data-action=sort-confirm]').count(): page.locator('[data-action=sort-confirm]').first.click(); page.wait_for_timeout(150)
+    assert page.locator('section[data-sort=kind] > fieldset.sortgroup').count() == 0, 'tout est classé'
+    # genre des noms dont l'article ne dit rien : par lot aussi
+    g = page.locator('section[data-sort=gender] > ul.picks input[name=gpick]'); n_g = g.count(); assert n_g == 21, n_g
+    for i in range(n_g):
+        if i % 2 == 0: g.nth(i).check()
+    page.click('[data-action=sort-gender][data-g=m]'); page.wait_for_selector('.banner.good')
+    g = page.locator('section[data-sort=gender] > ul.picks input[name=gpick]'); assert g.count() == 10, g.count()
+    for i in range(g.count()): g.nth(i).check()
+    page.click('[data-action=sort-gender][data-g=f]'); page.wait_for_selector('.banner.good')
+    assert page.locator('section[data-sort=gender] > ul.picks').count() == 0, 'tous les noms ont un genre'
+    page.screenshot(path=f'{out}/sort_after.png', full_page=True)
+    page.reload(); page.wait_for_selector('.deck')
+    saved = page.evaluate("window.__elefiches.state.decks.at(-1).cards.filter(c => c.pos).length + '/' + window.__elefiches.state.decks.at(-1).cards.filter(c => c.gender).length"); print('CLASSEMENT ENREGISTRÉ (catégories/genres):', saved); assert saved == '85/21', saved
     N = page.locator('.deck').count() - 1; assert N == 6, N
     page.locator('.deck').nth(N).locator('[data-action=start]').click()
     k2 = play(page, right=True, shots=shots)

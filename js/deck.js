@@ -42,6 +42,8 @@ const COLUMNS = [
   [/^(register|registre|registro)$/, 'register'],
   [/^(family|famille|familia)$/, 'family'],
   [/^(pos|nature|catégorie grammaticale)$/, 'pos'],
+  [/^(genre|gender|g[ée]nero)$/, 'gender'],
+  [/^(doutes?|doubts?|dudas?)$/, 'doubt'],
   [/^(situation|contexte|context|situación|situacion)$/, 'situation'],
   [/^(distracteurs?|distractors?|distractores?|mots pi[eè]ges?|pi[eè]ges?)$/, 'distractors'],
 ];
@@ -71,19 +73,27 @@ export function decode(text) {
   }
   return s;
 }
-const TEXTS = ['word', 'definition', 'situation', 'theme', 'register', 'family', 'ipa', 'pos'];
+const TEXTS = ['word', 'definition', 'situation', 'theme', 'register', 'family', 'ipa', 'pos', 'gender', 'doubt'];
 // Plafonds : un paquet démesuré ralentirait chaque ouverture de l'application sur un téléphone.
-export const DECK_LIMITS = { cards: 2000, word: 200, definition: 500, situation: 400, theme: 80, register: 40, family: 80, ipa: 80, pos: 40, example: 300, examples: 6, trap: 80, traps: 6 };
+export const DECK_LIMITS = { cards: 2000, word: 200, definition: 500, situation: 400, theme: 80, register: 40, family: 80, ipa: 80, pos: 40, gender: 20, doubt: 300, example: 300, examples: 6, trap: 80, traps: 6 };
+// Genre d'un nom, tel que le paquet l'écrit (« m », « masculin », « f », « féminin », « mf » pour un nom qui a les deux).
+export const normGender = v => { const g = plain(String(v || '')).trim(); return /^(mf|m\s*\/\s*f|m et f|epicene|les deux|both|ambos)/.test(g) ? 'mf' : /^m/.test(g) ? 'm' : /^f/.test(g) ? 'f' : ''; };
 const cut = (v, n) => (typeof v === 'string' && v.length > n ? v.slice(0, n) : v);
 // Nettoie une fiche déjà enregistrée ou tout juste importée. Les positions du mot dans les exemples (marks) sont
 // oubliées si un exemple change de longueur : elles seront retrouvées d'après le mot.
 function tidyCard(c) {
+  if (!Array.isArray(c.examples)) c.examples = [];      // stockage abîmé ou modifié à la main : jamais une chaîne à la place d'une liste
+  if (c.translations !== undefined && (typeof c.translations !== 'object' || c.translations === null || Array.isArray(c.translations))) c.translations = {};
   for (const k of TEXTS) if (c[k] !== undefined && typeof c[k] !== 'string') delete c[k]; else if (c[k]) c[k] = cut(c[k], DECK_LIMITS[k] * 4);     // coupe large avant décodage
   const fix = v => (typeof v === 'string' && v.includes('&') ? decode(v) : v);
   for (const k of TEXTS) if (c[k]) c[k] = cut(fix(c[k]), DECK_LIMITS[k]);
+  // Le genre est gardé sous une seule forme (m, f, mf). « Nom masculin » dans la catégorie le donne aussi.
+  const pg = plain(c.pos || '').trim(), g = normGender(c.gender) || (/^(?:nom|noun|sustantivo|n\.?)\s*(?:m\.?|masc\w*)$/.test(pg) ? 'm' : /^(?:nom|noun|sustantivo|n\.?)\s*(?:f\.?|fem\w*)$/.test(pg) ? 'f' : '');
+  if (g) c.gender = g; else delete c.gender;
   if (Array.isArray(c.examples)) {
+    c.examples = c.examples.filter(e => typeof e === 'string');
     const before = c.examples.join('\n');
-    c.examples = c.examples.filter(e => typeof e === 'string').slice(0, 24).map(e => fix(cut(e, 4000))).flatMap(e => (/(^|\s)[•▪◦‣]\s/.test(e) ? e.split(/(?:^|\s)[•▪◦‣]\s+/).map(x => x.trim()).filter(Boolean) : [e]));   // « • phrase • phrase » : une phrase par exemple
+    c.examples = c.examples.slice(0, 24).map(e => fix(cut(e, 4000))).flatMap(e => (/(^|\s)[•▪◦‣]\s/.test(e) ? e.split(/(?:^|\s)[•▪◦‣]\s+/).map(x => x.trim()).filter(Boolean) : [e]));   // « • phrase • phrase » : une phrase par exemple
     const n = c.examples.length; c.examples = c.examples.slice(0, DECK_LIMITS.examples).map(e => cut(e, DECK_LIMITS.example));
     if (c.marks && (c.examples.join('\n') !== before || n !== c.examples.length)) delete c.marks;
   }
@@ -164,6 +174,7 @@ const ROLES = [
   ['ipa', /^(ipa|api|prononciation|pronunciation|phon[ée]tique|phonetics?|transcription|pinyin|reading|lecture)$/],
   ['category', /^(cat[ée]gor(y|ie|ies|ia|ía)|th[èe]mes?|temas?|topics?|sujet|rubrique|domaine|champ lexical|chapitre|chapter|le[cç]on|lesson|unit|unité)$/],
   ['pos', /^(pos|nature|part of speech|classe grammaticale|cat[ée]gorie grammaticale)$/],
+  ['gender', /^(genre|gender|g[ée]nero)$/],
   ['register', /^(register|registre|registro)$/],
   ['situation', /^(situation|situaci[oó]n)$/],
   ['distractors', /^(distracteurs?|distractors?|distractores?|mots pi[eè]ges?|pi[eè]ges?)$/],
@@ -236,7 +247,7 @@ export function deckFromAnki(db, name, lang = 'fr', level) {
   const used = {}; try { for (const c of db.table('cards')) used[String(c[1])] ??= String(c[2]); } catch { /* table absente */ }
   const real = (Object.keys(used).length ? [...new Set(Object.values(used))] : Object.keys(decks)).filter(id => deckName(id) && deckName(id) !== 'Default' && deckName(id) !== 'Par défaut');
   const levelTag = t => LEVELS.includes(t.toUpperCase());
-  const maxEx = 4, header = ['Word', 'Definition', 'Translation', 'Translation FR', 'Translation EN', 'Translation ES', ...Array.from({ length: maxEx }, (_, i) => 'Example ' + (i + 1)), 'Image', 'Audio', 'Category', 'IPA', 'POS', 'Register', 'Situation', 'Distracteurs'];
+  const maxEx = 4, header = ['Word', 'Definition', 'Translation', 'Translation FR', 'Translation EN', 'Translation ES', ...Array.from({ length: maxEx }, (_, i) => 'Example ' + (i + 1)), 'Image', 'Audio', 'Category', 'IPA', 'POS', 'Genre', 'Register', 'Situation', 'Distracteurs'];
   const rows = [header]; let tagLevel = '';
   for (const mid of Object.keys(models)) {
     const mine = notes.filter(n => n.mid === mid); if (!mine.length) continue;
@@ -257,7 +268,7 @@ export function deckFromAnki(db, name, lang = 'fr', level) {
       c.audio = (at('audio') >= 0 && sndOf(n.f[at('audio')])) || sndOf(n.f.join(' '));
       const tag = n.tags.find(t => !levelTag(t) && !/^(leech|marked)$/i.test(t));
       c.category = get('category') || (real.length > 1 ? deckName(used[n.id]) : '') || (tag ? tag.replace(/::/g, ' · ').replace(/_/g, ' ') : '');
-      rows.push([c.word, c.definition, c['tr:*'] || '', c['tr:fr'] || '', c['tr:en'] || '', c['tr:es'] || '', ...Array.from({ length: maxEx }, (_, i) => c.ex[i] || ''), c.image, c.audio, c.category, get('ipa'), get('pos'), get('register'), get('situation'), get('distractors')]);
+      rows.push([c.word, c.definition, c['tr:*'] || '', c['tr:fr'] || '', c['tr:en'] || '', c['tr:es'] || '', ...Array.from({ length: maxEx }, (_, i) => c.ex[i] || ''), c.image, c.audio, c.category, get('ipa'), get('pos'), get('gender'), get('register'), get('situation'), get('distractors')]);
     }
   }
   const own = real.map(id => String(decks[id].name)).sort((a, b) => a.length - b.length)[0]?.split('::')[0];
@@ -284,12 +295,12 @@ export function prepare(deck) {
   if (!/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(deck.lang || '')) deck.lang = 'fr';
   if (!safeKey(deck.id)) deck.id = 'd' + hash(norm(String(deck.name || 'paquet')));
   deck.name = String(deck.name || 'Paquet').slice(0, 120);
-  deck.cards = (Array.isArray(deck.cards) ? deck.cards : []).filter(c => c && typeof c.word === 'string' && c.word.trim());
+  deck.cards = (Array.isArray(deck.cards) ? deck.cards : []).filter(c => c && typeof c === 'object' && typeof c.word === 'string' && c.word.trim());
   if (deck.cards.length > DECK_LIMITS.cards) { deck.skipped = (deck.skipped || 0) + deck.cards.length - DECK_LIMITS.cards; deck.cards = deck.cards.slice(0, DECK_LIMITS.cards); }
   if (deck.fields !== undefined) deck.fields = (Array.isArray(deck.fields) ? deck.fields : []).filter(f => typeof f === 'string').slice(0, 60).map(f => f.slice(0, 80));
   const ids = new Set();
   for (const c of deck.cards) {
-    if (!safeKey(c.id) || ids.has(c.id)) c.id = hash(c.word + '|' + (c.definition || '') + '|' + ids.size);
+    if (!safeKey(c.id) || c.id === 'new' || ids.has(c.id)) c.id = hash(c.word + '|' + (c.definition || '') + '|' + ids.size);
     ids.add(c.id);
     if (c.image && !imgRef(c.image)) delete c.image;
     if (c.audio && !safeUrl(c.audio)) delete c.audio;
@@ -350,7 +361,8 @@ export function prepare(deck) {
   deck.homographs = new Set([...seen].filter(([, n]) => n > 1).map(([k]) => k));   // deux fiches « En »
   deck.helpLangs = [...new Set(deck.cards.flatMap(c => Object.keys(c.translations)))];
   if (!/^\d+x\d+$/.test(deck.grid || '')) deck.grid = '3x3';        // cases d'une planche d'images : colonnes x rangées
-  deck.byId = Object.fromEntries(deck.cards.map(c => [c.id, c]));
+  // Table sans prototype : un identifiant forgé (« __proto__ », « constructor ») n'y trouve jamais rien.
+  deck.byId = Object.assign(Object.create(null), Object.fromEntries(deck.cards.map(c => [c.id, c])));
   return deck;
 }
 
@@ -385,6 +397,8 @@ export function audit(deck) {
     add('auScene', deck.cards.filter(c => c.examples.some(sceneLike)), false, deck.cards.flatMap(c => c.examples.filter(sceneLike)));
   }
   add('auTwins', deck.cards.filter(c => (deck.twins || []).some(p => p.includes(c.word))), true, (deck.twins || []).map(p => p.join(' / ')));
+  // Doutes que l'IA (ou l'enseignant) a notés sur une fiche : à lire avant de donner le paquet aux étudiants.
+  add('auDoubt', deck.cards.filter(c => c.doubt), true, deck.cards.filter(c => c.doubt).map(c => `${c.word} : ${c.doubt}`));
   add('auFewExamples', deck.cards.filter(c => c.examples.length && c.examples.length < 4), false);
   add('auNoSituation', deck.cards.filter(c => !c.situation), false);
   add('auNoTraps', deck.cards.filter(c => !(c.distractors || []).length), false);
@@ -433,7 +447,7 @@ export function deckFromJSON(text, name, level) {
     translations: Object.fromEntries(Object.entries(c.translations && typeof c.translations === 'object' ? c.translations : {}).filter(([k, v]) => safeKey(k) && str(v))),
     examples: (Array.isArray(c.examples) ? c.examples : []).filter(str), theme: str(c.theme) || undefined, register: str(c.register) || undefined,
     family: str(c.family) || undefined, ipa: str(c.ipa) || undefined, image: imgRef(c.image) || undefined, audio: safeUrl(c.audio) || undefined, extra: {},
-    sheet: /^P\d+-\d+$/i.test(str(c.sheet)) ? c.sheet : undefined, pos: str(c.pos) || undefined,
+    sheet: /^P\d+-\d+$/i.test(str(c.sheet)) ? c.sheet : undefined, pos: str(c.pos) || undefined, gender: str(c.gender) || str(c.genre) || undefined, doubt: str(c.doubt) || str(c.doute) || undefined,
     marks: Array.isArray(c.marks) ? c.marks.map(m => (Array.isArray(m) && m.length === 2 ? [+m[0], +m[1]] : null)) : undefined, situation: str(c.situation) || undefined, distractors: (Array.isArray(c.distractors) ? c.distractors : []).filter(str),
   })).filter(c => c.definition || Object.keys(c.translations).length);
   if (cards.length < 3) throw new Error('too-few');
@@ -442,19 +456,22 @@ export function deckFromJSON(text, name, level) {
 }
 
 // Paquet de démonstration, écrit pour Éléfiches.
-export const DEMO_CSV = `Word;Definition;Example 1;Example 2;Category;Family;Situation;Distracteurs
-Un café;Boisson chaude et noire, préparée avec des grains torréfiés.;Je prends un café le matin.;Elle boit son café sans sucre.;Au café · Registre courant;;Le matin, tu as besoin de te réveiller avant le cours.;lait|chocolat
-Un thé;Boisson chaude préparée avec des feuilles infusées dans l'eau.;Il commande un thé au citron.;Nous buvons du thé l'après-midi.;Au café · Registre courant;;Ton ami n'aime pas le café. Que fait-il ?;sirop|gâteau
-Commander;Demander un plat ou une boisson dans un café ou un restaurant.;Je voudrais commander un sandwich.;Ils commandent deux jus d'orange.;Au café · Registre courant;;Le serveur arrive à ta table et attend.;manger|préparer
-L'addition;Papier qui indique le prix total à payer au restaurant ou au café.;L'addition, s'il vous plaît !;Le serveur apporte l'addition.;Au café · Registre courant;addition;Tu as fini de manger et tu veux payer.;
-La note;Autre mot pour le papier qui indique le prix à payer, au café ou à l'hôtel.;Je demande la note avant de partir.;La note est de douze euros.;Au café · Registre courant;addition;Tu quittes l'hôtel et tu veux savoir combien tu dois.;carte|clé
-Un serveur / une serveuse;Personne qui apporte les plats et les boissons aux clients.;La serveuse arrive avec les boissons.;Le serveur est très aimable.;Au café · Registre courant;;Vous attendez vos boissons. Qui arrive ?;cliente|voisine
-Un pourboire;Petite somme d'argent laissée en plus pour remercier du service.;Nous laissons un pourboire sur la table.;Elle donne un pourboire de deux euros.;Au café · Registre courant;;Le service était très bien et vous voulez dire merci.;billet|message
-Payer;Donner de l'argent pour un produit ou un service.;Je peux payer par carte ?;Vous pouvez payer à la caisse.;Au café · Registre courant;;Tu n'as pas d'argent liquide sur toi.;commander|réserver
-Avoir soif;Avoir envie ou besoin de boire.;J'ai soif, je voudrais de l'eau.;Les enfants ont soif après le match.;Au café · Registre courant;;Il fait très chaud et tu n'as rien bu depuis ce matin.;chaud|sommeil
-Avoir faim;Avoir envie ou besoin de manger.;Tu as faim ? Il y a des croissants.;Nous avons faim à midi.;Au café · Registre courant;;Ton amie n'a rien mangé ce matin. Tu lui proposes quelque chose.;froid|peur
-Cher / chère;Qui coûte beaucoup d'argent.;Ce restaurant est trop cher.;La limonade est chère ici.;Au café · Registre courant;;Tu regardes les prix sur la carte et tu préfères partir.;loin|petit
-Une terrasse;Partie d'un café située dehors, avec des tables et des chaises.;Nous nous installons en terrasse.;La terrasse est pleine en été.;Au café · Registre courant;;Il fait beau et vous voulez boire un verre dehors.;cuisine|ville
+export const DEMO_CSV = `Word;Definition;Example 1;Example 2;Category;Family;Situation;Distracteurs;Nature;Genre
+Un café;Boisson chaude et noire, préparée avec des grains torréfiés.;Je prends un café le matin.;Elle boit son café sans sucre.;Au café · Registre courant;;Le matin, tu as besoin de te réveiller avant le cours.;lait|chocolat;nom;m
+Un thé;Boisson chaude préparée avec des feuilles infusées dans l'eau.;Il commande un thé au citron.;Nous buvons du thé l'après-midi.;Au café · Registre courant;;Ton ami n'aime pas le café. Que fait-il ?;sirop|gâteau;nom;m
+Commander;Demander un plat ou une boisson dans un café ou un restaurant.;Je voudrais commander un sandwich.;Ils commandent deux jus d'orange.;Au café · Registre courant;;Le serveur arrive à ta table et attend.;manger|préparer;verbe;
+L'addition;Papier qui indique le prix total à payer au restaurant ou au café.;L'addition, s'il vous plaît !;Le serveur apporte l'addition.;Au café · Registre courant;addition;Tu as fini de manger et tu veux payer.;;nom;f
+La note;Autre mot pour le papier qui indique le prix à payer, au café ou à l'hôtel.;Je demande la note avant de partir.;La note est de douze euros.;Au café · Registre courant;addition;Tu quittes l'hôtel et tu veux savoir combien tu dois.;carte|clé;nom;f
+Un serveur / une serveuse;Personne qui apporte les plats et les boissons aux clients.;La serveuse arrive avec les boissons.;Le serveur est très aimable.;Au café · Registre courant;;Vous attendez vos boissons. Qui arrive ?;cliente|voisine;nom;mf
+Un pourboire;Petite somme d'argent laissée en plus pour remercier du service.;Nous laissons un pourboire sur la table.;Elle donne un pourboire de deux euros.;Au café · Registre courant;;Le service était très bien et vous voulez dire merci.;billet|message;nom;m
+Payer;Donner de l'argent pour un produit ou un service.;Je peux payer par carte ?;Vous pouvez payer à la caisse.;Au café · Registre courant;;Tu n'as pas d'argent liquide sur toi.;commander|réserver;verbe;
+Avoir soif;Avoir envie ou besoin de boire.;J'ai soif, je voudrais de l'eau.;Les enfants ont soif après le match.;Au café · Registre courant;;Il fait très chaud et tu n'as rien bu depuis ce matin.;froid|sommeil;verbe;
+Avoir faim;Avoir envie ou besoin de manger.;Tu as faim ? Il y a des croissants.;Nous avons faim à midi.;Au café · Registre courant;;Ton amie n'a rien mangé ce matin. Tu lui proposes quelque chose.;froid|peur;verbe;
+Cher / chère;Qui coûte beaucoup d'argent.;Ce restaurant est trop cher.;La limonade est chère ici.;Au café · Registre courant;;Tu regardes les prix sur la carte et tu préfères partir.;loin|petit;adjectif;
+Boire;Avaler un liquide.;J'ai soif : je voudrais boire quelque chose.;Qu'est-ce que vous voulez boire ?;Au café · Registre courant;;Tu as très soif et le serveur te demande ce que tu veux.;manger|payer;verbe;
+Réserver;Demander à l'avance une table dans un restaurant.;Je voudrais réserver une table pour samedi soir.;Nous réservons toujours avant de venir.;Au café · Registre courant;;Le restaurant est souvent plein le samedi. Tu téléphones avant d'y aller.;commander|payer;verbe;
+Avoir chaud;Sentir que la température est trop élevée.;J'ai trop chaud au soleil, on s'installe à l'ombre ?;Ils ont chaud en terrasse l'été.;Au café · Registre courant;;Le soleil tape sur ta table et tu veux changer de place.;froid|faim;verbe;
+Une terrasse;Partie d'un café située dehors, avec des tables et des chaises.;Nous nous installons en terrasse.;La terrasse est pleine en été.;Au café · Registre courant;;Il fait beau et vous voulez boire un verre dehors.;cuisine|ville;nom;f
 `;
 
 // Illustrations du paquet de démonstration, dessinées pour Éléfiches.
@@ -476,22 +493,22 @@ export function demoDeck() {
 
 // Modèles de fichiers pour les enseignants : un par situation d'enseignement.
 export const MODELS = {
-  fr: { name: 'Modèle français', lang: 'fr', file: 'modele-francais.csv', csv: `Word;Definition;Example 1;Example 2;Category;Famille;Image;Audio;IPA
-Un loyer;Somme d'argent payée chaque mois pour habiter un logement.;Mon loyer est de 600 euros par mois.;Le loyer augmente en janvier.;Logement · Registre courant;;;;
-Un colocataire / une colocataire;Personne qui partage un logement avec d'autres.;Ma colocataire est étudiante en droit.;Je cherche un colocataire pour septembre.;Logement · Registre courant;;;;
-Déménager;Quitter un logement pour aller habiter ailleurs.;Nous allons déménager à Lyon cet été.;Il déménage la semaine prochaine.;Logement · Registre courant;;;;
-Un appart;Mot familier pour un appartement.;Elle a trouvé un appart près de la fac.;Ton appart est super lumineux.;Logement · Registre familier;appartement;;;
+  fr: { name: 'Modèle français', lang: 'fr', file: 'modele-francais.csv', csv: `Word;Definition;Example 1;Example 2;Category;Famille;Image;Audio;IPA;Nature;Genre
+Un loyer;Somme d'argent payée chaque mois pour habiter un logement.;Mon loyer est de 600 euros par mois.;Le loyer augmente en janvier.;Logement · Registre courant;;;;;nom;m
+Un colocataire / une colocataire;Personne qui partage un logement avec d'autres.;Ma colocataire est étudiante en droit.;Je cherche un colocataire pour septembre.;Logement · Registre courant;;;;;nom;mf
+Déménager;Quitter un logement pour aller habiter ailleurs.;Nous allons déménager à Lyon cet été.;Il déménage la semaine prochaine.;Logement · Registre courant;;;;;verbe;
+Un appart;Mot familier pour un appartement.;Elle a trouvé un appart près de la fac.;Ton appart est super lumineux.;Logement · Registre familier;appartement;;;;nom;m
 ` },
-  en: { name: 'Modèle anglais', lang: 'en', level: 'B1', file: 'modele-anglais.csv', csv: `Word;Definition;Traduction FR;Example 1;Example 2;Category;Famille;Image;Audio;IPA
-A deadline;The latest time or date by which something must be finished.;Une date limite;The deadline for the essay is Friday.;We missed the deadline by two days.;University · Neutral;;;;/ˈded.laɪn/
-To hand in;To give a piece of work to a teacher.;Rendre (un devoir);Please hand in your report by Monday.;She handed in her essay late.;University · Neutral;;;;/hænd ɪn/
-A lecture;A formal talk given to a group of students.;Un cours magistral;The lecture starts at nine.;I took notes during the lecture.;University · Neutral;;;;/ˈlek.tʃər/
-A tutorial;A class in which a small group of students discusses a subject with a teacher.;Un TD (travaux dirigés);We have a tutorial every Thursday.;The tutorial was cancelled today.;University · Neutral;;;;/tjuːˈtɔː.ri.əl/
+  en: { name: 'Modèle anglais', lang: 'en', level: 'B1', file: 'modele-anglais.csv', csv: `Word;Definition;Traduction FR;Example 1;Example 2;Category;Famille;Image;Audio;IPA;Nature;Genre
+A deadline;The latest time or date by which something must be finished.;Une date limite;The deadline for the essay is Friday.;We missed the deadline by two days.;University · Neutral;;;;/ˈded.laɪn/;nom;
+To hand in;To give a piece of work to a teacher.;Rendre (un devoir);Please hand in your report by Monday.;She handed in her essay late.;University · Neutral;;;;/hænd ɪn/;verbe;
+A lecture;A formal talk given to a group of students.;Un cours magistral;The lecture starts at nine.;I took notes during the lecture.;University · Neutral;;;;/ˈlek.tʃər/;nom;
+A tutorial;A class in which a small group of students discusses a subject with a teacher.;Un TD (travaux dirigés);We have a tutorial every Thursday.;The tutorial was cancelled today.;University · Neutral;;;;/tjuːˈtɔː.ri.əl/;nom;
 ` },
-  es: { name: 'Modèle espagnol', lang: 'es', file: 'modele-espagnol.csv', csv: `Word;Definition;Traduction FR;Traduction EN;Example 1;Example 2;Category;Famille;Image;Audio;IPA
-Una cita;Encuentro acordado entre dos o más personas a una hora y en un lugar.;Un rendez-vous;An appointment;Tengo una cita con el médico a las diez.;Llegó tarde a la cita.;Vida diaria · Neutro;;;;
-Madrugar;Levantarse muy temprano por la mañana.;Se lever très tôt;To get up very early;Mañana tengo que madrugar.;No me gusta madrugar los domingos.;Vida diaria · Neutro;;;;
-El sueldo;Dinero que recibe una persona cada mes por su trabajo.;Le salaire;The salary;Cobro el sueldo a final de mes.;Su sueldo no es muy alto.;Vida diaria · Neutro;;;;
-Quedar;Acordar un encuentro con alguien.;Se donner rendez-vous;To arrange to meet;Hemos quedado en la plaza a las ocho.;¿Quedamos mañana por la tarde?;Vida diaria · Coloquial;;;;
+  es: { name: 'Modèle espagnol', lang: 'es', file: 'modele-espagnol.csv', csv: `Word;Definition;Traduction FR;Traduction EN;Example 1;Example 2;Category;Famille;Image;Audio;IPA;Nature;Genre
+Una cita;Encuentro acordado entre dos o más personas a una hora y en un lugar.;Un rendez-vous;An appointment;Tengo una cita con el médico a las diez.;Llegó tarde a la cita.;Vida diaria · Neutro;;;;;nom;f
+Madrugar;Levantarse muy temprano por la mañana.;Se lever très tôt;To get up very early;Mañana tengo que madrugar.;No me gusta madrugar los domingos.;Vida diaria · Neutro;;;;;verbe;
+El sueldo;Dinero que recibe una persona cada mes por su trabajo.;Le salaire;The salary;Cobro el sueldo a final de mes.;Su sueldo no es muy alto.;Vida diaria · Neutro;;;;;nom;m
+Quedar;Acordar un encuentro con alguien.;Se donner rendez-vous;To arrange to meet;Hemos quedado en la plaza a las ocho.;¿Quedamos mañana por la tarde?;Vida diaria · Coloquial;;;;;verbe;
 ` },
 };

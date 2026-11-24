@@ -2,7 +2,7 @@
 import * as store from './store.js';
 import { deckFromCSV, deckFromJSON, deckFromAnki, mergeDecks, audit, safeKey, deckToJSON, looksJSON, levelIn, prepare, serialize, hash, demoDeck, MODELS, safeUrl, LEVELS } from './deck.js';
 import { summary, boxOf, dueInDays, isNew, stageOf, HERD_BOX } from './scheduler.js';
-import { Session, Challenge, Tour, meaning, gloss, pickNew, judge, roomFor, buildActivity, SELF, kindOf } from './session.js';
+import { Session, Challenge, Tour, meaning, gloss, pickNew, judge, roomFor, buildActivity, SELF, kindOf, suggestKind, genderOf, needsGender, GENDERED_LANGS } from './session.js';
 import { clozeParts, norm, noAcc, noArt, diffParts, remark, spoken, slug } from './match.js';
 import { unzip, typeOf } from './zip.js';
 import { buildPrompts, GRIDS, gridOf } from './prompts.js';
@@ -33,7 +33,7 @@ function uiLang() {
   const d = (S.view === 'session' || S.view === 'done') && S.session?.deck;
   return d && ['B2', 'C1', 'C2'].includes(d.level) && STR[d.lang] ? d.lang : 'fr';
 }
-const t = (k, ...a) => { let s = (STR[uiLang()] || STR.fr)[k] ?? STR.fr[k] ?? k; if (typeof s !== 'string') return s; a.forEach((v, i) => { s = s.replaceAll('{' + i + '}', v); }); return s; };
+const t = (k, ...a) => { let s = (STR[uiLang()] || STR.fr)[k] ?? STR.fr[k] ?? k; if (typeof s !== 'string') return s; return s.replace(/\{(\d)\}/g, (m, i) => (i < a.length ? String(a[i]) : m)); };      // une seule passe : un argument qui contient « {0} » ou « $& » reste du texte
 const hue = theme => parseInt(hash(theme || 'x'), 36) % 360;
 const VOICES = { fr: 'fr-FR', en: 'en-GB', es: 'es-ES' };
 const pctOf = x => Math.round(100 * x);
@@ -253,7 +253,8 @@ async function load() {
   const set = (await store.get('settings')) || {};
   Object.assign(S, { lang: set.lang || 'auto', minutes: set.minutes || 5, maxNew: set.maxNew || 3, help: set.help || 'fr', sound: set.sound ?? true, voice: set.voice ?? true, remind: { time: '18:00', days: 'daily', ...(set.remind || {}) }, savedAt: set.savedAt || 0 });
   const saved = (await store.get('decks')) || [];
-  S.decks = saved.map(prepare);
+  // Un paquet abîmé dans le stockage ne doit pas empêcher les autres de s'ouvrir : il est laissé de côté.
+  S.decks = (Array.isArray(saved) ? saved : []).flatMap(d => { try { return d && typeof d === 'object' ? [prepare(d)] : []; } catch (e) { console.error(e); return []; } });
   if (!S.decks.length) { S.decks = [demoDeck()]; await saveDecks(); }
   for (const d of S.decks) S.progress[d.id] = cleanProgress(await store.get('progress:' + d.id));     // état reconstruit champ par champ : rien de forgé n'atteint l'écran
   // Lien de partage : « …/?paquet=logement-a2 » ouvre le fichier paquets/logement-a2.json rangé à côté de l'application
@@ -395,7 +396,16 @@ const seg = (key, cur, items) => `<div class="seg" role="group">${items.map(([v,
 const setrow = (label, control) => `<div class="setrow"><span>${t(label)}</span>${control}</div>`;
 const langOpts = cur => Object.entries(LANG_NAMES).map(([k, n]) => opt(k, cur, n)).join('');
 const banners = () => `${store.isPersistent() ? '' : `<p class="banner warn">${t('notSaved')}</p>`}
-  ${S.notice ? `<p class="banner ${S.notice.bad ? 'warn' : 'good'}" role="status">${esc(S.notice.text)}</p>` : ''}`;
+  ${S.notice ? `<p class="banner ${S.notice.bad ? 'warn' : 'good'}" role="status">${esc(S.notice.text)}</p>` : ''}
+  ${S.notice?.sort && TEACHER && S.view !== 'sort' ? `<p class="banner warn" role="status">${t('sortAlert', +S.notice.sort.n || 0)} <button type="button" class="secondary small" data-action="sort" data-id="${esc(String(S.notice.sort.id))}">${t('sortBtn')}</button></p>` : ''}`;
+
+// Catégories proposées à l'enseignant, dans l'éditeur de fiche et dans l'écran de classement.
+const KINDS = ['nom', 'verbe', 'adjectif', 'adverbe', 'préposition', 'déterminant', 'pronom', 'conjonction', 'expression'];
+const kindName = k => (Object.hasOwn(STR.fr, 'pos_' + k) ? t('pos_' + k) : esc(k));
+// Ce qu'il reste à compléter à la main dans un paquet : fiches sans catégorie, noms sans genre (français, espagnol).
+const unsorted = d => d.cards.filter(c => kindOf(c) === 'autre');
+const ungendered = d => d.cards.filter(c => needsGender(c, d.lang));
+const sortNotice = deck => { const n = unsorted(deck).length + ungendered(deck).length; return n ? { id: deck.id, n } : undefined; };
 
 function home() {
   return `${TEACHER ? `<button class="link" data-action="teacher">← ${t('eBack')}</button>` : ''}<header class="top">${mascot(147, 'idle', 2)}<h1>Éléfiches<span class="edition">${EDITION}</span></h1>
@@ -468,9 +478,11 @@ function teacherView() {
       </div></section>
     <section class="card"><h2>${t('b2')}</h2><p>${t('b2Intro')}</p>
       ${promptBox('file', 'pFile')}
+      <p class="sethint">${t('pGoHint')}</p>${promptBox('go', 'pGo')}
       <details class="more"><summary>${t('pReviewSum')}</summary><p class="sethint">${t('pReviewHint')}</p>${promptBox('review', 'pReview')}</details>
       <details class="more"><summary>${t('noFile')}</summary><p>${t('noFileHint')}</p>
         ${promptBox('cards', 'pCards')}
+        <p class="sethint">${t('pGoHint')}</p>${promptBox('go', 'pGo')}
         <label class="inline">${t('bGrid')} <select data-b="grid">${GRIDS.map(g => opt(g, B.grid, t('gridOpt', gridOf(g).n, gridOf(g).cols, gridOf(g).rows))).join('')}</select></label>
         ${promptBox('sheet', 'pSheet')}${promptBox('next', 'pNext')}</details></section>
     <section class="card import"><h2>${t('b3')}</h2>
@@ -492,6 +504,7 @@ function teacherView() {
       <thead><tr><th>${t('colName')}</th><th>${t('colNeed')}</th><th>${t('colWhat')}</th></tr></thead><tbody>
       ${row('Word', 'yes', 'cWord')}${row('Definition', 'oneOf', 'cDef')}${row('Traduction FR<br>Traduction EN', 'oneOf', 'cTr')}
       ${row('Example 1<br>Example 2<br>Example 3', 'advised', 'cEx')}${row('Situation', 'advised', 'cSit')}${row('Distracteurs', 'advised', 'cTraps')}
+      ${row('Nature', 'advised', 'cPos')}${row('Genre', 'advised', 'cGender')}
       ${row('Category', 'advised', 'cCat')}${row('Famille', 'optional', 'cFam')}
       ${row('Image', 'optional', 'cImg')}${row('Audio', 'optional', 'cAudio')}${row('IPA', 'optional', 'cIpa')}
       </tbody></table></div></details>
@@ -504,7 +517,7 @@ async function addDeck(text, name, lang, json = false, level) {
     S.progress[deck.id] ??= cleanProgress(await store.get('progress:' + deck.id));
     S.decks = [...S.decks.filter(d => d.id !== deck.id), deck];
     await saveDecks();
-    S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped) };
+    S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped), sort: sortNotice(deck) };
     S.view = 'home';
   } catch (e) {
     S.notice = { bad: true, text: t(ERR[e.message] || 'errEmpty') };
@@ -565,7 +578,7 @@ async function importPacket({ files = [], text = '', name = '', lang = 'fr', lev
     S.progress[deck.id] ??= cleanProgress(await store.get('progress:' + deck.id));
     S.decks = [...S.decks.filter(d => d.id !== deck.id), deck];
     await saveDecks();
-    S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped) };
+    S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped), sort: sortNotice(deck) };
     const toCheck = S.sheets.length || S.loose.length || deck.cards.some(c => c.image || c.sheet);   // toute image se vérifie d'un coup d'œil
     S.imgId = deck.id; S.view = toCheck && !home ? 'images' : 'home';
   } catch (e) {
@@ -607,14 +620,16 @@ function auditView(d) {
   // Catégories grammaticales : une fiche dont la catégorie reste inconnue, ou seule de sa catégorie, n'aura jamais de
   // question à choix (on ne mêle pas les catégories). L'enseignant le voit ici.
   const kinds = d.cards.map(c => kindOf(c, d.lang)), size = k => kinds.filter(x => x === k).length;
-  const unknown = d.cards.filter((c, i) => kinds[i] === 'autre'), alone = d.cards.filter((c, i) => kinds[i] !== 'autre' && size(kinds[i]) < 3);
-  if (unknown.length) found.push({ key: 'auNoKind', cards: unknown, warn: true });
+  const unknown = d.cards.filter((c, i) => kinds[i] === 'autre'), alone = d.cards.filter((c, i) => kinds[i] !== 'autre' && size(kinds[i]) < 3), nogender = ungendered(d);
+  if (unknown.length) found.unshift({ key: 'auNoKind', cards: unknown, warn: true });
+  if (nogender.length) found.push({ key: 'auNoGender', cards: nogender, warn: true });
   if (alone.length) found.push({ key: 'auAlone', cards: alone, warn: false });
   const warn = found.filter(f => f.warn);
   if (!found.length) return `<p class="audit ok">${t('auOk')}</p>`;
   const names = f => f.cards.slice(0, 4).map(c => esc(c.bare)).join(', ') + (f.cards.length > 4 ? '…' : '');
   return `<details class="audit${warn.length ? ' warn' : ''}"><summary>${t(warn.length ? 'auTitle' : 'auInfo', warn.length || found.length)}</summary>
     <ul>${found.map(f => `<li class="${f.warn ? 'w' : ''}">${t(f.key, f.cards.length, d.cards.length, d.level)} <span class="meta" lang="${d.lang}">${names(f)}</span>${f.lines?.length ? `<ul class="aulines" lang="${esc(d.lang)}">${f.lines.slice(0, 8).map(x => `<li>${esc(x)}</li>`).join('')}${f.lines.length > 8 ? '<li>…</li>' : ''}</ul>` : ''}</li>`).join('')}</ul>
+    ${unknown.length || nogender.length ? `<p><button type="button" class="secondary small" data-action="sort" data-id="${esc(d.id)}">${t('sortBtn')}</button></p>` : ''}
     <p class="sethint">${t('auNote')}</p></details>`;
 }
 
@@ -636,6 +651,48 @@ function imagesView() {
     <button class="primary" data-action="teacher">${t('imgDone')}</button>`;
 }
 
+// ---------- Classer les mots : catégorie grammaticale et genre, par lot ----------
+// L'application ne devine pas la catégorie d'un mot. Quand le paquet ne la donne pas, l'enseignant la donne ici : les
+// mots arrivent déjà rangés selon une suggestion, il déplace ceux qui sont mal rangés puis confirme chaque groupe.
+function sortView() {
+  const d = S.decks.find(x => x.id === S.sortId), gendered = GENDERED_LANGS.includes(d.lang);
+  const item = (c, name, note = '') => `<li><label class="pick"><input type="checkbox" name="${name}" value="${esc(c.id)}"> <span><b lang="${esc(d.lang)}">${esc(c.word)}</b>${note ? ` <span class="tag">${note}</span>` : ''}<br><span class="meta">${esc(short(meaning(c), 60))}</span></span></label></li>`;
+  const todo = unsorted(d), groups = new Map();
+  for (const c of todo) { const k = suggestKind(c, d.lang); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); }
+  const order = [...KINDS.filter(k => groups.has(k)), ...[...groups.keys()].filter(k => !KINDS.includes(k) && k !== 'autre'), ...(groups.has('autre') ? ['autre'] : [])];
+  const done = d.cards.filter(c => kindOf(c) !== 'autre'), byKind = new Map();
+  for (const c of done) { const k = kindOf(c); if (!byKind.has(k)) byKind.set(k, []); byKind.get(k).push(c); }      // un seul passage, même avec des centaines de catégories
+  const nouns = ungendered(d), known = d.cards.filter(c => kindOf(c) === 'nom' && genderOf(c));
+  return `<button class="link" data-action="teacher">← ${t('eBack')}</button>
+    <h1>${t('sortTitle')}</h1><p class="lead" lang="${esc(d.lang)}">${esc(d.name)}</p>
+    ${banners()}
+    <section class="card sort" data-sort="kind"><h2>${t('sortKinds')}</h2>
+      ${todo.length ? `<p class="sethint">${t('sortHow')}</p>
+      ${order.map(k => `<fieldset class="sortgroup"><legend>${k === 'autre' ? t('sortNoHint') : t('sortHint', kindName(k))} · ${t('nWords', groups.get(k).length)}</legend>
+        <ul class="picks">${groups.get(k).map(c => item(c, 'pick')).join('')}</ul>
+        <div class="row"><button type="button" class="link" data-action="sort-all">${t('sortAll')}</button>
+        ${k === 'autre' ? '' : `<button type="button" class="primary small" data-action="sort-confirm" data-kind="${esc(k)}">${t('sortConfirm', kindName(k))}</button>`}</div></fieldset>`).join('')}` : `<p class="audit ok">${t('sortKindsOk')}</p>`}
+      ${done.length ? `<details class="more"><summary>${t('sortDone', done.length)}</summary>
+        ${[...byKind].map(([k, cs]) => `<fieldset class="sortgroup"><legend>${kindName(k)} · ${t('nWords', cs.length)}</legend><ul class="picks">${cs.map(c => item(c, 'pick')).join('')}</ul></fieldset>`).join('')}</details>` : ''}
+      <div class="sortbar"><label>${t('sortMoveTo')} <select data-sortkind>${KINDS.map(k => `<option value="${esc(k)}">${kindName(k)}</option>`).join('')}</select></label>
+        <button type="button" class="primary" data-action="sort-move">${t('sortMove')}</button></div>
+    </section>
+    ${gendered ? `<section class="card sort" data-sort="gender"><h2>${t('sortGenders')}</h2>
+      ${nouns.length ? `<p class="sethint">${t('sortGenderHow')}</p><ul class="picks">${nouns.map(c => item(c, 'gpick')).join('')}</ul>` : `<p class="audit ok">${t(todo.length ? 'sortGendersLater' : 'sortGendersOk')}</p>`}
+      ${known.length ? `<details class="more"><summary>${t('sortGenderDone', known.length)}</summary><ul class="picks">${known.map(c => item(c, 'gpick', t('gen_' + genderOf(c)))).join('')}</ul></details>` : ''}
+      ${nouns.length || known.length ? `<div class="sortbar"><span>${t('sortGenderTo')}</span>${['m', 'f', 'mf'].map(g => `<button type="button" class="secondary small" data-action="sort-gender" data-g="${g}">${t('gen_' + g)}</button>`).join('')}</div>` : ''}
+    </section>` : ''}
+    <button class="primary" data-action="teacher">${t('imgDone')}</button>`;
+}
+// Applique une catégorie ou un genre à plusieurs fiches d'un coup, puis enregistre le paquet.
+async function sortApply(cards, change, text) {
+  const d = S.decks.find(x => x.id === S.sortId);
+  if (!d || !cards.length) return toast(t('sortNone'));
+  for (const c of cards) change(c);      // catégorie et genre ne touchent aucun champ calculé : inutile de repréparer tout le paquet
+  S.notice = { text: t(text, cards.length) }; render();      // l'écran suit le geste tout de suite ; l'enregistrement suit
+  await saveDecks();
+}
+
 // ---------- Éditeur de paquet ----------
 
 const editing = () => S.decks.find(d => d.id === S.editId);
@@ -652,7 +709,7 @@ function editView() {
       <label>${t('level')} <select name="level">${LEVELS.map(l => opt(l, d.level, l)).join('')}</select></label>
       <button class="primary">${t('save')}</button></form></section>
     <section class="card">
-      <div class="row tools"><button class="secondary" data-action="images" data-id="${d.id}">${t('imgBtn')}</button><input type="search" data-input="search" placeholder="${t('eSearch')}" aria-label="${t('eSearch')}">
+      <div class="row tools"><button class="secondary" data-action="images" data-id="${d.id}">${t('imgBtn')}</button><button class="secondary" data-action="sort" data-id="${d.id}">${t('sortBtn')}</button><input type="search" data-input="search" placeholder="${t('eSearch')}" aria-label="${t('eSearch')}">
       <button class="secondary" data-action="card" data-id="new">+ ${t('eAdd')}</button></div>
       <ul class="cardlist">${d.cards.map(c => `<li data-text="${esc((c.word + ' ' + meaning(c)).toLowerCase())}">
         <button class="cardrow" data-action="card" data-id="${c.id}" style="--th:${hue(c.theme)}">
@@ -664,7 +721,8 @@ function editView() {
 function cardView() {
   const d = editing(), c = d.byId[S.cardId] || { translations: {}, examples: [] }, isNew = !d.byId[S.cardId];
   const langs = [...new Set([...Object.keys(LANG_NAMES).filter(l => l !== d.lang), ...Object.keys(c.translations)])];
-  const raw = isNew ? 'autre' : kindOf({ word: c.word, clozes: c.clozes, translations: c.translations }, d.lang), guessed = Object.hasOwn(STR.fr, 'pos_' + raw) ? t('pos_' + raw) : raw;
+  const raw = isNew ? 'autre' : suggestKind(c, d.lang), guessed = Object.hasOwn(STR.fr, 'pos_' + raw) ? t('pos_' + raw) : raw;
+  const art = isNew ? '' : genderOf({ word: c.word });      // genre que l'article de la fiche donne déjà (« un », « une »)
   const field = (name, label, value, attrs = '') => `<label>${label} <input name="${name}" value="${esc(value || '')}" autocomplete="off" ${attrs}></label>`;
   return `<button class="link" data-action="edit" data-id="${d.id}">← ${esc(d.name)}</button>
     <h1>${t(isNew ? 'cTitleNew' : 'cTitle')}</h1>
@@ -677,8 +735,11 @@ function cardView() {
       ${field('situation', t('fSit'), c.situation)}${field('distractors', t('fTraps'), (c.distractors || []).join(' | '))}
       <div class="two">${field('theme', t('fTheme'), c.theme)}${field('register', t('fReg'), c.register)}</div>
       <div class="two">${field('family', t('fFam'), c.family)}${field('ipa', t('fIpa'), c.ipa)}</div>
-      <label>${t('fPos')} <select name="pos">${['', 'nom', 'verbe', 'adjectif', 'adverbe', 'expression', 'préposition', 'déterminant', ...(c.pos && !['nom', 'verbe', 'adjectif', 'adverbe', 'expression', 'préposition', 'déterminant'].includes(kindOf(c, d.lang)) ? [kindOf(c, d.lang)] : [])].map(k => `<option value="${esc(k)}" ${(c.pos ? kindOf(c, d.lang) : '') === k ? 'selected' : ''}>${k ? (Object.hasOwn(STR.fr, 'pos_' + k) ? t('pos_' + k) : esc(k)) : t('posAuto', isNew ? '…' : guessed)}</option>`).join('')}</select></label>
+      <label>${t('fPos')} <select name="pos">${['', ...KINDS, ...(c.pos && !KINDS.includes(kindOf(c)) ? [kindOf(c)] : [])].map(k => `<option value="${esc(k)}" ${(c.pos ? kindOf(c) : '') === k ? 'selected' : ''}>${k ? kindName(k) : t('posAuto', isNew ? '…' : guessed)}</option>`).join('')}</select></label>
       <p class="sethint">${t('fPosHint')}</p>
+      ${GENDERED_LANGS.includes(d.lang) ? `<label>${t('fGender')} <select name="gender">${[['', art ? t('genArt', t('gen_' + art)) : t('genNone')], ['m', t('gen_m')], ['f', t('gen_f')], ['mf', t('gen_mf')]].map(([v, label]) => opt(v, c.gender || '', label)).join('')}</select></label>
+      <p class="sethint">${t('fGenderHint')}</p>` : ''}
+      ${c.doubt ? field('doubt', t('fDoubt'), c.doubt) : ''}
       <fieldset><legend>${t('fImg')}</legend>
         <img class="illus" data-preview="image" src="${esc(S.draft.image || '')}" alt="" ${S.draft.image ? '' : 'hidden'}>
         <input type="file" data-file="image" accept="image/*" aria-label="${t('fImg')}">
@@ -700,7 +761,7 @@ async function saveCard(form) {
   if (!v('word') || !(v('definition') || Object.keys(translations).length)) { S.notice = { bad: true, text: t('errCard') }; return toast(t('errCard')); }
   const data = { word: v('word'), definition: v('definition') || undefined, translations, examples: v('examples').split(/\n+/).map(x => x.trim()).filter(Boolean),
     situation: v('situation') || undefined, distractors: v('distractors').split('|').map(x => x.trim()).filter(Boolean),
-    theme: v('theme') || undefined, register: v('register') || undefined, family: v('family') || undefined, ipa: v('ipa') || undefined, pos: v('pos') || undefined,
+    theme: v('theme') || undefined, register: v('register') || undefined, family: v('family') || undefined, ipa: v('ipa') || undefined, pos: v('pos') || undefined, gender: v('gender') || undefined, doubt: v('doubt') || undefined,
     image: safeUrl(S.draft.image) || undefined, audio: safeUrl(S.draft.audio) || undefined };
   const old = d.byId[S.cardId];
   if (old) { delete old.marks; Object.assign(old, data); } else d.cards.push({ id: 'c' + hash(data.word + Date.now()), extra: {}, ...data });
@@ -1276,7 +1337,7 @@ function paint() {
   if (S.locked) { document.documentElement.lang = 'fr'; app.innerHTML = gateView(); app.querySelector('[autofocus]')?.focus({ preventScroll: true }); return; }
   document.documentElement.lang = uiLang();
   const open = app.querySelector('details.settings')?.open;
-  app.innerHTML = (S.view === 'session' ? sessionView() : S.view === 'done' ? doneView() : S.view === 'teacher' ? teacherView() : S.view === 'rules' ? rulesView() : S.view === 'herd' ? herdView() : S.view === 'images' ? imagesView() : S.view === 'edit' ? editView() : S.view === 'card' ? cardView() : S.view === 'race' ? raceView() : S.view === 'privacy' ? privacyView() : home());
+  app.innerHTML = (S.view === 'session' ? sessionView() : S.view === 'done' ? doneView() : S.view === 'teacher' ? teacherView() : S.view === 'rules' ? rulesView() : S.view === 'herd' ? herdView() : S.view === 'images' ? imagesView() : S.view === 'edit' ? editView() : S.view === 'sort' && TEACHER && S.decks.some(d => d.id === S.sortId) ? sortView() : S.view === 'card' ? cardView() : S.view === 'race' ? raceView() : S.view === 'privacy' ? privacyView() : home());
   if (open && app.querySelector('details.settings')) app.querySelector('details.settings').open = true;
   if (S.view === 'session' || S.view === 'done') {
     app.querySelector('[autofocus]')?.focus({ preventScroll: true });
@@ -1303,11 +1364,11 @@ app.addEventListener('click', e => {
   else if (action === 'wipe-yes') { if (!S.confirmWipe || S.view !== 'privacy' || !armed()) return; store.wipe().then(() => location.reload()); }       // tout est effacé sur cet appareil, puis l'application repart de zéro
   else if (action === 'herd') { S.herdId = id; S.view = 'herd'; S.confirmReset = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'share') { const st = S.session.stats; navigator.clipboard?.writeText(t('shareText', S.session.deck.name, S.session.tamed.length, st.ok, st.answered)).then(() => toast(t('copied')), () => toast(t('downloadFail'))); }
-  else if (action === 'edit') { S.editId = id; S.view = 'edit'; if (b.closest('form')) S.notice = null; window.scrollTo?.(0, 0); render(); }
-  else if (action === 'card') { const c = editing().byId[id]; S.cardId = id; S.draft = { image: c?.image, audio: c?.audio }; S.notice = null; S.view = 'card'; window.scrollTo?.(0, 0); render(); }
+  else if (action === 'edit') { if (!TEACHER || !S.decks.some(d => d.id === id)) return; S.editId = id; S.view = 'edit'; if (b.closest('form')) S.notice = null; window.scrollTo?.(0, 0); render(); }
+  else if (action === 'card') { if (!TEACHER || !editing()) return; const c = Object.hasOwn(editing().byId, id) ? editing().byId[id] : undefined; S.cardId = id; S.draft = { image: c?.image, audio: c?.audio }; S.notice = null; S.view = 'card'; window.scrollTo?.(0, 0); render(); }
   else if (action === 'clear') { S.draft[b.dataset.key] = undefined; const u = b.closest('form')[b.dataset.key + 'Url']; if (u) u.value = ''; showDraft(); }
   else if (action === 'test-audio') { const f = b.closest('form'); speak({ word: f.word.value, audio: safeUrl(S.draft.audio) }, editing().lang); }
-  else if (action === 'del-card') { const d = editing(); d.cards = d.cards.filter(c => c.id !== S.cardId); prepare(d); saveDecks(); S.view = 'edit'; render(); }
+  else if (action === 'del-card') { if (!TEACHER || !editing()) return; const d = editing(); d.cards = d.cards.filter(c => c.id !== S.cardId); prepare(d); saveDecks(); S.view = 'edit'; render(); }
   else if (action === 'export') {
     const d = S.decks.find(x => x.id === id), lv = (d.level || '').toLowerCase(), base = slug(d.name), name = lv && !base.split('-').includes(lv) ? `${base}-${lv}` : base;
     download(name + '.json', deckToJSON(d), false);
@@ -1395,13 +1456,25 @@ app.addEventListener('click', e => {
     const pre = b.parentElement.querySelector('pre'), manual = () => { getSelection().selectAllChildren(pre); toast(t('copyManual')); };
     if (navigator.clipboard?.writeText) navigator.clipboard.writeText(prompts()[b.dataset.k]).then(() => toast(t('copied')), manual); else manual();
   }
+  else if (action === 'sort') { if (!TEACHER || !S.decks.some(d => d.id === id)) return; S.sortId = id; S.notice = null; S.view = 'sort'; window.scrollTo?.(0, 0); render(); }
+  else if (action === 'sort-all') { const boxes = [...(b.closest('fieldset')?.querySelectorAll('input[type=checkbox]') ?? [])], on = boxes.some(x => !x.checked); for (const x of boxes) x.checked = on; }
+  else if (action === 'sort-confirm' || action === 'sort-move' || action === 'sort-gender') {
+    if (!TEACHER || S.view !== 'sort') return;
+    const d = S.decks.find(x => x.id === S.sortId); if (!d) return;
+    const picked = name => [...app.querySelectorAll(`input[name="${name}"]:checked`)].filter(x => Object.hasOwn(d.byId, x.value)).map(x => d.byId[x.value]);      // jamais une clé héritée (« __proto__ »)
+    if (action === 'sort-gender') { const g = b.dataset.g; if (!['m', 'f', 'mf'].includes(g)) return; sortApply(picked('gpick').filter(c => kindOf(c) === 'nom'), c => { c.gender = g; }, 'sortSavedG'); return; }
+    // Confirmer un groupe : toutes ses fiches encore sans catégorie. Ranger : seulement les fiches cochées, où qu'elles soient.
+    const kind = action === 'sort-confirm' ? b.dataset.kind : app.querySelector('[data-sortkind]')?.value;
+    if (!KINDS.includes(kind)) return;
+    sortApply(action === 'sort-confirm' ? unsorted(d).filter(c => suggestKind(c, d.lang) === kind) : picked('pick'), c => { c.pos = kind; }, 'sortSaved');
+  }
   else if (action === 'images') { S.imgId = id; if (S.view !== 'images') { S.sheets = []; S.loose = []; } S.notice = null; S.view = 'images'; window.scrollTo?.(0, 0); render(); }
   else if (action === 'swap-sheets') {
     const d = S.decks.find(x => x.id === S.imgId), n = S.sheets.length, total = [1, 1, 2, 6, 24, 120][Math.min(n, 5)];
     S.perm = (S.perm + 1) % total;
     cutSheets(d, nthPerm(S.sheets, S.perm)).then(() => saveDecks()).then(render);
   }
-  else if (action === 'assign-image' && S.loose.length) { const d = S.decks.find(x => x.id === S.imgId); d.byId[id].image = S.loose.shift(); saveDecks(); render(); }
+  else if (action === 'assign-image' && S.loose.length) { const d = S.decks.find(x => x.id === S.imgId); if (!TEACHER || !d || !d.byId[id]) return; d.byId[id].image = S.loose.shift(); saveDecks(); render(); }
   else if (action === 'skip-image') { S.loose.shift(); render(); }
   else if (action === 'reset') { S.confirmReset = id; S.armedAt = Date.now(); render(); }
   else if (action === 'reset-yes') { if (S.confirmReset !== id || !armed()) return; S.progress[id] = {}; S.confirmReset = null; saveProgress(id); render(); }
@@ -1416,8 +1489,8 @@ app.addEventListener('submit', e => {
   if (S.locked) return;
   if (kind === 'gate-make') { makeGate(e.target.code.value, e.target.again.value); return; }
   if (kind === 'import') { const f = e.target; importPacket({ files: [...f.files.files], text: f.text.value, name: f.name.value.trim(), lang: f.lang.value, level: f.level.value }); }
-  else if (kind === 'card') saveCard(e.target);
-  else if (kind === 'rename') { const d = editing(), n = e.target.name.value.trim(); if (n) { d.name = n; d.lang = e.target.lang.value; d.level = e.target.level.value; d.demo = false; saveDecks(); S.notice = { text: t('saved') }; render(); } }
+  else if (kind === 'card') { if (TEACHER && editing()) saveCard(e.target); }
+  else if (kind === 'rename') { if (!TEACHER || !editing()) return; const d = editing(), n = e.target.name.value.trim(); if (n) { d.name = n; d.lang = e.target.lang.value; d.level = e.target.level.value; d.demo = false; saveDecks(); S.notice = { text: t('saved') }; render(); } }
   else if (kind === 'typed' && !S.feedback) submitTyped(e.target.answer.value);
 });
 function applySetting(k, v) {

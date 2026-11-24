@@ -15,7 +15,7 @@ Application web pour mémoriser le vocabulaire d'une langue : répétition espac
 
 ## État
 
-Version 10, en cours d'essai. Elle n'a pas encore été essayée avec des étudiants, ni sur tous les téléphones.
+Version 13, en cours d'essai. Elle n'a pas encore été essayée avec des étudiants, ni sur tous les téléphones.
 
 ## Données personnelles
 

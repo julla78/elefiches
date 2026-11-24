@@ -437,3 +437,13 @@ summary .tag.ok { background: var(--good-soft); color: var(--good); } summary .t
 /* Appétit du jour : trois choix de même largeur sur une ligne, chacun sur une ligne de texte quand la place le permet */
 .appetite .seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
 .appetite .seg button { padding: 7px 4px; font-size: .94rem; line-height: 1.2; }
+
+/* Classer les mots : catégorie grammaticale et genre, par lot */
+.sortgroup { border: 1px solid var(--brand-line); border-radius: 14px; margin: 14px 0 0; padding: 10px 14px 14px; min-width: 0; }
+.sortgroup legend { font-weight: 700; padding: 0 6px; }
+.picks { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 4px 14px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
+.pick { display: flex; gap: 10px; align-items: flex-start; min-height: 44px; padding: 6px 4px; border-radius: 10px; cursor: pointer; }
+.pick input { width: 22px; height: 22px; margin: 2px 0 0; flex: none; accent-color: var(--brand); }
+.pick .tag { font-size: .9rem; color: var(--muted); font-weight: 400; }
+.sortbar { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 16px -6px 0; padding: 10px 6px; background: var(--card, #fff); border-top: 1px solid var(--brand-line); }
+.sortbar label { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0; }
