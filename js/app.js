@@ -91,6 +91,7 @@ const ICON = {
   cal: ic('<rect x="4" y="5.500" width="16" height="14.500" rx="3"/><path d="M4 10h16M8.500 3.500v4M15.500 3.500v4"/>'),
   gear: ic('<circle cx="12" cy="12" r="3.200"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.600 5.600l2.100 2.100M16.300 16.300l2.100 2.100M5.600 18.400l2.100-2.100M16.300 7.700l2.100-2.100"/>'),
   save: ic('<path d="M5 4h11l3 3v13H5z"/><path d="M8.500 4v5h6V4M8 20v-6h8v6"/>'),
+  open: ic('<path d="M3.500 7.500a2 2 0 0 1 2-2h4l2 2.500h7a2 2 0 0 1 2 2v7.500a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>'),
 };
 // La souris : elle court au rythme du record de l'étudiant.
 const mouse = (size = 34) => `<svg class="mouse" width="${Math.round(size * 1.3)}" height="${size}" viewBox="0 0 52 40" aria-hidden="true">
@@ -179,8 +180,9 @@ function sayText(text, lang, { auto = false, rate = 0.9, onend = null } = {}) {
 }
 // Lit le mot : fichier audio de la fiche s'il existe, sinon voix de l'appareil dans la langue du paquet.
 function speak(card, lang, opts = {}) {
-  const tts = () => sayText(spoken(card.word), lang, opts);
-  if (card.audio) { try { new Audio(card.audio).play().catch(tts); } catch { tts(); } } else tts();
+  // opts.say : une seule forme d'une fiche qui en a deux (« une serveuse ») ; le fichier audio de la fiche dit les deux.
+  const tts = () => sayText(spoken(opts.say || card.word), lang, opts);
+  if (card.audio && !opts.say) { try { new Audio(card.audio).play().catch(tts); } catch { tts(); } } else tts();
 }
 // Enregistrement de la voix de l'étudiant, pour qu'il se réécoute à côté du modèle. Rien n'est envoyé ni conservé :
 // l'enregistrement vit dans la page et disparaît à l'étape suivante.
@@ -414,6 +416,7 @@ function home() {
     ${banners()}
     <div class="appetite"><span class="aplabel">${NUT}${t('appetite')}</span>${seg('maxNew', S.maxNew, [[3, t('ap1')], [5, t('ap2')], [8, t('ap3')]])}</div>
     <section class="decks">${S.decks.map(deckCard).join('')}</section>
+    <section class="tools" aria-label="${t('toolsLabel')}">
     <details class="card settings"><summary>${ICON.gear} ${t('settings')}</summary>
       ${setrow('appLang', seg('lang', S.lang, [['auto', t('auto')], ...Object.entries(LANG_NAMES)]))}
       <p class="sethint">${t('autoHint')}</p>
@@ -431,9 +434,9 @@ function home() {
       <div class="stack"><button class="secondary" data-action="remind">${ICON.cal} ${t('remAdd')}</button></div>
       <p class="sethint">${t('remHint')}</p>
     </details>
-    <label class="link filelabel">${t('openPacket')}<input type="file" class="vh" data-file="packet" accept=".json,.zip,.apkg,application/json,application/zip"></label>
-    ${TEACHER ? `<button class="secondary" data-action="teacher">${t('teacher')}</button>` : ''}
-    <button class="link privacylink" data-action="privacy">${t('pvLink')}</button>`;
+    <label class="toolrow filelabel">${ICON.open} ${t('openPacket')}<input type="file" class="vh" data-file="packet" accept=".json,.zip,.apkg,application/json,application/zip"></label>
+    </section>
+    <p class="footlinks">${TEACHER ? `<button class="link" data-action="teacher">${t('teacher')}</button>` : ''}<button class="link" data-action="privacy">${t('pvLink')}</button></p>`;
 }
 
 // ---------- Espace enseignant ----------
@@ -570,10 +573,10 @@ async function importPacket({ files = [], text = '', name = '', lang = 'fr', lev
     else {                                  // images sans référence : rangées d'après leur nom, sinon à ranger à la main
       const squash = x => noAcc(norm(x)).replace(/[^a-z0-9]/g, '');
       for (const f of images) {
-        const c = deck.cards.find(c => !c.image && [c.key, noArt(c.key)].map(squash).includes(squash(stem(f.name))));
-        if (c) { c.image = await imageToDataURL(f.blob); used.add(f); }
+        const name = squash(stem(f.name)), c = name && deck.cards.find(c => !c.image && [c.key, noArt(c.key)].map(squash).includes(name));
+        if (c) { const url = safeUrl(await imageToDataURL(f.blob)); if (url) c.image = url; used.add(f); }      // image trop lourde : écartée, comme au rechargement
       }
-      for (const f of images.filter(f => !used.has(f))) S.loose.push(await imageToDataURL(f.blob));
+      for (const f of images.filter(f => !used.has(f)).slice(0, 200)) { const url = safeUrl(await imageToDataURL(f.blob)); if (url) S.loose.push(url); }
     }
     S.progress[deck.id] ??= cleanProgress(await store.get('progress:' + deck.id));
     S.decks = [...S.decks.filter(d => d.id !== deck.id), deck];
@@ -637,8 +640,11 @@ function imagesView() {
   const d = S.decks.find(x => x.id === S.imgId), waiting = d.cards.filter(c => c.sheet && !c.image).length, wantsSheets = d.cards.some(c => c.sheet);
   return `<button class="link" data-action="teacher">← ${t('eBack')}</button>
     <h1>${t('imgTitle')}</h1><p class="lead" lang="${d.lang}">${esc(d.name)}</p>
+    ${deckTabs(d, 'images')}
     ${banners()}
     ${auditView(d)}
+    <section class="card import"><h2>${t('imgAddTitle')}</h2><p class="sethint">${t('imgAddHint')}</p>
+      <input type="file" multiple accept="image/*" data-file="loose" aria-label="${t('imgAddTitle')}"></section>
     ${wantsSheets ? `<section class="card import"><h2>${t('imgSheets')}</h2><p class="sethint">${t('imgSheetsHint')}</p>
       ${waiting ? `<p class="banner warn">${t('imgNone', waiting)}</p>` : ''}
       <input type="file" multiple accept="image/*" data-file="sheets" aria-label="${t('imgSheets')}">
@@ -650,6 +656,9 @@ function imagesView() {
       ${c.image ? `<img src="${esc(c.image)}" alt="">` : '<span class="swatch"></span>'}<span lang="${d.lang}">${esc(c.bare)}</span></button></li>`).join('')}</ul>
     <button class="primary" data-action="teacher">${t('imgDone')}</button>`;
 }
+
+// Les trois écrans d'un paquet (fiches, classement, images) se rejoignent d'un geste, sans repasser par la liste.
+const deckTabs = (d, cur) => `<nav class="decktabs" aria-label="${esc(d.name)}">${[['edit', 'tabCards'], ['sort', 'sortBtn'], ['images', 'imgBtn']].map(([a, k]) => `<button type="button" class="${a === cur ? 'on' : ''}" data-action="${a}" data-id="${esc(d.id)}"${a === cur ? ' aria-current="page"' : ''}>${t(k)}</button>`).join('')}</nav>`;
 
 // ---------- Classer les mots : catégorie grammaticale et genre, par lot ----------
 // L'application ne devine pas la catégorie d'un mot. Quand le paquet ne la donne pas, l'enseignant la donne ici : les
@@ -665,6 +674,7 @@ function sortView() {
   const nouns = ungendered(d), known = d.cards.filter(c => kindOf(c) === 'nom' && genderOf(c));
   return `<button class="link" data-action="teacher">← ${t('eBack')}</button>
     <h1>${t('sortTitle')}</h1><p class="lead" lang="${esc(d.lang)}">${esc(d.name)}</p>
+    ${deckTabs(d, 'sort')}
     ${banners()}
     <section class="card sort" data-sort="kind"><h2>${t('sortKinds')}</h2>
       ${todo.length ? `<p class="sethint">${t('sortHow')}</p>
@@ -702,6 +712,7 @@ function editView() {
   const d = editing();
   return `<button class="link" data-action="teacher">← ${t('eBack')}</button>
     <h1>${t('eTitle')}</h1>
+    ${deckTabs(d, 'edit')}
     ${banners()}
     <section class="card import"><form data-submit="rename">
       <label>${t('deckName')} <input name="name" value="${esc(d.name)}" autocomplete="off"></label>
@@ -709,7 +720,7 @@ function editView() {
       <label>${t('level')} <select name="level">${LEVELS.map(l => opt(l, d.level, l)).join('')}</select></label>
       <button class="primary">${t('save')}</button></form></section>
     <section class="card">
-      <div class="row tools"><button class="secondary" data-action="images" data-id="${d.id}">${t('imgBtn')}</button><button class="secondary" data-action="sort" data-id="${d.id}">${t('sortBtn')}</button><input type="search" data-input="search" placeholder="${t('eSearch')}" aria-label="${t('eSearch')}">
+      <div class="row tools"><input type="search" data-input="search" placeholder="${t('eSearch')}" aria-label="${t('eSearch')}">
       <button class="secondary" data-action="card" data-id="new">+ ${t('eAdd')}</button></div>
       <ul class="cardlist">${d.cards.map(c => `<li data-text="${esc((c.word + ' ' + meaning(c)).toLowerCase())}">
         <button class="cardrow" data-action="card" data-id="${c.id}" style="--th:${hue(c.theme)}">
@@ -775,7 +786,7 @@ const canvasToDataURL = cv => { const webp = cv.toDataURL('image/webp', 0.85); r
 async function imageToDataURL(file) {
   if ((file.type || '') === 'image/svg+xml') return blobToDataURL(file);
   const bmp = await createImageBitmap(file), k = Math.min(1, 640 / Math.max(bmp.width, bmp.height));
-  const cv = document.createElement('canvas'); cv.width = Math.round(bmp.width * k); cv.height = Math.round(bmp.height * k);
+  const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(bmp.width * k)); cv.height = Math.max(1, Math.round(bmp.height * k));      // une image très allongée garde au moins un pixel
   cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
   return canvasToDataURL(cv);
 }
@@ -783,6 +794,7 @@ async function imageToDataURL(file) {
 async function attach(input) {
   const kind = input.dataset.file, file = input.files[0]; if (!file) return;
   if (kind === 'sheets') return addSheets([...input.files]);
+  if (kind === 'loose') return addLoose([...input.files]);
   if (kind === 'packet') return importPacket({ files: [...input.files], home: true });
   if (kind === 'backup') return restoreBackup(file);
   try {
@@ -793,6 +805,28 @@ async function attach(input) {
     }
     showDraft();
   } catch { toast(t('errEmpty')); }
+}
+// Images ajoutées après coup : celle dont le nom de fichier est un mot du paquet va sur sa fiche (elle remplace
+// l'ancienne) ; les autres attendent que l'enseignant touche le mot qu'elles illustrent.
+async function addLoose(files) {
+  const id = S.imgId, d = S.decks.find(x => x.id === id); if (!TEACHER || !d) return;
+  const squash = x => noAcc(norm(x)).replace(/[^a-z0-9]/g, ''), stem = n => n.split('/').pop().toLowerCase().replace(/\.\w+$/, '');
+  const images = files.filter(f => (f.type || '').startsWith('image/')), wait = []; let n = 0, bad = Math.max(0, images.length - 200);
+  for (const f of images.slice(0, 200)) {
+    try {                                    // un fichier illisible ne fait pas perdre les autres
+      if (f.size > 12 * 1024 * 1024) { bad++; continue; }
+      const url = safeUrl(await imageToDataURL(f)), name = squash(stem(f.name));
+      if (!/^data:image\//.test(url)) { bad++; continue; }
+      const c = name && d.cards.find(c => [c.key, noArt(c.key)].map(squash).includes(name));
+      if (c) { c.image = url; n++; } else wait.push(url);
+    } catch { bad++; }
+  }
+  await saveDecks();
+  // L'enseignant a changé de paquet pendant le traitement : les images en attente ne suivent pas.
+  if (S.imgId !== id || !S.decks.includes(d)) return;
+  const room = Math.max(0, 200 - S.loose.length);      // compté au dernier moment : deux lots lancés ensemble ne dépassent pas le plafond
+  S.loose.push(...wait.slice(0, room)); bad += Math.max(0, wait.length - room);
+  S.notice = { text: t('imgAdded', n, S.loose.length) + (bad ? ' ' + t('imgRefused', bad) : ''), bad: !n && !S.loose.length && bad > 0 }; render();
 }
 async function addSheets(files) {
   const d = S.decks.find(x => x.id === S.imgId);
@@ -980,7 +1014,7 @@ function advance() {
     S.view = 'done'; saveProgress(id); sfx(S.session.challenge ? 'trumpet' : 'birds');
   } else if (S.step.intro) { saveProgress(S.session.deck.id); autoSpeak(); }
   render();
-  if (S.step?.activity?.listen) speak(S.step.card, S.session.deck.lang, { auto: true });      // exercice d'écoute : le mot est dit dès l'affichage
+  if (S.step?.activity?.listen) speak(S.step.card, S.session.deck.lang, { auto: true, say: S.step.activity.say });      // exercice d'écoute : le mot est dit dès l'affichage
 }
 
 function sentence(cl, lang, reveal) {
@@ -1087,14 +1121,14 @@ function activityView(step, lang) {
   } else {
     // Réponse courte écrite : un mot ou une expression. L'aide et la tolérance d'orthographe dépendent du niveau du paquet.
     const typed = `<form class="typed" data-submit="typed">
-      <label>${t('answerLabel')} <input name="answer" lang="${lang}" ${a.type === 'number' ? 'inputmode="numeric"' : ''} autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" ${fb ? `disabled value="${esc(fb.typed ?? '')}"` : `autofocus value="${esc(L.value || '')}"`}></label>
+      <label>${t('answerLabel')} <input name="answer" maxlength="200" lang="${lang}" ${a.type === 'number' ? 'inputmode="numeric"' : ''} autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" ${fb ? `disabled value="${esc(fb.typed ?? '')}"` : `autofocus value="${esc(L.value || '')}"`}></label>
       ${a.hint && !fb ? `<p class="helpline"><span class="tag">${t('hintLabel')}</span> <span class="letters" lang="${lang}">${esc(a.hint)}</span></p>` : ''}
-      ${L.again && !fb ? `<p class="again" role="status">${t(L.accent ? 'tryAccent' : 'tryAgain')}</p>` : ''}
+      ${L.again && !fb ? `<p class="again" role="status">${t(L.form ? (L.form === 'm' || L.form === 'f' ? 'tryForm_' + L.form : 'tryForm') : L.accent ? 'tryAccent' : 'tryAgain')}</p>` : ''}
       ${fb ? '' : `<div class="row"><button class="primary">${t('validate')}</button>${skip}</div>`}</form>`;
     if (a.type === 'cloze-type') body = `<p class="question">${t('qClozeType')}</p>${sentence(a.cloze, lang, !!fb)}${hint}${typed}`;
     else if (a.type === 'listen-type') body = `<p class="question">${t('qListenType')}</p>${ear}${typed}${quiet}`;
     else if (a.type === 'situation-type') body = `<p class="question">${t('qSitType')}</p>${pic(card)}<p class="situation">${esc(a.situation)}</p>${sentence(a.cloze, lang, !!fb)}${typed}`;
-    else if (a.type === 'type') body = `<p class="question">${t('qType')}</p>${illus(card)}${sense(card, lang, 'def big')}${typed}`;
+    else if (a.type === 'type') body = `<p class="question">${t('qType')}${a.ask === 'm' || a.ask === 'f' ? ` <span class="formtag">${t('ask_' + a.ask)}</span>` : ''}</p>${illus(card)}${sense(card, lang, 'def big')}${typed}`;
     else body = `<p class="question">${t('qNumber')}</p><h2 class="word" lang="${lang}">${esc(card.bare)} ${listenBtn(card)}</h2>${typed}`;
   }
   return `<div class="card study" style="--th:${hue(card.theme)}">${body}</div>${fb ? feedbackView(step, lang) : ''}`;
@@ -1139,7 +1173,7 @@ function feedbackView(step, lang) {
   }
   // Un retour qui explique : ce que voulait dire la réponse choisie, ou les lettres sur lesquelles on s'est trompé.
   const other = !fb.ok && fb.chosen && a.from?.[fb.chosen] ? s.deck.byId[a.from[fb.chosen]] : null;
-  const explain = !other ? '' : a.type === 'qcm' ? t('exMeaning', other.bare) : a.type === 'situation' ? t('exSituation', other.bare) : t('exWord', fb.chosen, meaning(other, help));
+  const explain = !other ? '' : a.type === 'qcm' || a.type === 'listen' ? t('exMeaning', other.bare) : a.type === 'situation' ? t('exSituation', other.bare) : t('exWord', fb.chosen, meaning(other, help));
   const note = fb.note === 'accent' ? t('noteAccent', fb.shown) : fb.note === 'article' ? t('noteArticle', fb.shown) : fb.note === 'form' ? t('noteForm', fb.shown) : fb.note === 'near' ? t('noteNear', fb.shown) : '';
   // Réponse écrite à une lettre près : on montre l'endroit de l'écart dans la bonne orthographe.
   let sp = null;
@@ -1191,7 +1225,7 @@ const cheer = fb => sfx(!fb.ok ? 'steps' : fb.tamed || fb.joined ? 'trumpet' : '
 function submitTyped(value) {
   const a = S.step.activity, L = S.local || {}, r = judge(value, a, S.session.deck, !!L.again);
   if (r.empty) return;
-  if (r.retry) { S.local = { again: true, accent: r.accent, value }; sfx('steps'); return render(); }
+  if (r.retry) { S.local = { again: true, accent: r.accent, form: r.form, value }; sfx('steps'); return render(); }
   const extra = { typed: value, shown: a.cloze ? a.answer : S.step.card.word };
   if (r.ok && !L.again) return ask({ ok: true, note: r.note }, extra);
   cheer(commit({ ok: !!r.ok, note: r.note, near: r.near }, { ...extra, assisted: !!L.again })); render();
@@ -1375,9 +1409,9 @@ app.addEventListener('click', e => {
     S.notice = { text: t('exported', name + '.json', siteBase() + '?paquet=' + name) }; render();
   }
   else if (action === 'del') { S.confirmDel = id; S.armedAt = Date.now(); render(); }
-  else if (action === 'del-yes') { if (S.confirmDel !== id || !armed()) return; S.decks = S.decks.filter(d => d.id !== id); S.confirmDel = null; saveDecks(); render(); }
+  else if (action === 'del-yes') { if (S.confirmDel !== id || !armed()) return; S.decks = S.decks.filter(d => d.id !== id); S.confirmDel = null; if (S.imgId === id) { S.imgId = null; S.loose = []; S.sheets = []; } saveDecks(); render(); }
   else if (action === 'rescue-del') { if (!S.rescue) return; S.decks = S.decks.filter(d => d.id !== id); S.rescue = false; S.view = 'home'; saveDecks(); render(); }
-  else if (action === 'speak') speak(S.session.deck.byId[id], S.session.deck.lang);
+  else if (action === 'speak') speak(S.session.deck.byId[id], S.session.deck.lang, S.step?.activity?.say && S.step.card?.id === id && !S.feedback ? { say: S.step.activity.say } : {});
   else if (action === 'choose' && !S.feedback) {
     const o = S.step.activity.options[+b.dataset.i];
     if (o === S.step.activity.answer) ask({ ok: true }, { chosen: o }); else { cheer(commit({ ok: false }, { chosen: o })); render(); }
@@ -1468,13 +1502,13 @@ app.addEventListener('click', e => {
     if (!KINDS.includes(kind)) return;
     sortApply(action === 'sort-confirm' ? unsorted(d).filter(c => suggestKind(c, d.lang) === kind) : picked('pick'), c => { c.pos = kind; }, 'sortSaved');
   }
-  else if (action === 'images') { S.imgId = id; if (S.view !== 'images') { S.sheets = []; S.loose = []; } S.notice = null; S.view = 'images'; window.scrollTo?.(0, 0); render(); }
+  else if (action === 'images') { if (!TEACHER || !S.decks.some(d => d.id === id)) return; if (S.imgId !== id) { S.sheets = []; S.loose = []; } S.imgId = id; /* les images en attente d'un paquet ne se perdent pas quand on passe par un autre écran */ S.notice = null; S.view = 'images'; window.scrollTo?.(0, 0); render(); }
   else if (action === 'swap-sheets') {
     const d = S.decks.find(x => x.id === S.imgId), n = S.sheets.length, total = [1, 1, 2, 6, 24, 120][Math.min(n, 5)];
     S.perm = (S.perm + 1) % total;
     cutSheets(d, nthPerm(S.sheets, S.perm)).then(() => saveDecks()).then(render);
   }
-  else if (action === 'assign-image' && S.loose.length) { const d = S.decks.find(x => x.id === S.imgId); if (!TEACHER || !d || !d.byId[id]) return; d.byId[id].image = S.loose.shift(); saveDecks(); render(); }
+  else if (action === 'assign-image' && S.loose.length) { const d = S.decks.find(x => x.id === S.imgId); if (!TEACHER || !d || !d.byId[id]) return; const img = safeUrl(S.loose.shift()); if (!img) return render(); d.byId[id].image = img; saveDecks(); render(); }
   else if (action === 'skip-image') { S.loose.shift(); render(); }
   else if (action === 'reset') { S.confirmReset = id; S.armedAt = Date.now(); render(); }
   else if (action === 'reset-yes') { if (S.confirmReset !== id || !armed()) return; S.progress[id] = {}; S.confirmReset = null; saveProgress(id); render(); }

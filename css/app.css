@@ -447,3 +447,23 @@ summary .tag.ok { background: var(--good-soft); color: var(--good); } summary .t
 .pick .tag { font-size: .9rem; color: var(--muted); font-weight: 400; }
 .sortbar { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 16px -6px 0; padding: 10px 6px; background: var(--card, #fff); border-top: 1px solid var(--brand-line); }
 .sortbar label { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0; }
+
+/* Onglets d'un paquet dans l'espace enseignant : fiches, classement, images */
+.decktabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 14px; }
+.decktabs button { font: inherit; font-weight: 700; min-height: 44px; padding: 8px 16px; border-radius: 999px; border: 2px solid var(--brand-line); background: transparent; color: var(--brand-text); cursor: pointer; }
+.decktabs button.on { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+
+/* Accueil : réglages et outils réunis en une liste discrète, sous les paquets */
+.tools { margin-top: 28px; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: transparent; }
+.tools details.card.settings { margin: 0; border-radius: 0; box-shadow: none; background: transparent; border-bottom: 1px solid var(--line); }
+.tools details.settings summary, .tools .toolrow { font-weight: 600; font-size: 1rem; color: var(--muted); padding: 12px 18px; min-height: 48px; }
+.tools details.settings[open] summary { color: var(--ink); }
+.tools details.settings[open] { background: var(--card); }
+.tools .toolrow { display: flex; align-items: center; gap: 10px; width: 100%; cursor: pointer; box-sizing: border-box; }
+.tools .toolrow::after { content: "▸"; margin-left: auto; color: var(--muted); }
+.tools .toolrow:focus-within { outline-offset: -3px; }
+.footlinks { display: flex; flex-wrap: wrap; gap: 6px 22px; align-items: center; margin: 16px 0 0; padding: 0 18px; }
+.footlinks .link { margin: 0; padding: 0; min-height: 44px; color: var(--muted); }
+.tools .toolrow .ic { margin-right: 4px; }
+.footlinks .link { text-align: left; }
+.formtag { display: inline-block; margin-left: 6px; padding: 2px 10px; border-radius: 999px; background: var(--brand-soft); color: var(--brand-text); font-size: .95rem; font-weight: 700; }

@@ -109,6 +109,18 @@ export function suggestKind(c, lang = 'fr') {
 // ambiguïté (« un », « une », « le », « la »). Avec « l' », « les » ou « des », l'article ne dit rien : le genre doit
 // être donné par le paquet ou par l'enseignant.
 export const genderOf = c => (c.gender === 'm' || c.gender === 'f' || c.gender === 'mf' ? c.gender : /^(?:un|le|el|los|unos)\s/i.test(c.word) ? 'm' : /^(?:une|la|una|las|unas)\s/i.test(c.word) ? 'f' : '');
+// Fiche à deux formes : « Un serveur / une serveuse », « Cher / chère ». Une question n'en demande jamais qu'une, et dit
+// laquelle (masculin, féminin) quand la fiche permet de le savoir : par l'article de chaque forme, sinon par l'ordre
+// convenu (masculin d'abord) pour un nom ou un adjectif d'une langue à genre.
+export function formsOf(c, lang) {
+  const raw = apos(String(c.word || ''));
+  if (/\([^)\s]+\)/.test(raw)) return [];      // « recruté(e) » : une seule forme écrite, les deux sont déjà acceptées
+  const parts = raw.split(/\s+\/\s+/).map(x => x.replace(/\s\([^)]*\)/g, '').trim()).filter(Boolean);
+  if (parts.length !== 2) return [];
+  const g = parts.map(x => genderOf({ word: x }));
+  const gs = g[0] && g[1] && g[0] !== g[1] ? g : !g[0] && !g[1] && ['fr', 'es'].includes(lang) && ['nom', 'adjectif'].includes(kindOf(c)) ? ['m', 'f'] : ['', ''];
+  return parts.map((text, i) => ({ text, gender: gs[i] }));
+}
 // Langues où le genre d'un nom compte dans les exercices.
 export const GENDERED_LANGS = ['fr', 'es'];
 export const needsGender = (c, lang) => GENDERED_LANGS.includes(lang) && kindOf(c) === 'nom' && !genderOf(c);
@@ -237,6 +249,13 @@ export function judge(value, a, deck, second = false) {
   const lenient = spec(deck).lenient;
   let r = check(value, a.accepted, lenient === 2 ? 4 : 5);
   if (r.empty) return r;
+  if (!r.ok && a.both) {
+    // Fiche à deux formes. Les deux formes écrites ensemble (« un serveur, une serveuse ») : c'est juste. L'autre forme
+    // seule : le bon mot, mais pas la forme demandée ; l'étudiant a droit à un second essai.
+    const parts = String(value).replace(/\s+/g, ' ').trim().slice(0, 400).split(/\s*[\/,;]\s*|\s+(?:et|ou|and|or|y|o)\s+/i).map(x => x.trim()).filter(Boolean);
+    if (parts.length > 1 && parts.length <= 3 && parts.every(x => check(x, a.both).ok) && parts.some(x => check(x, a.accepted).ok)) return { ok: true, note: 'both' };
+    if (check(value, a.both).ok) return second ? { ok: false, near: true } : { retry: true, form: a.ask || 'other' };
+  }
   if (!r.ok && a.lemmas && check(value, a.lemmas).ok) return { ok: true, note: 'form' };   // forme de base au lieu de la forme de la phrase
   if (r.ok && r.note === 'accent' && lenient === 0) r = { ok: false, near: true, accent: true };
   if (!r.ok && r.near) {
@@ -290,6 +309,10 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
     return caseLike(pool.find(f => f && count(f) === count(answer)) || null, answer);
   };
   const hint = answer => hintOf(answer, help ? 'pattern' : L.hint);
+  // Une seule forme par question pour une fiche qui en a deux ; elle alterne d'une révision à l'autre.
+  const forms = formsOf(card, deck.lang), fi = forms.length ? (hashInt(card.id) + box + turn) % forms.length : 0, form = forms[fi] || null;
+  const one = d => { const f = d.id === card.id ? forms : formsOf(d, deck.lang); return f.length ? f[Math.min(fi, f.length - 1)].text : d.bare; };
+  const asked = form ? { both: variants(card.word), ask: form.gender, say: form.text } : {};
   const choice = (answer, ds, extra = {}) => {
     if (!answer || ds.length < (mixed || contrast ? 1 : Math.min(2, lures))) return null;
     const keep = contrast && contrast.text !== answer ? [contrast] : ds;
@@ -310,8 +333,8 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
   const make = {
     qcm: () => meanings({}),
     // Écoute : le mot est entendu, pas montré. L'étudiant choisit son sens, ou l'écrit.
-    listen: () => (sayable ? meanings({ listen: true }) : null),
-    'listen-type': () => (discontinuous || !sayable ? null : (v => ({ answer: card.word, accepted: v, hint: hint(v[0]), listen: true }))(variants(card.word))),
+    listen: () => (sayable ? meanings({ listen: true, ...(form ? { say: form.text } : {}) }) : null),
+    'listen-type': () => (discontinuous || !sayable ? null : (v => ({ answer: form ? form.text : card.word, accepted: v, hint: hint(v[0]), listen: true, ...asked, ask: '' }))(variants(form ? form.text : card.word))),      // la forme entendue : inutile de la nommer
     // Oral : l'étudiant dit le mot à partir de son sens, compare avec la voix, puis répète une phrase en même temps qu'elle.
     speak: () => {
       const cloze = card.clozes.find(c => !c.multi) || null, model = cloze ? cloze.text : card.examples[0] ? apos(card.examples[0]) : '';
@@ -322,7 +345,7 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
       const models = card.examples.slice(0, 5).map(apos);
       return models.length ? { answer: card.bare, models, modelClozes: models.map(m => card.clozes.find(c => c.text === m) || null), self: true } : null;
     },
-    'qcm-rev': () => choice(card.bare, distractors(deck, card, lures, rnd, d => d.bare, prefer, { form: true, mixed, sense: mean })),
+    'qcm-rev': () => choice(one(card), distractors(deck, card, lures, rnd, one, prefer, { form: true, mixed, sense: mean })),
     // Phrase à compléter par un choix. Quand la fiche fournit des mots pièges écrits pour son premier exemple, ce sont
     // eux les leurres : ils s'insèrent dans la phrase sans faute de grammaire. Sinon, les leurres sont des mots du paquet.
     'cloze-choice': () => {
@@ -336,7 +359,7 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
     },
     'cloze-type': () => written(pick(card.clozes.filter(typable), rnd)),
     'situation-type': () => (card.situation ? written(first, { situation: card.situation }) : null),
-    type: () => (discontinuous || isNumber(card.definition) ? null : (v => ({ answer: card.word, accepted: v, hint: hint(v[0]) }))(variants(card.word))),
+    type: () => (discontinuous || isNumber(card.definition) ? null : (v => ({ answer: form ? form.text : card.word, accepted: v, hint: hint(v[0]), ...asked }))(variants(form ? form.text : card.word))),
     order: () => {
       for (const text of shuffle(card.examples.map(apos), rnd)) {
         const raw = chunks(text, L.chunks);

@@ -294,6 +294,15 @@ with sync_playwright() as p:
     page.click('[data-action=sort-gender][data-g=f]'); page.wait_for_selector('.banner.good')
     assert page.locator('section[data-sort=gender] > ul.picks').count() == 0, 'tous les noms ont un genre'
     page.screenshot(path=f'{out}/sort_after.png', full_page=True)
+    # les trois écrans du paquet se rejoignent d'un geste ; une image peut être ajoutée à tout moment
+    assert page.locator('.decktabs button').count() == 3
+    page.click('.decktabs [data-action=images]'); page.wait_for_selector('input[data-file=loose]')
+    page.set_input_files('input[data-file=loose]', png); page.wait_for_selector('.loose')
+    page.click('.decktabs [data-action=sort]'); page.wait_for_selector('section[data-sort=kind]'); page.click('.decktabs [data-action=images]'); page.wait_for_selector('.loose')      # l'image en attente n'est pas perdue
+    page.locator('.imgtile').first.click(); page.wait_for_timeout(300); assert page.locator('.loose').count() == 0 and page.locator('.imgtile img').count() == 1
+    page.click('.decktabs [data-action=edit]'); page.wait_for_selector('.cardrow'); page.locator('.cardrow').first.click(); page.wait_for_selector('form[data-submit=card]')
+    page.fill('input[name=theme]', 'Monde du travail'); page.click('form[data-submit=card] button.primary'); page.wait_for_selector('.banner.good')
+    page.click('[data-action=teacher]'); page.wait_for_selector('.decklist')
     page.reload(); page.wait_for_selector('.deck')
     saved = page.evaluate("window.__elefiches.state.decks.at(-1).cards.filter(c => c.pos).length + '/' + window.__elefiches.state.decks.at(-1).cards.filter(c => c.gender).length"); print('CLASSEMENT ENREGISTRÉ (catégories/genres):', saved); assert saved == '85/21', saved
     N = page.locator('.deck').count() - 1; assert N == 6, N

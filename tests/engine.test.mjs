@@ -7,7 +7,7 @@ import { review, isDue, inHerd, summary, stageOf } from '../js/scheduler.js';
 import { guessLevel } from '../js/deck.js';
 import { Session, Challenge, Tour, pickNew, buildActivity, meaning, gloss, chunks, judge, hintOf, roomFor, neutral } from '../js/session.js';
 import { bookish, sceneLike } from '../js/deck.js';
-import { kindOf, suggestKind, genderOf, needsGender, startOf, cluster, tightGap, sameSense, SELF, genderGap, numberOf } from '../js/session.js';
+import { kindOf, suggestKind, genderOf, needsGender, formsOf, startOf, cluster, tightGap, sameSense, SELF, genderGap, numberOf } from '../js/session.js';
 // L'enseignant confirme le rangement suggéré (écran « Classer les mots ») : sans cela, aucune fiche n'a de catégorie.
 const sorted = d => { for (const c of d.cards) if (!c.pos) { const k = suggestKind(c, d.lang); if (k !== 'autre') c.pos = k; } return prepare(d); };
 import { diffParts, spoken, slug } from '../js/match.js';
@@ -105,8 +105,8 @@ t('activités : une forme par boîte, du choix à la réponse écrite', () => {
   const want = { 1: 'qcm', 2: 'qcm-rev', 3: 'cloze-type', 4: 'order', 5: 'situation-type' };
   for (const c of demo.cards) for (let box = 1; box <= 5; box++) for (let k = 0; k < 5; k++) {
     const a = buildActivity(demo, c, box, rnd);
-    // Seul adjectif du paquet : jamais de choix. Seul nom en plusieurs mots : pas de choix du mot (propositions équilibrées).
-    const lone = c.word === 'Cher / chère', odd = lone || c.word === 'Un serveur / une serveuse';
+    // Seul adjectif du paquet : jamais de choix.
+    const lone = c.word === 'Cher / chère', odd = lone;      // « Un serveur / une serveuse » : une seule forme est proposée, la fiche a donc ses choix
     assert.equal(a.type, (box === 1 && lone) || (box === 2 && odd) ? 'cloze-type' : want[box], c.word);
     if (a.options) {
       assert.equal(a.options.length, 3, c.word + ' ' + a.type);
@@ -274,7 +274,7 @@ t('langues : traductions par colonne', () => {
   assert.equal(meaning(old.cards[0], 'fr'), 'b');
 });
 t('images et liens', () => {
-  assert.ok(demoDeck().cards.filter(c => c.image).length === 5);
+  assert.ok(demoDeck().cards.filter(c => c.image).length === 15);
   assert.equal(safeUrl('javascript:alert(1)'), ''); assert.equal(safeUrl('https://x.org/a.png'), '', 'aucune image d’un autre site'); assert.equal(safeUrl('//evil.example/x.png'), ''); assert.equal(safeUrl('%2e%2e/%2e%2e/x.png'), ''); assert.equal(safeUrl('/autre/x.png'), ''); assert.equal(safeUrl('images/salle-de-bains.png'), 'images/salle-de-bains.png'); assert.equal(safeUrl('data:text/html,<script>'), ''); assert.ok(safeUrl('data:image/png;base64,AAAA'));
   assert.equal(safeUrl('images/cafe.png'), 'images/cafe.png'); assert.equal(safeUrl('../x'), '');
 });
@@ -840,6 +840,31 @@ t('version 13 : identifiant réservé, stockage abîmé', () => {
   for (const k of ['__proto__', 'constructor', 'hasOwnProperty', 'toString', 'new']) assert.equal(d.byId[k], undefined, 'table des fiches sans prototype : ' + k);
   assert.doesNotThrow(() => prepare({ name: 'x', cards: [null, 5, 'x', { word: 'un mot', definition: 'a', examples: [{ toString: 1 }, 'Voici un [mot].'] }] }));
   assert.equal(d.cards[2].gender, undefined); assert.equal(d.cards[2].doubt, undefined); assert.equal(kindOf(d.cards[2]), '__proto__'); assert.equal(({}).pos, undefined);
+});
+
+t('version 13 : fiche à deux formes, une seule forme demandée à la fois', () => {
+  const d = demoDeck(), srv = d.cards.find(c => c.word === 'Un serveur / une serveuse'), cher = d.cards.find(c => c.word === 'Cher / chère');
+  assert.deepEqual(formsOf(srv, 'fr'), [{ text: 'Un serveur', gender: 'm' }, { text: 'une serveuse', gender: 'f' }]);
+  assert.deepEqual(formsOf(cher, 'fr').map(f => f.gender), ['m', 'f'], 'adjectif sans article : masculin d’abord');
+  assert.deepEqual(formsOf({ word: 'Être recruté(e)', pos: 'verbe' }, 'fr'), []); assert.deepEqual(formsOf({ word: 'Un café', pos: 'nom' }, 'fr'), []);
+  const seen = new Set();
+  for (let turn = 0; turn < 4; turn++) for (const force of ['type', 'listen-type', 'qcm-rev', 'listen']) {
+    const a = buildActivity(d, srv, 3, Math.random, { force, turn, audio: true });
+    assert.equal(a.type, force);
+    if (force === 'qcm-rev') { assert.ok(a.options.every(o => !o.includes('/')), 'jamais deux formes dans une proposition : ' + a.options); continue; }
+    if (force === 'listen') { assert.ok(['Un serveur', 'une serveuse'].includes(a.say)); continue; }
+    assert.ok(!a.answer.includes('/'), 'une seule forme attendue : ' + a.answer); seen.add(a.answer);
+    const other = a.answer === 'Un serveur' ? 'une serveuse' : 'un serveur';
+    assert.ok(judge(a.answer, a, d).ok); assert.ok(judge('un serveur, une serveuse', a, d).ok, 'les deux formes écrites ensemble : juste');
+    assert.ok(judge('Un serveur / une serveuse', a, d).ok); assert.ok(judge('un serveur et une serveuse', a, d).ok);
+    const r = judge(other, a, d); assert.ok(r.retry && r.form, 'l’autre forme : second essai, pas une erreur'); assert.ok(!judge(other, a, d, true).ok);
+    assert.ok(!judge('un serveur, un café', a, d).ok, 'un autre mot ajouté : faux');
+    if (force === 'type') assert.equal(a.ask, a.answer === 'Un serveur' ? 'm' : 'f', 'la forme demandée est annoncée'); else assert.equal(a.say, a.answer, 'la voix ne dit que la forme attendue');
+  }
+  assert.equal(seen.size, 2, 'les deux formes alternent d’une révision à l’autre');
+  const p = buildPrompts({ lang: 'fr', level: 'A1', topic: 'Au café', count: 12 }); assert.ok(p.file.includes('« un serveur / une serveuse »') && p.cards.includes('masculin d\'abord'));
+  assert.ok(!buildPrompts({ lang: 'en', level: 'A1', topic: 'x', count: 12 }).file.includes('masculin d\'abord'));
+  assert.ok(d.cards.every(c => c.image), 'démonstration A1 : une image pour chaque fiche');
 });
 
 t('version 13 : propositions équilibrées, un mot seul jamais face à des groupes de mots', () => {
