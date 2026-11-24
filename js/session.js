@@ -215,10 +215,10 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
   const meanings = extra => {
     const shown = c => /^data:image\//i.test(c.image || '');      // image intégrée au paquet : elle s'affichera à coup sûr
     if (LIMITS[deck.level]?.image && shown(card)) {
-      const ds = distractors(deck, card, lures, rnd, d => (shown(d) ? mean(d) : null), prefer);
+      const ds = distractors(deck, card, lures, rnd, d => (shown(d) ? mean(d) : null), prefer, { mixed });
       if (ds.length === lures) return choice(mean(card), ds, { pics: Object.fromEntries([[mean(card), card.image], ...ds.map(d => [d.text, deck.byId[d.id].image])]), ...extra });
     }
-    return choice(mean(card), distractors(deck, card, lures, rnd, mean, prefer), extra);
+    return choice(mean(card), distractors(deck, card, lures, rnd, mean, prefer, { mixed }), extra);
   };
   const sayable = !isNumber(card.definition);
   const make = {
@@ -236,7 +236,7 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
       const models = card.examples.slice(0, 5).map(apos);
       return models.length ? { answer: card.bare, models, modelClozes: models.map(m => card.clozes.find(c => c.text === m) || null), self: true } : null;
     },
-    'qcm-rev': () => choice(card.bare, distractors(deck, card, lures, rnd, d => d.bare, prefer, { form: true })),
+    'qcm-rev': () => choice(card.bare, distractors(deck, card, lures, rnd, d => d.bare, prefer, { form: true, mixed })),
     // Phrase à compléter par un choix. Quand la fiche fournit des mots pièges écrits pour son premier exemple, ce sont
     // eux les leurres : ils s'insèrent dans la phrase sans faute de grammaire. Sinon, les leurres sont des mots du paquet.
     'cloze-choice': () => {
@@ -245,7 +245,7 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
       const own = first ? [...new Set((card.distractors || []).map(fit))].filter(w => w && w.toLowerCase() !== first.answer.toLowerCase() && (!tightGap(first, deck.lang) || startOf(w, deck.lang) === startOf(first.answer, deck.lang))).slice(0, lures) : [];
       const c = own.length ? first : cl; if (!c) return null;
       const answer = lowerFirst(c.answer, card.word), mine = shuffle(own, rnd).map(text => ({ text }));
-      const rest = distractors(deck, card, lures, rnd, d => (d.id === card.id ? answer : surface(d)), prefer, { form: true, strict: tightGap(c, deck.lang) }).filter(d => !own.includes(d.text));
+      const rest = distractors(deck, card, lures, rnd, d => (d.id === card.id ? answer : surface(d)), prefer, { form: true, strict: tightGap(c, deck.lang), mixed }).filter(d => !own.includes(d.text));
       return choice(answer, [...mine, ...rest].slice(0, lures), { cloze: c });
     },
     'cloze-type': () => written(pick(card.clozes.filter(typable), rnd)),
@@ -265,7 +265,7 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
       return null;
     },
     situation: () => (card.situation && card.examples[0]
-      ? (ds => (ds.length === 2 ? choice(card.examples[0], ds, { situation: card.situation }) : null))(distractors(deck, card, 2, rnd, d => d.examples[0], prefer))
+      ? (ds => (ds.length === 2 ? choice(card.examples[0], ds, { situation: card.situation }) : null))(distractors(deck, card, 2, rnd, d => d.examples[0], prefer, { mixed }))
       : null),
     number: () => (isNumber(card.definition) ? { answer: card.definition.trim(), accepted: [card.definition.trim()] } : null),
   };
@@ -277,7 +277,11 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
     const gated = !!a.options && type !== 'qcm' && type !== 'situation' && type !== 'listen' && !contrast && (gate || (box >= 2 && !force));
     return { type, cardId: card.id, gated, ...a };
   }
-  return null;
+  // Aucune forme de l'échelle n'est possible en respectant la règle des catégories (fiche seule de sa catégorie) :
+  // plutôt que de mêler les catégories, on demande d'écrire le mot (phrase à trou, sinon le mot d'après son sens).
+  if (!mixed) for (const type of ['cloze-type', 'type']) { const a = make[type]?.(); if (a) return { type, cardId: card.id, gated: false, ...a }; }
+  // Dernier recours, seulement si rien ne peut être écrit non plus : catégories mêlées, pour que la fiche reste révisable.
+  return mixed ? null : buildActivity(deck, card, box, rnd, { force, prefer, contrast, help, gate, audio, vary, turn, mixed: true });
 }
 
 // Tableau d'association (mots et sens) et banque de mots : formes à plusieurs fiches, sans effet sur les boîtes.

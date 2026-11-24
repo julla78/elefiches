@@ -186,7 +186,7 @@ t("défi d'étape : associer, compléter, employer ; aucune fiche ne bouge", () 
   const ch = new Challenge(demo, P, demo.cards.slice(0, 10), { rnd }); const kinds = []; let step;
   while ((step = ch.next())) {
     const a = step.activity; kinds.push(a.type);
-    if (a.type === 'match') { assert.equal(a.left.length, 5); assert.deepEqual(a.left.map(p => p.id).sort(), a.right.map(p => p.id).sort()); }
+    if (a.type === 'match') { assert.ok(a.left.length >= 3 && a.left.length <= 5); assert.deepEqual(a.left.map(p => p.id).sort(), a.right.map(p => p.id).sort()); assert.equal(new Set(a.left.map(p => kindOf(demo.byId[p.id], demo.lang))).size, 1, 'association : une seule catégorie grammaticale'); }
     if (a.type === 'bank') { assert.equal(a.items.length, 4); assert.equal(a.bank.length, 6); for (const it of a.items) assert.ok(a.bank.includes(it.answer)); assert.equal(new Set(a.bank).size, 6); }
     ch.answer(step, a.type !== 'bank', undefined, a.type === 'bank' ? { missed: [a.items[0].id] } : {});
   }
@@ -689,7 +689,7 @@ t('mots pièges : même nature, même début, même genre, même thème ; rien n
   const deck = prepare({ name: 'Logement (A2)', lang: 'fr', level: 'A2', cards: [
     mk("un appartement", "J'habite dans l'[appartement] du troisième étage."), mk("un immeuble", "L'[immeuble] a six étages."), mk("un étage", "Je monte à l'[étage] à pied."), mk("un ascenseur", "L'[ascenseur] est en panne."),
     mk("un escalier", "L'[escalier] est très raide."), mk("une cuisine", "La [cuisine] est petite."), mk("une chambre", "Ma [chambre] donne sur la cour."), mk("un loyer", "Le [loyer] est cher."),
-    mk("payer", "Je dois [payer] demain.", 'logement', 'verbe'), mk("déménager", "Je vais [déménager] en juin.", 'logement', 'verbe'), mk("une pomme", "Je mange une [pomme].", 'nourriture'), mk("un orage", "L'[orage] arrive.", 'météo'),
+    mk("payer", "Je dois [payer] demain.", 'logement', 'verbe'), mk("déménager", "Je vais [déménager] en juin.", 'logement', 'verbe'), mk("louer", "Je veux [louer] un studio.", 'logement', 'verbe'), mk("une pomme", "Je mange une [pomme].", 'nourriture'), mk("un orage", "L'[orage] arrive.", 'météo'),
   ] });
   const appart = deck.cards[0]; assert.ok(tightGap(appart.clozes[0], 'fr'), 'le trou suit « l’ » : le début est imposé');
   for (let i = 0; i < 30; i++) {
@@ -700,13 +700,25 @@ t('mots pièges : même nature, même début, même genre, même thème ; rien n
     const cuisine = buildActivity(deck, deck.cards[5], 1, Math.random, { force: 'cloze-choice' }).options.filter(o => o !== 'cuisine');
     assert.ok(cuisine.includes('chambre'), 'après « la », le féminin d’abord : ' + cuisine.join(', ')); assert.ok(cuisine.every(o => startOf(o, 'fr') === 'C'));
     const rev = buildActivity(deck, deck.cards[8], 2, Math.random, { force: 'qcm-rev' }).options.filter(o => o !== 'payer');
-    assert.ok(rev.includes('déménager'), 'un verbe face au seul autre verbe du paquet : ' + rev.join(', '));
+    assert.deepEqual(rev.sort(), ['déménager', 'louer'], 'un verbe n’est proposé qu’avec des verbes : ' + rev.join(', '));
   }
   // un mot piège écrit pour la fiche est écarté s'il ne commence pas comme la réponse alors que l'élision le trahirait
   const own = prepare({ name: 'x (A2)', lang: 'fr', level: 'A2', cards: [{ ...mk("un appartement", "J'habite dans l'[appartement]."), distractors: ['immeuble', 'studio', 'étage'] }, mk("un hôtel", "L'[hôtel] est complet."), mk("un avion", "L'[avion] décolle.")] });
   for (let i = 0; i < 10; i++) assert.ok(!buildActivity(own, own.cards[0], 1, Math.random, { force: 'cloze-choice' }).options.includes('studio'), '« l’studio » se verrait tout de suite');
   // regroupement : les mots associés ensemble sont de même nature
-  for (let i = 0; i < 20; i++) { const g = cluster(deck, deck.cards, 5, Math.random); assert.equal(new Set(g.map(kindOf)).size, g[0].pos === 'verbe' ? 2 : 1, g.map(c => c.word).join(', ')); }
+  for (let i = 0; i < 20; i++) { const g = cluster(deck, deck.cards, 5, Math.random); assert.ok(g.length >= 3); assert.equal(new Set(g.map(c => kindOf(c, 'fr'))).size, 1, 'une seule catégorie par groupe : ' + g.map(c => c.word).join(', ')); }
+  // Règle absolue : sur tout le paquet, à toutes les boîtes, aucun exercice à choix ne mêle deux catégories, et toute fiche a un exercice.
+  for (const c of deck.cards) for (let box = 1; box <= 5; box++) for (let turn = 0; turn < 4; turn++) {
+    const a = buildActivity(deck, c, box, Math.random, { vary: true, turn, audio: true }); assert.ok(a, 'toujours un exercice : ' + c.word);
+    if (a.options && a.from) for (const id of Object.values(a.from)) assert.equal(kindOf(deck.byId[id], 'fr'), kindOf(c, 'fr'), `${a.type} : « ${deck.byId[id].word} » proposé face à « ${c.word} »`);
+  }
+  // Une fiche seule de sa catégorie n'a pas de choix possibles : on lui fait écrire le mot, sans jamais mêler les catégories.
+  const seul = prepare({ name: 'y (A2)', lang: 'fr', level: 'A2', cards: [mk("un loyer", "Le [loyer] est cher."), mk("une chambre", "Ma [chambre] est grande."), mk("un étage", "Je monte à l'[étage]."), mk("payer", "Je dois [payer] demain.", 'logement', 'verbe')] });
+  for (let box = 1; box <= 5; box++) { const a = buildActivity(seul, seul.cards[3], box, Math.random, { vary: true, audio: true }); assert.ok(a && !a.options, 'verbe seul : pas de choix, forme ' + (a && a.type)); }
+  // Catégorie écrite de plusieurs façons, ou absente : même classement.
+  for (const [pos, k] of [['Nom masculin', 'nom'], ['n.', 'nom'], ['noun', 'nom'], ['Verbe', 'verbe'], ['v.', 'verbe'], ['verbo', 'verbe'], ['adj.', 'adjectif'], ['Adverbe', 'adverbe'], ['locution', 'expression']]) assert.equal(kindOf({ word: 'x', pos }, 'fr'), k, pos);
+  const sans = prepare({ name: 'z', lang: 'fr', level: 'A2', cards: [{ word: 'embaucher', definition: 'Donner un travail à quelqu’un.', examples: ['Le patron veut [embaucher] deux personnes.'] }, { word: 'un salaire', definition: 'Argent reçu pour un travail.', examples: ['Mon [salaire] arrive le 30.'] }, { word: 'se lever', definition: 'Sortir du lit.', examples: ['Je [me lève] tôt.'] }] });
+  assert.deepEqual(sans.cards.map(c => kindOf(c, 'fr')), ['verbe', 'nom', 'verbe'], 'catégorie déduite quand le paquet ne la donne pas');
 });
 
 t('phrase libre : jusqu’à cinq modèles', () => {
