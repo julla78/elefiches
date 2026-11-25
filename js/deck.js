@@ -78,6 +78,24 @@ const TEXTS = ['word', 'definition', 'situation', 'theme', 'register', 'family',
 export const DECK_LIMITS = { cards: 2000, word: 200, definition: 500, situation: 400, theme: 80, register: 40, family: 80, ipa: 80, pos: 40, gender: 20, doubt: 300, example: 300, examples: 6, trap: 80, traps: 6 };
 // Genre d'un nom, tel que le paquet l'écrit (« m », « masculin », « f », « féminin », « mf » pour un nom qui a les deux).
 export const normGender = v => { const g = plain(String(v || '')).trim(); return /^(mf|m\s*\/\s*f|m et f|epicene|les deux|both|ambos)/.test(g) ? 'mf' : /^m/.test(g) ? 'm' : /^f/.test(g) ? 'f' : ''; };
+// Registres proposés à l'enseignant et expliqués à l'étudiant. Un registre écrit autrement (« Registre courant »,
+// « Neutral », « coloquial ») est ramené à l'un d'eux ; un mot inconnu est gardé tel quel.
+export const REGISTERS = ['soutenu', 'courant', 'familier', 'très familier', 'vulgaire', 'argotique', 'jargon'];
+const REG_ALIASES = [      // mot entier seulement : « vulgarisation » n'est pas « vulgaire »
+  [/^(tres familier|very informal|muy coloquial|tres fam)(?![a-z])/, 'très familier'],
+  [/^(soutenu|formal|formel|culto|soigne)(?![a-z])/, 'soutenu'],
+  [/^(courant|neutre|neutral|neutro|standard|estandar)(?![a-z])/, 'courant'],
+  [/^(familier|informal|informel|coloquial|colloquial|fam)(?![a-z])/, 'familier'],
+  [/^(vulgaire|vulgar|grossier)(?![a-z])/, 'vulgaire'],
+  [/^(argotique|argot|slang)(?![a-z])/, 'argotique'],
+  [/^(jargon|jerga)(?![a-z])/, 'jargon'],
+];
+export function normRegister(v) {
+  if (typeof v !== 'string') return '';
+  const p = plain(v).trim().replace(/^(registre|register|registro)\s*:?\s*/, '');
+  for (const [re, key] of REG_ALIASES) if (re.test(p)) return key;
+  return v.trim();
+}
 const cut = (v, n) => (typeof v === 'string' && v.length > n ? v.slice(0, n) : v);
 // Nettoie une fiche déjà enregistrée ou tout juste importée. Les positions du mot dans les exemples (marks) sont
 // oubliées si un exemple change de longueur : elles seront retrouvées d'après le mot.
@@ -90,6 +108,7 @@ function tidyCard(c) {
   // Le genre est gardé sous une seule forme (m, f, mf). « Nom masculin » dans la catégorie le donne aussi.
   const pg = plain(c.pos || '').trim(), g = normGender(c.gender) || (/^(?:nom|noun|sustantivo|n\.?)\s*(?:m\.?|masc\w*)$/.test(pg) ? 'm' : /^(?:nom|noun|sustantivo|n\.?)\s*(?:f\.?|fem\w*)$/.test(pg) ? 'f' : '');
   if (g) c.gender = g; else delete c.gender;
+  if (c.register) c.register = cut(normRegister(c.register), DECK_LIMITS.register);
   if (Array.isArray(c.examples)) {
     c.examples = c.examples.filter(e => typeof e === 'string');
     const before = c.examples.join('\n');
@@ -399,7 +418,7 @@ export function audit(deck) {
   add('auTwins', deck.cards.filter(c => (deck.twins || []).some(p => p.includes(c.word))), true, (deck.twins || []).map(p => p.join(' / ')));
   // Doutes que l'IA (ou l'enseignant) a notés sur une fiche : à lire avant de donner le paquet aux étudiants.
   add('auDoubt', deck.cards.filter(c => c.doubt), true, deck.cards.filter(c => c.doubt).map(c => `${c.word} : ${c.doubt}`));
-  add('auFewExamples', deck.cards.filter(c => c.examples.length && c.examples.length < 4), false);
+  add('auFewExamples', deck.cards.filter(c => c.examples.length && c.examples.length < 3), false);
   add('auNoSituation', deck.cards.filter(c => !c.situation), false);
   add('auNoTraps', deck.cards.filter(c => !(c.distractors || []).length), false);
   return out;
@@ -415,7 +434,9 @@ export function serialize(deck) {
 
 // Paquet complet (avec images et sons intégrés) : format d'échange .json d'Éléfiches.
 export function deckToJSON(deck) {
-  return JSON.stringify({ elefiches: 1, ...serialize(deck) }, null, 1);
+  // Le doute noté sur une fiche est une note de travail de l'enseignant : il reste dans son navigateur, pas dans le fichier donné aux étudiants.
+  const out = serialize(deck);
+  return JSON.stringify({ elefiches: 1, ...out, cards: out.cards.map(({ doubt, ...c }) => c) }, null, 1);
 }
 // Une IA entoure souvent le paquet d'un bloc de code ou d'une phrase : on ne garde que l'objet JSON.
 export const looksJSON = text => /^\s*(```\w*\s*)?\{/.test(text);
@@ -461,7 +482,7 @@ Un café;Boisson chaude et noire, préparée avec des grains torréfiés.;Je pre
 Un thé;Boisson chaude préparée avec des feuilles infusées dans l'eau.;Il commande un thé au citron.;Nous buvons du thé l'après-midi.;Au café · Registre courant;;Ton ami n'aime pas le café. Que fait-il ?;sirop|gâteau;nom;m
 Commander;Demander un plat ou une boisson au serveur.;Je voudrais commander un sandwich.;Ils commandent deux jus d'orange.;Au café · Registre courant;;Le serveur arrive à ta table et attend.;manger|préparer;verbe;
 L'addition;Papier avec le prix à payer au café.;L'addition, s'il vous plaît !;Le serveur apporte l'addition.;Au café · Registre courant;addition;Tu as fini de manger et tu veux payer.;;nom;f
-La note;Papier avec le prix à payer à l'hôtel.;Je demande la note avant de partir.;La note est de douze euros.;Au café · Registre courant;addition;Tu quittes l'hôtel et tu veux savoir combien tu dois.;carte|clé;nom;f
+La note;Autre mot pour l'addition, au restaurant ou à l'hôtel.;Je demande la note avant de partir.;La note est de douze euros.;Au café · Registre courant;addition;Tu quittes l'hôtel et tu veux savoir combien tu dois.;carte|clé;nom;f
 Un serveur / une serveuse;Personne qui apporte les plats et les boissons aux clients.;La serveuse arrive avec les boissons.;Le serveur est très aimable.;Au café · Registre courant;;Vous attendez vos boissons. Qui arrive ?;cliente|voisine;nom;mf
 Un pourboire;Petite somme d'argent laissée en plus pour remercier du service.;Nous laissons un pourboire sur la table.;Elle donne un pourboire de deux euros.;Au café · Registre courant;;Le service était très bien et vous voulez dire merci.;billet|message;nom;m
 Payer;Donner de l'argent pour un produit ou un service.;Je peux payer par carte ?;Vous pouvez payer à la caisse.;Au café · Registre courant;;Tu n'as pas d'argent liquide sur toi.;commander|réserver;verbe;
@@ -503,22 +524,22 @@ export function demoDeck() {
 
 // Modèles de fichiers pour les enseignants : un par situation d'enseignement.
 export const MODELS = {
-  fr: { name: 'Modèle français', lang: 'fr', file: 'modele-francais.csv', csv: `Word;Definition;Example 1;Example 2;Category;Famille;Image;Audio;IPA;Nature;Genre
-Un loyer;Somme d'argent payée chaque mois pour habiter un logement.;Mon loyer est de 600 euros par mois.;Le loyer augmente en janvier.;Logement · Registre courant;;;;;nom;m
-Un colocataire / une colocataire;Personne qui partage un logement avec d'autres.;Ma colocataire est étudiante en droit.;Je cherche un colocataire pour septembre.;Logement · Registre courant;;;;;nom;mf
-Déménager;Quitter un logement pour aller habiter ailleurs.;Nous allons déménager à Lyon cet été.;Il déménage la semaine prochaine.;Logement · Registre courant;;;;;verbe;
-Un appart;Mot familier pour un appartement.;Elle a trouvé un appart près de la fac.;Ton appart est super lumineux.;Logement · Registre familier;appartement;;;;nom;m
+  fr: { name: 'Modèle français', lang: 'fr', file: 'modele-francais.csv', csv: `Word;Definition;Example 1;Example 2;Example 3;Example 4;Example 5;Category;Famille;Image;Audio;IPA;Nature;Genre
+Un loyer;Somme d'argent payée chaque mois pour habiter un logement.;Mon loyer est de 600 euros par mois.;Le loyer augmente en janvier.;;;;Logement · Registre courant;;;;;nom;m
+Un colocataire / une colocataire;Personne qui partage un logement avec d'autres.;Ma colocataire est étudiante en droit.;Je cherche un colocataire pour septembre.;;;;Logement · Registre courant;;;;;nom;mf
+Déménager;Quitter un logement pour aller habiter ailleurs.;Nous allons déménager à Lyon cet été.;Il déménage la semaine prochaine.;;;;Logement · Registre courant;;;;;verbe;
+Un appart;Mot familier pour un appartement.;Elle a trouvé un appart près de la fac.;Ton appart est super lumineux.;;;;Logement · Registre familier;appartement;;;;nom;m
 ` },
-  en: { name: 'Modèle anglais', lang: 'en', level: 'B1', file: 'modele-anglais.csv', csv: `Word;Definition;Traduction FR;Example 1;Example 2;Category;Famille;Image;Audio;IPA;Nature;Genre
-A deadline;The latest time or date by which something must be finished.;Une date limite;The deadline for the essay is Friday.;We missed the deadline by two days.;University · Neutral;;;;/ˈded.laɪn/;nom;
-To hand in;To give a piece of work to a teacher.;Rendre (un devoir);Please hand in your report by Monday.;She handed in her essay late.;University · Neutral;;;;/hænd ɪn/;verbe;
-A lecture;A formal talk given to a group of students.;Un cours magistral;The lecture starts at nine.;I took notes during the lecture.;University · Neutral;;;;/ˈlek.tʃər/;nom;
-A tutorial;A class in which a small group of students discusses a subject with a teacher.;Un TD (travaux dirigés);We have a tutorial every Thursday.;The tutorial was cancelled today.;University · Neutral;;;;/tjuːˈtɔː.ri.əl/;nom;
+  en: { name: 'Modèle anglais', lang: 'en', level: 'B1', file: 'modele-anglais.csv', csv: `Word;Definition;Traduction FR;Example 1;Example 2;Example 3;Example 4;Example 5;Category;Famille;Image;Audio;IPA;Nature;Genre
+A deadline;The latest time or date by which something must be finished.;Une date limite;The deadline for the essay is Friday.;We missed the deadline by two days.;;;;University · Neutral;;;;/ˈded.laɪn/;nom;
+To hand in;To give a piece of work to a teacher.;Rendre (un devoir);Please hand in your report by Monday.;She handed in her essay late.;;;;University · Neutral;;;;/hænd ɪn/;verbe;
+A lecture;A formal talk given to a group of students.;Un cours magistral;The lecture starts at nine.;I took notes during the lecture.;;;;University · Neutral;;;;/ˈlek.tʃər/;nom;
+A tutorial;A class in which a small group of students discusses a subject with a teacher.;Un TD (travaux dirigés);We have a tutorial every Thursday.;The tutorial was cancelled today.;;;;University · Neutral;;;;/tjuːˈtɔː.ri.əl/;nom;
 ` },
-  es: { name: 'Modèle espagnol', lang: 'es', file: 'modele-espagnol.csv', csv: `Word;Definition;Traduction FR;Traduction EN;Example 1;Example 2;Category;Famille;Image;Audio;IPA;Nature;Genre
-Una cita;Encuentro acordado entre dos o más personas a una hora y en un lugar.;Un rendez-vous;An appointment;Tengo una cita con el médico a las diez.;Llegó tarde a la cita.;Vida diaria · Neutro;;;;;nom;f
-Madrugar;Levantarse muy temprano por la mañana.;Se lever très tôt;To get up very early;Mañana tengo que madrugar.;No me gusta madrugar los domingos.;Vida diaria · Neutro;;;;;verbe;
-El sueldo;Dinero que recibe una persona cada mes por su trabajo.;Le salaire;The salary;Cobro el sueldo a final de mes.;Su sueldo no es muy alto.;Vida diaria · Neutro;;;;;nom;m
-Quedar;Acordar un encuentro con alguien.;Se donner rendez-vous;To arrange to meet;Hemos quedado en la plaza a las ocho.;¿Quedamos mañana por la tarde?;Vida diaria · Coloquial;;;;;verbe;
+  es: { name: 'Modèle espagnol', lang: 'es', file: 'modele-espagnol.csv', csv: `Word;Definition;Traduction FR;Traduction EN;Example 1;Example 2;Example 3;Example 4;Example 5;Category;Famille;Image;Audio;IPA;Nature;Genre
+Una cita;Encuentro acordado entre dos o más personas a una hora y en un lugar.;Un rendez-vous;An appointment;Tengo una cita con el médico a las diez.;Llegó tarde a la cita.;;;;Vida diaria · Neutro;;;;;nom;f
+Madrugar;Levantarse muy temprano por la mañana.;Se lever très tôt;To get up very early;Mañana tengo que madrugar.;No me gusta madrugar los domingos.;;;;Vida diaria · Neutro;;;;;verbe;
+El sueldo;Dinero que recibe una persona cada mes por su trabajo.;Le salaire;The salary;Cobro el sueldo a final de mes.;Su sueldo no es muy alto.;;;;Vida diaria · Neutro;;;;;nom;m
+Quedar;Acordar un encuentro con alguien.;Se donner rendez-vous;To arrange to meet;Hemos quedado en la plaza a las ocho.;¿Quedamos mañana por la tarde?;;;;Vida diaria · Coloquial;;;;;verbe;
 ` },
 };

@@ -494,3 +494,12 @@ input[type=file]::file-selector-button { font: inherit; font-weight: 700; color:
 .chipbtn { font: inherit; font-size: 1rem; background: var(--brand-soft); color: var(--brand-text); border: 0; border-radius: 999px; padding: 6px 14px; min-height: 36px; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .chipbtn:hover, .chipbtn:focus-visible { outline: 2px solid var(--brand); outline-offset: 1px; }
 .decklist li.tdeck > span:first-child { flex: 1 1 100%; min-width: 0; }
+
+/* Note (i) sur le registre : l'étiquette s'ouvre sur l'explication des sept registres. */
+.reginfo { display: inline-block; max-width: 100%; } .reginfo[open] { display: block; flex: 1 1 100%; }
+.reginfo summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; min-height: 32px; }
+.reginfo summary::-webkit-details-marker { display: none; }
+.info { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--brand); color: var(--brand-text); font-weight: 700; font-size: .85rem; font-style: italic; }
+.regbox { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin-top: 6px; font-size: 1rem; text-align: left; }
+.regbox p { margin: 0 0 6px; color: var(--muted); } .regbox dl { margin: 0; } .regbox dt { font-weight: 700; margin-top: 6px; } .regbox dt.on { color: var(--brand-text); text-decoration: underline; }
+.regbox dd { margin: 0; color: var(--muted); }

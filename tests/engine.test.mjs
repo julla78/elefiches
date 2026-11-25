@@ -70,7 +70,7 @@ const demo = deckFromCSV(DEMO_CSV, 'Démo');
 t('deck', () => {
   assert.equal(demo.cards.length, 15);
   const add = demo.cards.find(c => c.word === "L'addition"), note = demo.cards.find(c => c.word === 'La note');
-  assert.equal(add.theme, 'Au café'); assert.equal(add.register, 'Registre courant');
+  assert.equal(add.theme, 'Au café'); assert.equal(add.register, 'courant', 'le registre est ramené à l’un des sept');
   assert.ok(add.neighbours.includes(note.id) && note.neighbours.includes(add.id));
   for (const c of demo.cards) assert.ok(c.clozes.length >= 1, 'pas de phrase à trous : ' + c.word);
   const again = prepare(JSON.parse(JSON.stringify(serialize(demo))));
@@ -678,9 +678,9 @@ t('prompt : quatre phrases variées, phrases de manuel interdites, contrôle de 
     const p = buildPrompts({ lang, level: 'A1', topic: 'Les animaux', count: 12 });
     for (const k of ['file', 'cards']) {
       assert.ok(p[k].includes('"examples":["","","",""]'), k + ' : quatre phrases dans le modèle');
-      assert.ok(p[k].includes('QUATRE ou CINQ phrases'), k); assert.ok(p[k].includes('Même début') && p[k].includes('Même thème') && p[k].includes('Même catégorie grammaticale'), k + ' : règles des mots pièges'); assert.ok(p[k].includes('3. Substitution :'), k); assert.ok(p[k].includes('phrase de manuel'), k);
+      assert.ok(p[k].includes('EXACTEMENT QUATRE phrases'), k); assert.ok(p[k].includes('Même début') && p[k].includes('Même thème') && p[k].includes('Même catégorie grammaticale'), k + ' : règles des mots pièges'); assert.ok(p[k].includes('3. Substitution :'), k); assert.ok(p[k].includes('phrase de manuel'), k);
     }
-    assert.ok(p.review.includes('quatre ou cinq phrases d\'exemple'), 'le prompt de correction complète les fiches'); assert.ok(p.review.includes('commence comme lui'));
+    assert.ok(p.review.includes('exactement quatre phrases d\'exemple'), 'le prompt de correction complète les fiches'); assert.ok(p.review.includes('commence comme lui'));
   }
   const en = buildPrompts({ lang: 'en', level: 'A1', topic: 'Animals', count: 12 }).file;
   for (const bad of ['A rabbit eats carrots in the garden.', 'A sheep lives on this farm.', 'The dog plays with my friends.']) assert.ok(en.includes(bad), 'contre-exemple cité : ' + bad);
@@ -939,6 +939,41 @@ t('version 14a : en mode essai, la session ne retient aucun nouveau mot et ne s�
   const held = new Session(deck, P, { maxNew: 8, now }), free = new Session(deck, P, { maxNew: 8, now, force: true, minutes: 600 });
   assert.equal(held.today.length, 0, '25 révisions dues : hors mode essai, les nouveaux mots attendent');
   assert.equal(free.today.length, 8); assert.equal(free.endAt - now, 600 * 60000);
+});
+
+t('version 14c : une à cinq phrases d’exemple, nombre exact, dans les trois prompts', () => {
+  for (const lang of ['fr', 'en', 'es']) {
+    const words = ['', 'UNE', 'DEUX', 'TROIS', 'QUATRE', 'CINQ'];
+    for (let n = 1; n <= 5; n++) {
+      const p = buildPrompts({ lang, level: 'A2', topic: 'Le travail', count: 20, examples: n });
+      for (const k of ['file', 'cards']) {
+        assert.ok(p[k].includes(`EXACTEMENT ${words[n]} phrase${n === 1 ? ' ' : 's '}`), `${lang} ${k} ${n}`);
+        assert.ok(p[k].includes('"examples":[' + Array(n).fill('""').join(',') + ']'), 'modèle JSON à ' + n + ' phrase(s)');
+        assert.ok(!/quatre ou cinq/i.test(p[k]) && !p[k].includes('undefined'), 'plus de nombre fixe');
+      }
+      assert.ok(p.review.includes(`exactement ${words[n].toLowerCase()} phrase`));
+    }
+    const d = buildPrompts({ lang, level: 'A2', topic: 'x' }), odd = buildPrompts({ lang, level: 'A2', topic: 'x', examples: '9<b>' });
+    assert.ok(d.file.includes('EXACTEMENT QUATRE phrases'), 'quatre par défaut'); assert.ok(odd.file.includes('EXACTEMENT QUATRE phrases') && !odd.file.includes('<b>'), 'valeur forgée : quatre');
+    assert.ok(buildPrompts({ lang, level: 'A2', topic: 'x', examples: 7 }).file.includes('EXACTEMENT CINQ phrases'));
+    assert.ok(d.file.includes('soutenu, courant, familier, très familier, vulgaire, argotique, jargon'), 'les sept registres sont dans le prompt');
+  }
+});
+
+t('version 14c : sept registres, écritures variées ramenées à la liste, doute retiré du fichier exporté', async () => {
+  const { REGISTERS, normRegister } = await import('../js/deck.js');
+  assert.deepEqual(REGISTERS, ['soutenu', 'courant', 'familier', 'très familier', 'vulgaire', 'argotique', 'jargon']);
+  for (const [a, b] of [['Registre courant', 'courant'], ['Neutral', 'courant'], ['Neutro', 'courant'], ['Coloquial', 'familier'], ['informal', 'familier'], ['Très familier', 'très familier'], ['very informal', 'très familier'],
+    ['Formal', 'soutenu'], ['soutenu', 'soutenu'], ['slang', 'argotique'], ['Argot', 'argotique'], ['jerga', 'jargon'], ['vulgar', 'vulgaire'], ['littéraire', 'littéraire'], ['Vulgarisation scientifique', 'Vulgarisation scientifique'], ['Formalités', 'Formalités'], ['standardiste', 'standardiste'], ['technique de vente', 'technique de vente'], ['informel', 'familier'], ['fam.', 'familier'], ['', ''], [null, ''], [{}, '']]) assert.equal(normRegister(a), b, String(a));
+  const d = deckFromJSON(JSON.stringify({ elefiches: 1, name: 'R (B1)', lang: 'fr', level: 'B1', cards: [
+    { word: 'Un appart', pos: 'nom', gender: 'm', definition: 'Mot familier pour un appartement.', register: 'Registre familier', doubt: 'à vérifier', examples: ['Ton [appart] est grand.'] },
+    { word: 'Un logis', pos: 'nom', gender: 'm', definition: 'Lieu où l’on habite, dans les livres.', register: '<img src=x onerror=1>', examples: ['Il regagne son [logis].'] },
+    { word: 'Un studio', pos: 'nom', gender: 'm', definition: 'Petit logement d’une seule pièce.', register: 'Neutral', examples: ['Mon [studio] est petit.'] }] }));
+  assert.equal(d.cards[0].register, 'familier'); assert.equal(d.cards[0].doubt, 'à vérifier');
+  assert.ok(d.cards[1].register.length <= 40, 'un registre inconnu est gardé, borné');
+  const out = JSON.parse(deckToJSON(d)); assert.ok(out.cards.every(c => !('doubt' in c)), 'le doute ne part pas dans le fichier'); assert.equal(out.cards[0].register, 'familier');
+  assert.equal(serialize(d).cards[0].doubt, 'à vérifier', 'il reste dans le navigateur de l’enseignant');
+  for (const k of Object.keys(MODELS)) { const m = deckFromCSV(MODELS[k].csv, MODELS[k].name, MODELS[k].lang); assert.ok(MODELS[k].csv.split('\n')[0].includes('Example 1;Example 2;Example 3;Example 4;Example 5')); assert.ok(m.cards.length >= 4 && m.cards.every(c => c.examples.length === 2 && REGISTERS.includes(c.register)), k + ' : ' + m.cards.map(c => c.register)); }
 });
 
 t('code d’accès enseignant : seule l’empreinte est gardée, un mauvais code ou une ligne abîmée ne laisse entrer personne', async () => {

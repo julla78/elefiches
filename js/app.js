@@ -1,6 +1,6 @@
 // Éléfiches — interface : accueil, espace enseignant, session, bilan.
 import * as store from './store.js';
-import { deckFromCSV, deckFromJSON, deckFromAnki, mergeDecks, audit, safeKey, deckToJSON, looksJSON, levelIn, prepare, serialize, hash, demoDeck, MODELS, safeUrl, LEVELS } from './deck.js';
+import { deckFromCSV, deckFromJSON, deckFromAnki, mergeDecks, audit, REGISTERS, safeKey, deckToJSON, looksJSON, levelIn, prepare, serialize, hash, demoDeck, MODELS, safeUrl, LEVELS } from './deck.js';
 import { summary, boxOf, dueInDays, isNew, stageOf, HERD_BOX, shiftProgress, nextDueIn } from './scheduler.js';
 import { Session, Challenge, Tour, meaning, gloss, pickNew, judge, roomFor, buildActivity, SELF, kindOf, suggestKind, genderOf, needsGender, GENDERED_LANGS } from './session.js';
 import { clozeParts, norm, noAcc, noArt, diffParts, remark, spoken, slug } from './match.js';
@@ -25,7 +25,7 @@ const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 const GATED = TEACHER && validAccess(ACCESS) && (!LOCAL || new URLSearchParams(location.search).has('verrou'));
 const siteBase = () => location.origin + location.pathname.replace(/[^/]*\.html$/, '');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const S = { locked: GATED, lang: 'auto', minutes: 5, maxNew: 3, help: 'fr', sound: true, voice: true, remind: { time: '18:00', days: 'daily' }, savedAt: 0, decks: [], progress: {}, view: 'home', notice: null, toast: null, confirmReset: null, confirmDel: null, editId: null, cardId: null, draft: {}, local: null, gate: false, builder: { lang: 'fr', level: '', topic: '', count: 20, words: '', grid: '3x3' }, sheets: [], loose: [], perm: 0, sandbox: false, sbDays: 0, confirmSb: false };
+const S = { locked: GATED, lang: 'auto', minutes: 5, maxNew: 3, help: 'fr', sound: true, voice: true, remind: { time: '18:00', days: 'daily' }, savedAt: 0, decks: [], progress: {}, view: 'home', notice: null, toast: null, confirmReset: null, confirmDel: null, editId: null, cardId: null, draft: {}, local: null, gate: false, builder: { lang: 'fr', level: '', topic: '', count: 20, words: '', grid: '3x3', examples: 4 }, sheets: [], loose: [], perm: 0, sandbox: false, sbDays: 0, confirmSb: false };
 // Langue des consignes et du feedback. En mode automatique : français jusqu'au niveau B1,
 // langue apprise à partir de B2 (règle fixée par la responsable du projet). L'étudiant peut toujours choisir lui-même.
 function uiLang() {
@@ -287,6 +287,7 @@ async function load() {
       if (!res.ok) throw new Error('link');
       const deck = deckFromJSON(JSON.stringify(await res.json()));      // JSON strict : un fichier qui serait aussi lisible comme un script est refusé
       S.progress[deck.id] ??= cleanProgress(await store.get(pkey(deck.id)));      // la progression d'abord : un redessin entre les deux ne doit jamais trouver un paquet sans elle
+      keepDoubts(deck);
       S.decks = [...S.decks.filter(d => d.id !== deck.id && !(pristineDemo(d) && !S.sandbox && !Object.keys(S.progress[d.id] || {}).length)), deck];
       await saveDecks(); S.notice = { text: t('opened', deck.name) };
     } catch { S.notice = { bad: true, text: t('errLink') }; }
@@ -297,6 +298,12 @@ async function load() {
 // quand un autre paquet arrive ; une démonstration que l'enseignant a illustrée, classée ou modifiée est son travail.
 let demoCards = null;
 const pristineDemo = d => { if (!d?.demo) return false; try { demoCards ??= JSON.stringify(serialize(demoDeck()).cards); return JSON.stringify(serialize(d).cards) === demoCards; } catch { return false; } };
+// Un paquet réimporté remplace le paquet de même identifiant. Les doutes notés par l'enseignant ne sont pas dans le
+// fichier exporté : ils sont repris de l'ancienne fiche de même identifiant, pour ne pas disparaître en silence.
+function keepDoubts(deck) {
+  const old = S.decks.find(d => d.id === deck.id); if (!old?.byId) return;
+  for (const c of deck.cards) if (!c.doubt && Object.hasOwn(old.byId, c.id) && typeof old.byId[c.id].doubt === 'string') c.doubt = old.byId[c.id].doubt;
+}
 const saveDecks = () => store.set('decks', S.decks.map(serialize));
 const saveSettings = () => store.set('settings', { lang: S.lang, minutes: S.minutes, maxNew: S.maxNew, help: S.help, sound: S.sound, voice: S.voice, remind: S.remind, savedAt: S.savedAt });
 // Mode essai (espace enseignant seulement) : la progression d'essai est rangée sous une autre clé que la vraie.
@@ -568,6 +575,8 @@ function teacherView() {
         <label>${t('bLevel')} <select data-b="level">${levels(B.level)}</select></label>
         <label>${t('bTopic')} <input data-b="topic" value="${esc(B.topic)}" placeholder="${t('bTopicPh')}" autocomplete="off"></label>
         <label>${t('bCount')} <input data-b="count" type="number" min="3" max="500" inputmode="numeric" value="${B.count}"><span class="sethint">${t('bCountHint')}</span></label>
+        <label>${t('bEx')} <select data-b="examples">${[1, 2, 3, 4, 5].map(n => opt(n, B.examples, t(n === 1 ? 'bEx1' : 'bExN', n))).join('')}</select><span class="sethint">${t('bExHint')}</span></label>
+        <p class="banner${+B.examples === 1 ? ' warn' : ''}" role="status" data-exwarn${+B.examples > 2 ? ' hidden' : ''}>${+B.examples === 1 ? t('bExWarn1') : +B.examples === 2 ? t('bExWarn2') : ''}</p>
         <details class="more"${B.words ? ' open' : ''}><summary>${t('bWordsSum')}</summary>
           <label>${t('bWords')} <textarea data-b="words" rows="4">${esc(B.words)}</textarea><span class="sethint">${t('bWordsHint')}</span></label></details>
       </div></section>
@@ -598,7 +607,7 @@ function teacherView() {
       <h2>${t('tCols')}</h2><div class="scroll"><table>
       <thead><tr><th>${t('colName')}</th><th>${t('colNeed')}</th><th>${t('colWhat')}</th></tr></thead><tbody>
       ${row('Word', 'yes', 'cWord')}${row('Definition', 'oneOf', 'cDef')}${row('Traduction FR<br>Traduction EN', 'oneOf', 'cTr')}
-      ${row('Example 1<br>Example 2<br>Example 3', 'advised', 'cEx')}${row('Situation', 'advised', 'cSit')}${row('Distracteurs', 'advised', 'cTraps')}
+      ${row('Example 1', 'advised', 'cEx')}${row('Example 2<br>… Example 5', 'optional', 'cEx2')}${row('Situation', 'advised', 'cSit')}${row('Distracteurs', 'advised', 'cTraps')}
       ${row('Nature', 'advised', 'cPos')}${row('Genre', 'advised', 'cGender')}
       ${row('Category', 'advised', 'cCat')}${row('Famille', 'optional', 'cFam')}
       ${row('Image', 'optional', 'cImg')}${row('Audio', 'optional', 'cAudio')}${row('IPA', 'optional', 'cIpa')}
@@ -609,7 +618,7 @@ function teacherView() {
 async function addDeck(text, name, lang, json = false, level) {
   try {
     const deck = json ? deckFromJSON(text, name, level) : deckFromCSV(text, name, lang, level);
-    await ensureProgress(deck.id);
+    await ensureProgress(deck.id); keepDoubts(deck);
     S.decks = [...S.decks.filter(d => d.id !== deck.id), deck];
     await saveDecks();
     S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped), sort: sortNotice(deck) };
@@ -670,7 +679,7 @@ async function importPacket({ files = [], text = '', name = '', lang = 'fr', lev
       }
       for (const f of images.filter(f => !used.has(f)).slice(0, 200)) { const url = safeUrl(await imageToDataURL(f.blob)); if (url) S.loose.push(url); }
     }
-    await ensureProgress(deck.id);
+    await ensureProgress(deck.id); keepDoubts(deck);
     S.decks = [...S.decks.filter(d => d.id !== deck.id), deck];
     await saveDecks();
     S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped), sort: sortNotice(deck) };
@@ -843,7 +852,7 @@ function cardView() {
       ${langs.map(l => field('tr_' + l, t('fTr', LANG_NAMES[l] || (l === '*' ? '' : l)), c.translations[l])).join('')}
       <label>${t('fEx')} <textarea name="examples" rows="3" lang="${d.lang}">${esc(c.examples.map((e, i) => remark(e, c.marks?.[i])).join('\n'))}</textarea></label>
       ${field('situation', t('fSit'), c.situation)}${field('distractors', t('fTraps'), (c.distractors || []).join(' | '))}
-      <div class="two">${field('theme', t('fTheme'), c.theme)}${field('register', t('fReg'), c.register)}</div>
+      <div class="two">${field('theme', t('fTheme'), c.theme)}<label>${t('fReg')} <select name="register">${['', ...REGISTERS, ...(c.register && !REGISTERS.includes(c.register) ? [c.register] : [])].map(r => `<option value="${esc(r)}" ${(c.register || '') === r ? 'selected' : ''}>${r ? regName(r) : t('regNone')}</option>`).join('')}</select></label></div>
       <div class="two">${field('family', t('fFam'), c.family)}${field('ipa', t('fIpa'), c.ipa)}</div>
       <label>${t('fPos')} <select name="pos">${['', ...KINDS, ...(c.pos && !KINDS.includes(kindOf(c)) ? [kindOf(c)] : [])].map(k => `<option value="${esc(k)}" ${(c.pos ? kindOf(c) : '') === k ? 'selected' : ''}>${k ? kindName(k) : t('posAuto', isNew ? '…' : guessed)}</option>`).join('')}</select></label>
       <p class="sethint">${t('fPosHint')}</p>
@@ -1131,7 +1140,12 @@ function sentence(cl, lang, reveal) {
 }
 
 const listenBtn = card => `<button class="icon" data-action="speak" data-id="${card.id}" aria-label="${t('listen')}" title="${t('listen')}">${ICON.sound}</button>`;
-const chips = c => `<p class="chips">${c.theme ? `<span class="chip theme">${esc(c.theme)}</span>` : ''}${c.register ? `<span class="chip">${esc(c.register)}</span>` : ''}</p>`;
+// Registre : nom dans la langue de l'interface, et note (i) qui explique les sept registres à l'étudiant.
+const regKey = r => 'reg_' + REGISTERS.indexOf(r);
+const regName = r => (REGISTERS.includes(r) ? t(regKey(r)) : esc(r));
+const regNote = c => `<details class="reginfo"><summary><span class="chip">${regName(c.register)}</span><span class="info" aria-hidden="true">i</span><span class="vh">${t('regWhat')}</span></summary>
+  <div class="regbox"><p>${t('regIntro')}</p><dl>${REGISTERS.map(r => `<dt${r === c.register ? ' class="on"' : ''}>${t(regKey(r))}</dt><dd>${t(regKey(r) + 'Def')}</dd>`).join('')}</dl></div></details>`;
+const chips = c => `<div class="chips">${c.theme ? `<span class="chip theme">${esc(c.theme)}</span>` : ''}${c.register ? regNote(c) : ''}</div>`;
 const illus = c => (c.image ? `<img class="illus" src="${esc(c.image)}" alt="">` : '');
 // Image d'appui, plus petite : partout où l'indice donné est le sens du mot, l'image l'accompagne.
 const pic = c => (c.image ? `<img class="illus mid" src="${esc(c.image)}" alt="">` : '');
@@ -1670,7 +1684,12 @@ app.addEventListener('change', e => {
 app.addEventListener('input', e => {
   if (S.locked || sbBusy) return;
   const k = e.target.dataset?.b;
-  if (k) { S.builder[k] = k === 'count' ? Math.min(500, Math.max(3, Math.round(+e.target.value) || 20)) : e.target.value; return refreshPrompts(); }
+  if (k) { S.builder[k] = k === 'count' ? Math.min(500, Math.max(3, Math.round(+e.target.value) || 20)) : e.target.value;
+    if (k === 'examples') {      // seul le message change : le reste du formulaire (fichiers choisis, texte collé) n'est pas redessiné
+      const n = +S.builder.examples, w = app.querySelector('[data-exwarn]');
+      if (w) { w.hidden = n > 2; w.classList.toggle('warn', n === 1); w.textContent = n === 1 ? t('bExWarn1') : n === 2 ? t('bExWarn2') : ''; }
+    }
+    return refreshPrompts(); }
   if (e.target.dataset.input !== 'search') return;
   const q = e.target.value.trim().toLowerCase();
   for (const li of app.querySelectorAll('.cardlist li')) li.hidden = !!q && !li.dataset.text.includes(q);
