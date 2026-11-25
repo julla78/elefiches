@@ -459,9 +459,9 @@ export function deckFromJSON(text, name, level) {
 export const DEMO_CSV = `Word;Definition;Example 1;Example 2;Category;Family;Situation;Distracteurs;Nature;Genre
 Un café;Boisson chaude et noire, préparée avec des grains torréfiés.;Je prends un café le matin.;Elle boit son café sans sucre.;Au café · Registre courant;;Le matin, tu as besoin de te réveiller avant le cours.;lait|chocolat;nom;m
 Un thé;Boisson chaude préparée avec des feuilles infusées dans l'eau.;Il commande un thé au citron.;Nous buvons du thé l'après-midi.;Au café · Registre courant;;Ton ami n'aime pas le café. Que fait-il ?;sirop|gâteau;nom;m
-Commander;Demander un plat ou une boisson dans un café ou un restaurant.;Je voudrais commander un sandwich.;Ils commandent deux jus d'orange.;Au café · Registre courant;;Le serveur arrive à ta table et attend.;manger|préparer;verbe;
-L'addition;Papier qui indique le prix total à payer au restaurant ou au café.;L'addition, s'il vous plaît !;Le serveur apporte l'addition.;Au café · Registre courant;addition;Tu as fini de manger et tu veux payer.;;nom;f
-La note;Autre mot pour le papier qui indique le prix à payer, au café ou à l'hôtel.;Je demande la note avant de partir.;La note est de douze euros.;Au café · Registre courant;addition;Tu quittes l'hôtel et tu veux savoir combien tu dois.;carte|clé;nom;f
+Commander;Demander un plat ou une boisson au serveur.;Je voudrais commander un sandwich.;Ils commandent deux jus d'orange.;Au café · Registre courant;;Le serveur arrive à ta table et attend.;manger|préparer;verbe;
+L'addition;Papier avec le prix à payer au café.;L'addition, s'il vous plaît !;Le serveur apporte l'addition.;Au café · Registre courant;addition;Tu as fini de manger et tu veux payer.;;nom;f
+La note;Papier avec le prix à payer à l'hôtel.;Je demande la note avant de partir.;La note est de douze euros.;Au café · Registre courant;addition;Tu quittes l'hôtel et tu veux savoir combien tu dois.;carte|clé;nom;f
 Un serveur / une serveuse;Personne qui apporte les plats et les boissons aux clients.;La serveuse arrive avec les boissons.;Le serveur est très aimable.;Au café · Registre courant;;Vous attendez vos boissons. Qui arrive ?;cliente|voisine;nom;mf
 Un pourboire;Petite somme d'argent laissée en plus pour remercier du service.;Nous laissons un pourboire sur la table.;Elle donne un pourboire de deux euros.;Au café · Registre courant;;Le service était très bien et vous voulez dire merci.;billet|message;nom;m
 Payer;Donner de l'argent pour un produit ou un service.;Je peux payer par carte ?;Vous pouvez payer à la caisse.;Au café · Registre courant;;Tu n'as pas d'argent liquide sur toi.;commander|réserver;verbe;
@@ -471,7 +471,7 @@ Cher / chère;Qui coûte beaucoup d'argent.;Ce restaurant est trop cher.;La limo
 Boire;Avaler un liquide.;J'ai soif : je voudrais boire quelque chose.;Qu'est-ce que vous voulez boire ?;Au café · Registre courant;;Tu as très soif et le serveur te demande ce que tu veux.;manger|payer;verbe;
 Réserver;Demander à l'avance une table dans un restaurant.;Je voudrais réserver une table pour samedi soir.;Nous réservons toujours avant de venir.;Au café · Registre courant;;Le restaurant est souvent plein le samedi. Tu téléphones avant d'y aller.;commander|payer;verbe;
 Avoir chaud;Sentir que la température est trop élevée.;J'ai trop chaud au soleil, on s'installe à l'ombre ?;Ils ont chaud en terrasse l'été.;Au café · Registre courant;;Le soleil tape sur ta table et tu veux changer de place.;froid|faim;verbe;
-Une terrasse;Partie d'un café située dehors, avec des tables et des chaises.;Nous nous installons en terrasse.;La terrasse est pleine en été.;Au café · Registre courant;;Il fait beau et vous voulez boire un verre dehors.;cuisine|ville;nom;f
+Une terrasse;Partie d'un café dehors, avec des tables.;Nous nous installons en terrasse.;La terrasse est pleine en été.;Au café · Registre courant;;Il fait beau et vous voulez boire un verre dehors.;cuisine|ville;nom;f
 `;
 
 // Illustrations du paquet de démonstration, dessinées pour Éléfiches.

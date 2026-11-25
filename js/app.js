@@ -260,6 +260,21 @@ async function load() {
   // Un paquet abîmé dans le stockage ne doit pas empêcher les autres de s'ouvrir : il est laissé de côté.
   S.decks = (Array.isArray(saved) ? saved : []).flatMap(d => { try { return d && typeof d === 'object' ? [prepare(d)] : []; } catch (e) { console.error(e); return []; } });
   if (!S.decks.length) { S.decks = [demoDeck()]; await saveDecks(); }
+  // Démonstration d'une ancienne version (aucune image, autre nombre de fiches) : remplacée par l'actuelle. Les mots
+  // communs gardent leur progression ; un paquet de démonstration que l'enseignant a illustré, renommé ou modifié n'est pas touché.
+  else {
+    const fresh = demoDeck(), i = S.decks.findIndex(d => d.demo === true && d.id === fresh.id && !d.cards.some(c => c.image) && d.cards.length !== fresh.cards.length);
+    if (i >= 0) {
+      // L'identifiant d'une fiche dépend de sa définition : la progression est reportée mot par mot, dans les deux rangements.
+      const old = S.decks[i].cards, byWord = new Map(fresh.cards.map(c => [c.word, c.id]));
+      for (const key of ['progress:', 'essai:']) {
+        const P = cleanProgress(await store.get(key + fresh.id)); let moved = false;
+        for (const c of Array.isArray(old) ? old : []) { const from = String(c?.id ?? ''), to = byWord.get(c?.word); if (to && to !== from && !from.startsWith('_') && Object.hasOwn(P, from) && !Object.hasOwn(P, to)) { P[to] = P[from]; delete P[from]; moved = true; } }
+        if (moved) await store.set(key + fresh.id, P);
+      }
+      S.decks[i] = fresh; await saveDecks();
+    }
+  }
   for (const d of S.decks) S.progress[d.id] = cleanProgress(await store.get(pkey(d.id)));     // état reconstruit champ par champ : rien de forgé n'atteint l'écran
   // Lien de partage : « …/?paquet=logement-a2 » ouvre le fichier paquets/logement-a2.json rangé à côté de l'application
   // L'étudiant n'a rien d'autre à faire que d'ouvrir le lien. Seul le dossier paquets/ du site est lu, en JSON strict.
@@ -272,12 +287,16 @@ async function load() {
       if (!res.ok) throw new Error('link');
       const deck = deckFromJSON(JSON.stringify(await res.json()));      // JSON strict : un fichier qui serait aussi lisible comme un script est refusé
       S.progress[deck.id] ??= cleanProgress(await store.get(pkey(deck.id)));      // la progression d'abord : un redessin entre les deux ne doit jamais trouver un paquet sans elle
-      S.decks = [...S.decks.filter(d => d.id !== deck.id && !(d.demo && !S.sandbox && !Object.keys(S.progress[d.id] || {}).length)), deck];
+      S.decks = [...S.decks.filter(d => d.id !== deck.id && !(pristineDemo(d) && !S.sandbox && !Object.keys(S.progress[d.id] || {}).length)), deck];
       await saveDecks(); S.notice = { text: t('opened', deck.name) };
     } catch { S.notice = { bad: true, text: t('errLink') }; }
   }
   if (TEACHER && location.hash !== '#accueil') S.view = 'teacher';
 }
+// Démonstration intacte : exactement les fiches livrées avec l'application. Seule celle-là peut être retirée d'office
+// quand un autre paquet arrive ; une démonstration que l'enseignant a illustrée, classée ou modifiée est son travail.
+let demoCards = null;
+const pristineDemo = d => { if (!d?.demo) return false; try { demoCards ??= JSON.stringify(serialize(demoDeck()).cards); return JSON.stringify(serialize(d).cards) === demoCards; } catch { return false; } };
 const saveDecks = () => store.set('decks', S.decks.map(serialize));
 const saveSettings = () => store.set('settings', { lang: S.lang, minutes: S.minutes, maxNew: S.maxNew, help: S.help, sound: S.sound, voice: S.voice, remind: S.remind, savedAt: S.savedAt });
 // Mode essai (espace enseignant seulement) : la progression d'essai est rangée sous une autre clé que la vraie.
@@ -529,13 +548,13 @@ function teacherView() {
     <button class="secondary small" data-action="try" data-model="${k}">${t('tryIt')}</button></span></li>`;
   const row = (name, need, what) => `<tr><th scope="row">${name}</th><td>${t(need)}</td><td>${t(what)}</td></tr>`;
   const levels = cur => `<option value="">${t('choose')}</option>${LEVELS.map(l => opt(l, cur, l)).join('')}`;
-  return `<button class="link" data-action="home">${t('asStudent')} →</button>
+  return `<header class="thead"><button class="link" data-action="home">${t('asStudent')} →</button>
     <h1>${t('tTitle')}</h1><p class="lead">${t('tIntro')}</p>
-    <p class="studenturl">${t('studentUrl')} <b>${esc(siteBase())}</b></p>
+    <p class="studenturl"><span>${t('studentUrl')}</span> <b>${esc(siteBase())}</b></p></header>
     ${banners()}
     <section class="card sbcard"><h2>${t('sbTitle')}</h2><p class="sethint">${t('sbIntro')}</p>
       <div class="row"><button type="button" class="primary" data-action="sb-on">${t(S.sandbox ? 'sbResume' : 'sbStart')}</button>${S.sandbox ? `<button type="button" class="link" data-action="sb-off">${t('sbQuit')}</button>` : ''}</div></section>
-    <section class="card"><h2>${t('myDecks')}</h2><ul class="decklist">${S.decks.map(d => `<li>
+    <section class="card"><h2>${t('myDecks')}</h2><ul class="decklist">${S.decks.map(d => `<li class="tdeck">
       <span><b lang="${d.lang}">${esc(d.name)}</b><br><span class="meta">${t('nCards', d.cards.length)} · ${esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang)} · ${d.level}</span>${auditView(d)}</span>
       <span class="row"><button class="secondary small" data-action="tour" data-id="${d.id}">${t('tourBtn')}</button>
       <button class="secondary small" data-action="edit" data-id="${d.id}">${t('edit')}</button>
@@ -700,12 +719,19 @@ function auditView(d) {
   if (unknown.length) found.unshift({ key: 'auNoKind', cards: unknown, warn: true });
   if (nogender.length) found.push({ key: 'auNoGender', cards: nogender, warn: true });
   if (alone.length) found.push({ key: 'auAlone', cards: alone, warn: false });
-  const warn = found.filter(f => f.warn);
+  const warn = found.filter(f => f.warn), tips = found.filter(f => !f.warn);
   if (!found.length) return `<p class="audit ok">${t('auOk')}</p>`;
-  const names = f => f.cards.slice(0, 4).map(c => esc(c.bare)).join(', ') + (f.cards.length > 4 ? '…' : '');
-  return `<details class="audit${warn.length ? ' warn' : ''}"><summary>${t(warn.length ? 'auTitle' : 'auInfo', warn.length || found.length)}</summary>
-    <ul>${found.map(f => `<li class="${f.warn ? 'w' : ''}">${t(f.key, f.cards.length, d.cards.length, d.level)} <span class="meta" lang="${d.lang}">${names(f)}</span>${f.lines?.length ? `<ul class="aulines" lang="${esc(d.lang)}">${f.lines.slice(0, 8).map(x => `<li>${esc(x)}</li>`).join('')}${f.lines.length > 8 ? '<li>…</li>' : ''}</ul>` : ''}</li>`).join('')}</ul>
-    ${unknown.length || nogender.length ? `<p><button type="button" class="secondary small" data-action="sort" data-id="${esc(d.id)}">${t('sortBtn')}</button></p>` : ''}
+  // Chaque remarque dit quoi faire, et chaque mot est un bouton qui ouvre sa fiche : l'enseignant n'a rien à chercher.
+  const word = c => `<button type="button" class="chipbtn" data-action="fix-card" data-deck="${esc(d.id)}" data-id="${esc(c.id)}" lang="${esc(d.lang)}">${esc(c.bare)}</button>`;
+  const go = { auNoImage: ['images', 'imgBtn'], auNoKind: ['sort', 'sortBtn'], auNoGender: ['sort', 'sortBtn'] };
+  const item = f => `<li><p class="autext">${t(f.key, f.cards.length, d.cards.length, d.level)}</p>
+      <p class="audo"><b>${t('auDo')}</b> ${t(f.key + 'Do')}</p>
+      ${f.lines?.length ? `<ul class="aulines" lang="${esc(d.lang)}">${f.lines.slice(0, 8).map(x => `<li>${esc(x)}</li>`).join('')}${f.lines.length > 8 ? '<li>…</li>' : ''}</ul>` : ''}
+      <p class="aucards">${f.cards.slice(0, 10).map(word).join('')}${f.cards.length > 10 ? `<span class="meta">${t('auMore', f.cards.length - 10)}</span>` : ''}${go[f.key] ? `<button type="button" class="secondary small" data-action="${go[f.key][0]}" data-id="${esc(d.id)}">${t(go[f.key][1])}</button>` : ''}</p></li>`;
+  return `<details class="audit${warn.length ? ' warn' : ''}"><summary>${warn.length ? t('auSum', warn.length, tips.length) : t('auSum0', tips.length)}</summary>
+    <p class="sethint">${t('auHow')}</p>
+    ${warn.length ? `<h3 class="auh w">${t('auFixH', warn.length)}</h3><ul class="aulist">${warn.map(item).join('')}</ul>` : ''}
+    ${tips.length ? `<h3 class="auh">${t('auTipH', tips.length)}</h3><ul class="aulist">${tips.map(item).join('')}</ul>` : ''}
     <p class="sethint">${t('auNote')}</p></details>`;
 }
 
@@ -847,6 +873,7 @@ async function saveCard(form) {
     situation: v('situation') || undefined, distractors: v('distractors').split('|').map(x => x.trim()).filter(Boolean),
     theme: v('theme') || undefined, register: v('register') || undefined, family: v('family') || undefined, ipa: v('ipa') || undefined, pos: v('pos') || undefined, gender: v('gender') || undefined, doubt: v('doubt') || undefined,
     image: safeUrl(S.draft.image) || undefined, audio: safeUrl(S.draft.audio) || undefined };
+  d.demo = false;      // une fiche modifiée : ce n'est plus la démonstration d'origine, elle ne sera jamais remplacée
   const old = d.byId[S.cardId];
   if (old) { delete old.marks; Object.assign(old, data); } else d.cards.push({ id: 'c' + hash(data.word + Date.now()), extra: {}, ...data });
   prepare(d); await saveDecks();
@@ -960,7 +987,7 @@ async function applyBackup() {
       cards += Object.keys(S.progress[d.id]).filter(k => !k.startsWith('_')).length;
       await store.set('progress:' + d.id, S.progress[d.id]);
     }
-    S.decks = S.decks.filter(d => !(d.demo && !Object.keys(S.progress[d.id] || {}).length && S.decks.length > 1));
+    S.decks = S.decks.filter(d => !(pristineDemo(d) && !Object.keys(S.progress[d.id] || {}).length && S.decks.length > 1));
     await saveDecks();
   } finally { sbBusy = false; } S.notice = { text: t('bkRestored', cards) }; render();
 }
@@ -1484,10 +1511,14 @@ app.addEventListener('click', e => {
   else if (action === 'herd') { S.herdId = id; S.view = 'herd'; S.confirmReset = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'share') { const st = S.session.stats; navigator.clipboard?.writeText(t('shareText', S.session.deck.name, S.session.tamed.length, st.ok, st.answered)).then(() => toast(t('copied')), () => toast(t('downloadFail'))); }
   else if (action === 'edit') { if (!TEACHER || !S.decks.some(d => d.id === id)) return; S.editId = id; S.view = 'edit'; if (b.closest('form')) S.notice = null; window.scrollTo?.(0, 0); render(); }
+  else if (action === 'fix-card') {      // depuis le contrôle du paquet : ouvre la fiche du mot touché
+    const dk = S.decks.find(x => x.id === b.dataset.deck); if (!TEACHER || !dk || !Object.hasOwn(dk.byId, id)) return;
+    const c = dk.byId[id]; S.editId = dk.id; S.cardId = id; S.draft = { image: c.image, audio: c.audio }; S.notice = null; S.view = 'card'; window.scrollTo?.(0, 0); render();
+  }
   else if (action === 'card') { if (!TEACHER || !editing()) return; const c = Object.hasOwn(editing().byId, id) ? editing().byId[id] : undefined; S.cardId = id; S.draft = { image: c?.image, audio: c?.audio }; S.notice = null; S.view = 'card'; window.scrollTo?.(0, 0); render(); }
   else if (action === 'clear') { S.draft[b.dataset.key] = undefined; const u = b.closest('form')[b.dataset.key + 'Url']; if (u) u.value = ''; showDraft(); }
   else if (action === 'test-audio') { const f = b.closest('form'); speak({ word: f.word.value, audio: safeUrl(S.draft.audio) }, editing().lang); }
-  else if (action === 'del-card') { if (!TEACHER || !editing()) return; const d = editing(); d.cards = d.cards.filter(c => c.id !== S.cardId); prepare(d); saveDecks(); S.view = 'edit'; render(); }
+  else if (action === 'del-card') { if (!TEACHER || !editing()) return; const d = editing(); d.demo = false; d.cards = d.cards.filter(c => c.id !== S.cardId); prepare(d); saveDecks(); S.view = 'edit'; render(); }
   else if (action === 'export') {
     const d = S.decks.find(x => x.id === id), lv = (d.level || '').toLowerCase(), base = slug(d.name), name = lv && !base.split('-').includes(lv) ? `${base}-${lv}` : base;
     download(name + '.json', deckToJSON(d), false);
