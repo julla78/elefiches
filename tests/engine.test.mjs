@@ -901,6 +901,46 @@ t('version 13 : prompts en deux étapes, genre, doutes, rapport de contrôle', (
   }
 });
 
+t('version 14a : mode essai, avancer le temps recule toutes les dates sans toucher à l’original', async () => {
+  const { shiftProgress, nextDueIn, review, isDue, boxOf } = await import('../js/scheduler.js');
+  const { cleanProgress } = await import('../js/backup.js');
+  const DAY = 86400000, now = Date.UTC(2026, 10, 25, 12);
+  let st = review({ seen: true, box: 1, born: now }, 'good', now);
+  const P = { a: st, b: { seen: true, box: 1, born: now }, _stages: { 1: now }, _race: { best: 7, runs: 2 } };
+  const frozen = JSON.stringify(P);
+  assert.equal(nextDueIn({ a: st }, now), st.fsrs.due - now); assert.ok(nextDueIn({ a: st }, now) > 0);
+  assert.equal(nextDueIn(P, now), 0, 'une fiche découverte et jamais révisée est due tout de suite');
+  assert.equal(nextDueIn({}, now), 0); assert.equal(nextDueIn(null, now), 0);
+  const Q = shiftProgress(P, DAY);
+  assert.equal(JSON.stringify(P), frozen, 'la progression d’origine n’est pas modifiée');
+  assert.equal(Q.a.fsrs.due, st.fsrs.due - DAY); assert.equal(Q.a.fsrs.last_review, st.fsrs.last_review - DAY); assert.equal(Q.a.born, now - DAY);
+  assert.equal(Q.b.born, now - DAY); assert.equal(Q._stages[1], now - DAY); assert.deepEqual(Q._race, { best: 7, runs: 2 });
+  assert.equal(Q.a.box, st.box); assert.equal(Q.a.fsrs.stability, st.fsrs.stability);
+  assert.equal(shiftProgress(P, 0), P); assert.equal(shiftProgress(P, -5), P); assert.equal(shiftProgress(null, DAY), null);
+  assert.equal(shiftProgress({ a: { seen: true, box: 1, born: 5 } }, DAY).a.born, 0, 'jamais de date négative');
+  assert.deepEqual(cleanProgress(Q, now), cleanProgress(JSON.parse(JSON.stringify(Q)), now), 'le résultat passe le nettoyage du stockage');
+  // En avançant chaque fois jusqu'à la prochaine révision, une fiche atteint la boîte 5 en quelques tours, comme au fil des semaines.
+  let R = { a: st }, turns = 0;
+  while (boxOf(R.a) < 5 && turns++ < 10) {
+    R = cleanProgress(shiftProgress(R, nextDueIn(R, now) + 60000), now);
+    assert.ok(isDue(R.a, now), 'la fiche est due après le saut');
+    R = { a: review(R.a, 'good', now) };
+  }
+  assert.equal(boxOf(R.a), 5); assert.ok(turns <= 4);
+  assert.ok(R.a.fsrs.due - now > 7 * DAY, 'les intervalles ont grandi normalement : ' + Math.round((R.a.fsrs.due - now) / DAY) + ' j');
+});
+
+t('version 14a : en mode essai, la session ne retient aucun nouveau mot et ne s’arrête pas à l’heure', async () => {
+  const { Session } = await import('../js/session.js'); const { review } = await import('../js/scheduler.js');
+  const { deckFromJSON } = await import('../js/deck.js');
+  const now = Date.UTC(2026, 10, 25, 12);
+  const deck = deckFromJSON(JSON.stringify({ elefiches: 1, name: 'Essai', lang: 'fr', level: 'B1', cards: Array.from({ length: 40 }, (_, i) => ({ word: 'mot' + i, pos: 'nom', gender: 'm', definition: 'Définition numéro ' + i + ' du mot.', examples: ['Voici un [mot' + i + '] ici.'] })) }));
+  const P = {}; for (const c of deck.cards.slice(0, 25)) P[c.id] = review({ seen: true, box: 1, born: now - 9e8 }, 'good', now - 9e8);
+  const held = new Session(deck, P, { maxNew: 8, now }), free = new Session(deck, P, { maxNew: 8, now, force: true, minutes: 600 });
+  assert.equal(held.today.length, 0, '25 révisions dues : hors mode essai, les nouveaux mots attendent');
+  assert.equal(free.today.length, 8); assert.equal(free.endAt - now, 600 * 60000);
+});
+
 t('code d’accès enseignant : seule l’empreinte est gardée, un mauvais code ou une ligne abîmée ne laisse entrer personne', async () => {
   const { ACCESS, makeAccess, checkAccess, validAccess } = await import('../js/acces.js');
   assert.ok(ACCESS === '' || validAccess(ACCESS), 'la ligne du dépôt est vide ou bien formée');

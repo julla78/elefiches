@@ -467,3 +467,11 @@ summary .tag.ok { background: var(--good-soft); color: var(--good); } summary .t
 .tools .toolrow .ic { margin-right: 4px; }
 .footlinks .link { text-align: left; }
 .formtag { display: inline-block; margin-left: 6px; padding: 2px 10px; border-radius: 999px; background: var(--brand-soft); color: var(--brand-text); font-size: .95rem; font-weight: 700; }
+
+/* Mode essai de l'espace enseignant : bandeau toujours visible, distinct des alertes et des corrections. */
+.sandbox { border: 2px dashed var(--brand-line); background: var(--card, #fff); border-radius: 14px; padding: 12px 14px; margin-bottom: 14px; font-size: 1rem; }
+.sandbox p { margin: 0 0 8px; }
+.sandbox .row { gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.sandbox .sblabel { margin-bottom: 4px; font-weight: 700; }
+.sandbox.mini { display: flex; gap: 12px; align-items: center; justify-content: center; padding: 6px 12px; margin-bottom: 10px; }
+.sbcard .row { gap: 12px; align-items: center; flex-wrap: wrap; }

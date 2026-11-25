@@ -59,3 +59,32 @@ export function summary(deck, progress, now = Date.now()) {
   }
   return { total: deck.cards.length, fresh: boxes[0], due, herd, boxes, closest, animals, stage: stageOf(deck, progress), memory: sum / (5 * deck.cards.length) };
 }
+
+// Mode essai de l'espace enseignant (« Tester sans limites ») : pour voir en une séance ce qu'un étudiant ne rencontre
+// qu'au fil des semaines, on « avance le temps ». L'horloge de l'appareil ne change pas : ce sont toutes les dates de la
+// progression d'essai qui reculent de la même durée. Les écarts entre révisions restent donc exacts pour FSRS.
+export function shiftProgress(P, ms) {
+  if (!P || typeof P !== 'object' || !(ms > 0)) return P;
+  const back = v => (Number.isFinite(+v) ? Math.max(0, +v - ms) : v), out = {};
+  for (const [id, st] of Object.entries(P)) {
+    if (!st || typeof st !== 'object') continue;
+    if (id === '_stages') out[id] = Object.fromEntries(Object.entries(st).map(([k, v]) => [k, back(v)]));
+    else if (id.startsWith('_')) out[id] = { ...st };
+    else {
+      out[id] = { ...st };
+      if ('born' in st) out[id].born = back(st.born);
+      if (st.fsrs && typeof st.fsrs === 'object') out[id].fsrs = { ...st.fsrs, due: back(st.fsrs.due), last_review: back(st.fsrs.last_review) };
+    }
+  }
+  return out;
+}
+// Durée à attendre avant la prochaine révision d'une progression (0 si une fiche est déjà due ou si rien n'est commencé).
+export function nextDueIn(P, now = Date.now()) {
+  let best = Infinity;
+  for (const [id, st] of Object.entries(P || {})) {
+    if (id.startsWith('_') || !st?.seen) continue;
+    if (!st.fsrs || st.fsrs.due <= now) return 0;
+    best = Math.min(best, st.fsrs.due - now);
+  }
+  return Number.isFinite(best) ? best : 0;
+}

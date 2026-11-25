@@ -1,7 +1,7 @@
 // Éléfiches — interface : accueil, espace enseignant, session, bilan.
 import * as store from './store.js';
 import { deckFromCSV, deckFromJSON, deckFromAnki, mergeDecks, audit, safeKey, deckToJSON, looksJSON, levelIn, prepare, serialize, hash, demoDeck, MODELS, safeUrl, LEVELS } from './deck.js';
-import { summary, boxOf, dueInDays, isNew, stageOf, HERD_BOX } from './scheduler.js';
+import { summary, boxOf, dueInDays, isNew, stageOf, HERD_BOX, shiftProgress, nextDueIn } from './scheduler.js';
 import { Session, Challenge, Tour, meaning, gloss, pickNew, judge, roomFor, buildActivity, SELF, kindOf, suggestKind, genderOf, needsGender, GENDERED_LANGS } from './session.js';
 import { clozeParts, norm, noAcc, noArt, diffParts, remark, spoken, slug } from './match.js';
 import { unzip, typeOf } from './zip.js';
@@ -25,7 +25,7 @@ const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 const GATED = TEACHER && validAccess(ACCESS) && (!LOCAL || new URLSearchParams(location.search).has('verrou'));
 const siteBase = () => location.origin + location.pathname.replace(/[^/]*\.html$/, '');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const S = { locked: GATED, lang: 'auto', minutes: 5, maxNew: 3, help: 'fr', sound: true, voice: true, remind: { time: '18:00', days: 'daily' }, savedAt: 0, decks: [], progress: {}, view: 'home', notice: null, toast: null, confirmReset: null, confirmDel: null, editId: null, cardId: null, draft: {}, local: null, gate: false, builder: { lang: 'fr', level: '', topic: '', count: 20, words: '', grid: '3x3' }, sheets: [], loose: [], perm: 0 };
+const S = { locked: GATED, lang: 'auto', minutes: 5, maxNew: 3, help: 'fr', sound: true, voice: true, remind: { time: '18:00', days: 'daily' }, savedAt: 0, decks: [], progress: {}, view: 'home', notice: null, toast: null, confirmReset: null, confirmDel: null, editId: null, cardId: null, draft: {}, local: null, gate: false, builder: { lang: 'fr', level: '', topic: '', count: 20, words: '', grid: '3x3' }, sheets: [], loose: [], perm: 0, sandbox: false, sbDays: 0, confirmSb: false };
 // Langue des consignes et du feedback. En mode automatique : français jusqu'au niveau B1,
 // langue apprise à partir de B2 (règle fixée par la responsable du projet). L'étudiant peut toujours choisir lui-même.
 function uiLang() {
@@ -253,12 +253,14 @@ function sfx(kind) {
 async function load() {
   if (GATED && (await store.get('access')) === ACCESS) S.locked = false;      // cet appareil a déjà saisi le code en vigueur
   const set = (await store.get('settings')) || {};
+  const sb = TEACHER ? await store.get('essai') : null;      // l'interface étudiant ignore toujours le mode essai
+  S.sandbox = !!(sb && typeof sb === 'object' && sb.on === true); S.sbDays = S.sandbox && typeof sb.days === 'number' && Number.isFinite(sb.days) ? Math.max(0, Math.min(36500, sb.days)) : 0;
   Object.assign(S, { lang: set.lang || 'auto', minutes: set.minutes || 5, maxNew: set.maxNew || 3, help: set.help || 'fr', sound: set.sound ?? true, voice: set.voice ?? true, remind: { time: '18:00', days: 'daily', ...(set.remind || {}) }, savedAt: set.savedAt || 0 });
   const saved = (await store.get('decks')) || [];
   // Un paquet abîmé dans le stockage ne doit pas empêcher les autres de s'ouvrir : il est laissé de côté.
   S.decks = (Array.isArray(saved) ? saved : []).flatMap(d => { try { return d && typeof d === 'object' ? [prepare(d)] : []; } catch (e) { console.error(e); return []; } });
   if (!S.decks.length) { S.decks = [demoDeck()]; await saveDecks(); }
-  for (const d of S.decks) S.progress[d.id] = cleanProgress(await store.get('progress:' + d.id));     // état reconstruit champ par champ : rien de forgé n'atteint l'écran
+  for (const d of S.decks) S.progress[d.id] = cleanProgress(await store.get(pkey(d.id)));     // état reconstruit champ par champ : rien de forgé n'atteint l'écran
   // Lien de partage : « …/?paquet=logement-a2 » ouvre le fichier paquets/logement-a2.json rangé à côté de l'application
   // L'étudiant n'a rien d'autre à faire que d'ouvrir le lien. Seul le dossier paquets/ du site est lu, en JSON strict.
   const ref = new URLSearchParams(location.search).get('paquet');
@@ -269,8 +271,8 @@ async function load() {
       if (!res.ok && slug(ref.replace(/\.json$/i, '')) !== plain) res = await fetch(`paquets/${slug(ref.replace(/\.json$/i, ''))}.json`);   // lien tapé avec des accents ou des majuscules
       if (!res.ok) throw new Error('link');
       const deck = deckFromJSON(JSON.stringify(await res.json()));      // JSON strict : un fichier qui serait aussi lisible comme un script est refusé
-      S.progress[deck.id] ??= cleanProgress(await store.get('progress:' + deck.id));      // la progression d'abord : un redessin entre les deux ne doit jamais trouver un paquet sans elle
-      S.decks = [...S.decks.filter(d => d.id !== deck.id && !(d.demo && !Object.keys(S.progress[d.id] || {}).length)), deck];
+      S.progress[deck.id] ??= cleanProgress(await store.get(pkey(deck.id)));      // la progression d'abord : un redessin entre les deux ne doit jamais trouver un paquet sans elle
+      S.decks = [...S.decks.filter(d => d.id !== deck.id && !(d.demo && !S.sandbox && !Object.keys(S.progress[d.id] || {}).length)), deck];
       await saveDecks(); S.notice = { text: t('opened', deck.name) };
     } catch { S.notice = { bad: true, text: t('errLink') }; }
   }
@@ -278,7 +280,76 @@ async function load() {
 }
 const saveDecks = () => store.set('decks', S.decks.map(serialize));
 const saveSettings = () => store.set('settings', { lang: S.lang, minutes: S.minutes, maxNew: S.maxNew, help: S.help, sound: S.sound, voice: S.voice, remind: S.remind, savedAt: S.savedAt });
-const saveProgress = id => store.set('progress:' + id, S.progress[id]);
+// Mode essai (espace enseignant seulement) : la progression d'essai est rangée sous une autre clé que la vraie.
+// Tant qu'il est actif, rien de ce que fait l'application ne lit ni n'écrit la vraie progression.
+const pkey = id => (S.sandbox ? 'essai:' : 'progress:') + id;
+const saveProgress = id => store.set(pkey(id), S.progress[id]);
+const saveSandbox = () => store.set('essai', { on: S.sandbox, days: S.sbDays });
+// Un seul changement à la fois : pendant un basculement, un saut dans le temps ou une remise à zéro, aucun autre geste
+// n'est accepté (sbBusy). Sans ce verrou, deux gestes rapprochés pourraient écrire des essais sous la clé de la vraie progression.
+let sbBusy = false;
+// Progression d'un paquet qui arrive (import) : lue sous la clé du mode en cours, et seulement si le mode n'a pas changé pendant la lecture.
+async function ensureProgress(id) {
+  for (let i = 0; i < 50; i++) {
+    while (sbBusy) await new Promise(r => setTimeout(r, 20));
+    const mode = S.sandbox, P = cleanProgress(await store.get(pkey(id)));
+    if (mode === S.sandbox && !sbBusy) { S.progress[id] ??= P; return; }
+  }
+  S.progress[id] ??= {};
+}
+async function setSandbox(on) {
+  if (!TEACHER || S.locked || sbBusy || S.sandbox === !!on) return;
+  sbBusy = true;
+  try {
+    stopRace(); dropRecording();
+    if (S.session && !S.session.challenge) await saveProgress(S.session.deck.id);      // sous la clé du mode que l'on quitte
+    S.session = null;
+    const P = {};
+    for (const d of S.decks) P[d.id] = cleanProgress(await store.get((on ? 'essai:' : 'progress:') + d.id));
+    // Le drapeau et la progression changent ensemble, sans attente entre les deux : pkey() ne voit jamais un état mixte.
+    Object.assign(S, { sandbox: !!on, progress: P, pendingBackup: null, confirmReset: null, confirmSb: false, notice: null, view: on ? 'home' : 'teacher' });
+    // Un paquet importé pendant le basculement n'était pas dans la boucle : sa progression est lue maintenant.
+    for (let again = true; again;) { again = false; for (const d of S.decks) if (!S.progress[d.id]) { S.progress[d.id] = cleanProgress(await store.get(pkey(d.id))); again = true; } }
+    await saveSandbox();
+  } finally { sbBusy = false; }
+  window.scrollTo?.(0, 0); render();
+}
+// Avancer le temps : days = 1 ou 7 ; days = 0 : jusqu'à la prochaine révision, tous paquets confondus (un jour si rien n'attend).
+async function sandboxSkip(days) {
+  if (!TEACHER || !S.sandbox || sbBusy || ![0, 1, 7].includes(days)) return;
+  if (S.sbDays >= 36500) return;      // cent ans d'avance : au-delà, les dates n'auraient plus de sens
+  const DAY = 86400000, now = Date.now();
+  let ms = days * DAY;
+  sbBusy = true;
+  try {
+  if (!days) { const waits = S.decks.map(d => nextDueIn(S.progress[d.id], now)).filter(x => x > 0); ms = waits.length ? Math.min(...waits) + 60000 : DAY; }
+  if (S.session && !S.session.challenge) S.session = null;
+  for (const d of S.decks) { S.progress[d.id] = cleanProgress(shiftProgress(S.progress[d.id], ms)); await store.set('essai:' + d.id, S.progress[d.id]); }      // clé d'essai écrite en dur : jamais la vraie
+  S.sbDays = Math.min(36500, Math.round((S.sbDays + ms / DAY) * 10) / 10); await saveSandbox();
+  } finally { sbBusy = false; }
+  S.confirmSb = false; S.notice = { text: t('sbSkipped', String(Math.round(ms / DAY * 10) / 10).replace('.', uiLang() === 'en' ? '.' : ',')) }; S.view = 'home'; render();
+}
+async function sandboxReset() {
+  if (!TEACHER || !S.sandbox || sbBusy) return;
+  sbBusy = true;
+  try {
+    S.session = null;
+    for (const d of S.decks) { S.progress[d.id] = {}; await store.set('essai:' + d.id, {}); }      // clé d'essai écrite en dur : jamais la vraie
+    S.sbDays = 0; S.confirmSb = false; await saveSandbox();
+  } finally { sbBusy = false; }
+  S.notice = { text: t('sbResetDone') }; S.view = 'home'; render();
+}
+// Bandeau du mode essai : toujours visible, pour qu'on ne confonde jamais un essai avec la vraie progression.
+function sandboxBar(full) {
+  if (!full) return `<p class="sandbox mini" role="status"><b>${t('sbOn')}</b> <button type="button" class="link" data-action="sb-off">${t('sbQuit')}</button></p>`;
+  return `<section class="sandbox" aria-label="${t('sbOn')}"><p><b>${t('sbOn')}</b> ${t('sbExplain')}${S.sbDays ? ` <span class="meta">${t('sbDays', esc(String(S.sbDays)).replace('.', uiLang() === 'en' ? '.' : ','))}</span>` : ''}</p>
+    <p class="sblabel" id="sbskip">${t('sbSkip')}</p>
+    <div class="row" role="group" aria-labelledby="sbskip"><button type="button" class="secondary small" data-action="sb-skip" data-days="0">${t('sbNext')}</button>
+      <button type="button" class="secondary small" data-action="sb-skip" data-days="1">${t('sbDay')}</button>
+      <button type="button" class="secondary small" data-action="sb-skip" data-days="7">${t('sbWeek')}</button></div>
+    <div class="row">${S.confirmSb ? `<button type="button" class="link danger" data-action="sb-reset-yes">${t('sbResetSure')}</button>` : `<button type="button" class="link" data-action="sb-reset">${t('sbReset')}</button>`}
+      <button type="button" class="link" data-action="sb-off">${t('sbQuit')}</button></div></section>`;
+}
 
 // Langue des traductions affichées pour un paquet, selon le réglage de l'étudiant et ce que le paquet contient.
 function helpFor(deck) {
@@ -346,7 +417,7 @@ function deckCard(d) {
     <div><h2 lang="${d.lang}">${esc(d.name)}</h2><p class="meta">${esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang)} · ${d.level}${d.demo ? ' · ' + t('demo') : ''}</p></div>
     ${prairie(d, s, [], !canStart)}
     <div class="stagebar"><span>${t('stageN', s.stage.index)}</span>${trunkBar(pct, 'idle', t('stageAria', s.stage.index, s.stage.count, s.stage.seen, s.stage.size))}</div>
-    ${canStart ? `<button class="primary" data-action="start" data-id="${d.id}">${t('start', S.minutes)}</button>` : `<p class="rest">${t('nothing', nextDays)}</p>`}
+    ${canStart ? `<button class="primary" data-action="start" data-id="${d.id}">${S.sandbox ? t('sbGo') : t('start', S.minutes)}</button>` : `<p class="rest">${t('nothing', nextDays)}</p>`}
     ${held ? `<p class="heldline">${t('heldHome')} <button class="link" data-action="start-force" data-id="${d.id}">${t('heldForce')}</button></p>` : ''}
     ${mute ? `<p class="banner warn">${t('noVoiceDeck', esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang))}</p>` : ''}
     ${challengeLine(d, P)}
@@ -413,7 +484,7 @@ function home() {
   return `${TEACHER ? `<button class="link" data-action="teacher">← ${t('eBack')}</button>` : ''}<header class="top">${mascot(147, 'idle', 2)}<h1>Éléfiches<span class="edition">${EDITION}</span></h1>
       <p class="tagline">${t('tagline')}</p>
       <button class="rulesbtn" data-action="rules">${FOOT}<span>${t('rules')}</span></button>${SAVANNA}</header>
-    ${banners()}
+    ${S.sandbox ? sandboxBar(true) : ''}${banners()}
     <div class="appetite"><span class="aplabel">${NUT}${t('appetite')}</span>${seg('maxNew', S.maxNew, [[3, t('ap1')], [5, t('ap2')], [8, t('ap3')]])}</div>
     <section class="decks">${S.decks.map(deckCard).join('')}</section>
     <section class="tools" aria-label="${t('toolsLabel')}">
@@ -462,6 +533,8 @@ function teacherView() {
     <h1>${t('tTitle')}</h1><p class="lead">${t('tIntro')}</p>
     <p class="studenturl">${t('studentUrl')} <b>${esc(siteBase())}</b></p>
     ${banners()}
+    <section class="card sbcard"><h2>${t('sbTitle')}</h2><p class="sethint">${t('sbIntro')}</p>
+      <div class="row"><button type="button" class="primary" data-action="sb-on">${t(S.sandbox ? 'sbResume' : 'sbStart')}</button>${S.sandbox ? `<button type="button" class="link" data-action="sb-off">${t('sbQuit')}</button>` : ''}</div></section>
     <section class="card"><h2>${t('myDecks')}</h2><ul class="decklist">${S.decks.map(d => `<li>
       <span><b lang="${d.lang}">${esc(d.name)}</b><br><span class="meta">${t('nCards', d.cards.length)} · ${esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang)} · ${d.level}</span>${auditView(d)}</span>
       <span class="row"><button class="secondary small" data-action="tour" data-id="${d.id}">${t('tourBtn')}</button>
@@ -517,7 +590,7 @@ function teacherView() {
 async function addDeck(text, name, lang, json = false, level) {
   try {
     const deck = json ? deckFromJSON(text, name, level) : deckFromCSV(text, name, lang, level);
-    S.progress[deck.id] ??= cleanProgress(await store.get('progress:' + deck.id));
+    await ensureProgress(deck.id);
     S.decks = [...S.decks.filter(d => d.id !== deck.id), deck];
     await saveDecks();
     S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped), sort: sortNotice(deck) };
@@ -578,7 +651,7 @@ async function importPacket({ files = [], text = '', name = '', lang = 'fr', lev
       }
       for (const f of images.filter(f => !used.has(f)).slice(0, 200)) { const url = safeUrl(await imageToDataURL(f.blob)); if (url) S.loose.push(url); }
     }
-    S.progress[deck.id] ??= cleanProgress(await store.get('progress:' + deck.id));
+    await ensureProgress(deck.id);
     S.decks = [...S.decks.filter(d => d.id !== deck.id), deck];
     await saveDecks();
     S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped), sort: sortNotice(deck) };
@@ -856,37 +929,43 @@ function download(name, text, bom = true) {
 const hasProgress = () => Object.values(S.progress).some(P => Object.keys(P || {}).some(k => !k.startsWith('_')));
 const iosSafari = () => /iP(hone|ad|od)/.test(navigator.userAgent) && !navigator.standalone && !matchMedia('(display-mode: standalone)').matches;
 function saveBackup() {
+  if (S.sandbox) return;      // une sauvegarde contient la vraie progression, jamais des essais
   const d = new Date(), name = `elefiches-sauvegarde-${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}.json`;
   download(name, makeBackup({ decks: S.decks.map(serialize), progress: S.progress, settings: { lang: S.lang, minutes: S.minutes, maxNew: S.maxNew, help: S.help } }), false);
   S.savedAt = Date.now(); saveSettings(); S.notice = { text: t('bkSaved', name) }; render();
 }
 // Restauration en deux temps : on lit le fichier, on montre ce qu'il changerait, et l'étudiant confirme.
 async function restoreBackup(file) {
+  if (S.sandbox) return;
   const b = file.size < 60e6 ? readBackup(await file.text()) : null;
   if (!b) { S.notice = { bad: true, text: t('bkBad') }; return render(); }
   const decks = [];
   for (const raw of b.decks) {
     let d; try { d = deckFromJSON(JSON.stringify(raw)); } catch { continue; }
     d.id = safeKey(raw?.id) || d.id;
-    const cur = S.progress[d.id] || cleanProgress(await store.get('progress:' + d.id));
+    const cur = S.progress[d.id] || cleanProgress(await store.get(pkey(d.id)));
     decks.push({ deck: d, saved: b.progress[d.id], replaced: countReplaced(cur, b.progress[d.id]), added: countAdded(cur, b.progress[d.id]), fresh: !S.decks.some(x => x.id === d.id) });
   }
   if (!decks.length) { S.notice = { bad: true, text: t('bkBad') }; return render(); }
   const when = new Date(b.date); S.pendingBackup = { decks, date: Number.isNaN(+when) ? '' : when.toLocaleDateString(uiLang()) }; S.notice = null; render();
 }
 async function applyBackup() {
-  const pb = S.pendingBackup; if (!pb) return; S.pendingBackup = null;
+  const pb = S.pendingBackup; if (!pb || S.sandbox || sbBusy) return; S.pendingBackup = null;
   let cards = 0;
-  for (const { deck: d, saved } of pb.decks) {
-    if (!S.decks.some(x => x.id === d.id)) S.decks.push(d);
-    S.progress[d.id] = mergeProgress(S.progress[d.id] || cleanProgress(await store.get('progress:' + d.id)), saved);
-    cards += Object.keys(S.progress[d.id]).filter(k => !k.startsWith('_')).length;
-    await saveProgress(d.id);
-  }
-  S.decks = S.decks.filter(d => !(d.demo && !Object.keys(S.progress[d.id] || {}).length && S.decks.length > 1));
-  await saveDecks(); S.notice = { text: t('bkRestored', cards) }; render();
+  sbBusy = true;      // une restauration va jusqu'au bout avant tout changement de mode : elle ne concerne que la vraie progression
+  try {
+    for (const { deck: d, saved } of pb.decks) {
+      if (!S.decks.some(x => x.id === d.id)) S.decks.push(d);
+      S.progress[d.id] = mergeProgress(S.progress[d.id] || cleanProgress(await store.get('progress:' + d.id)), saved);
+      cards += Object.keys(S.progress[d.id]).filter(k => !k.startsWith('_')).length;
+      await store.set('progress:' + d.id, S.progress[d.id]);
+    }
+    S.decks = S.decks.filter(d => !(d.demo && !Object.keys(S.progress[d.id] || {}).length && S.decks.length > 1));
+    await saveDecks();
+  } finally { sbBusy = false; } S.notice = { text: t('bkRestored', cards) }; render();
 }
 function backupView() {
+  if (S.sandbox) return `<p class="toolrow sethint">${ICON.save} ${t('sbNoBackup')}</p>`;
   const days = S.savedAt ? Math.floor((Date.now() - S.savedAt) / 86400000) : -1, late = hasProgress() && (days < 0 || days >= 14);
   return `<details class="card settings backup"${late || iosSafari() || S.pendingBackup ? ' open' : ''}><summary>${ICON.save} ${t('bkTitle')}</summary>
       <p class="sethint">${t('bkIntro')}</p>
@@ -979,7 +1058,8 @@ function startSession(id, force = false) {
   const deck = S.decks.find(d => d.id === id);
   deck.help = helpFor(deck);
   S.stageBefore = summary(deck, S.progress[id]).stage;
-  S.session = new Session(deck, S.progress[id], { minutes: S.minutes, maxNew: S.maxNew, force, audio: canListen(deck) });
+  // Mode essai : ni frein sur les nouveaux mots, ni fin de session à l'heure (l'enseignant examine chaque écran à son rythme).
+  S.session = new Session(deck, S.progress[id], { minutes: S.sandbox ? 600 : S.minutes, maxNew: S.maxNew, force: force || S.sandbox, audio: canListen(deck) });
   S.view = 'session'; S.notice = null;
   advance();
   store.keep();                            // demande au navigateur de ne pas effacer la progression s'il manque de place
@@ -1371,7 +1451,7 @@ function paint() {
   if (S.locked) { document.documentElement.lang = 'fr'; app.innerHTML = gateView(); app.querySelector('[autofocus]')?.focus({ preventScroll: true }); return; }
   document.documentElement.lang = uiLang();
   const open = app.querySelector('details.settings')?.open;
-  app.innerHTML = (S.view === 'session' ? sessionView() : S.view === 'done' ? doneView() : S.view === 'teacher' ? teacherView() : S.view === 'rules' ? rulesView() : S.view === 'herd' ? herdView() : S.view === 'images' ? imagesView() : S.view === 'edit' ? editView() : S.view === 'sort' && TEACHER && S.decks.some(d => d.id === S.sortId) ? sortView() : S.view === 'card' ? cardView() : S.view === 'race' ? raceView() : S.view === 'privacy' ? privacyView() : home());
+  app.innerHTML = (S.sandbox && !['home', 'teacher'].includes(S.view || 'home') ? sandboxBar(false) : '') + (S.view === 'session' ? sessionView() : S.view === 'done' ? doneView() : S.view === 'teacher' ? teacherView() : S.view === 'rules' ? rulesView() : S.view === 'herd' ? herdView() : S.view === 'images' ? imagesView() : S.view === 'edit' ? editView() : S.view === 'sort' && TEACHER && S.decks.some(d => d.id === S.sortId) ? sortView() : S.view === 'card' ? cardView() : S.view === 'race' ? raceView() : S.view === 'privacy' ? privacyView() : home());
   if (open && app.querySelector('details.settings')) app.querySelector('details.settings').open = true;
   if (S.view === 'session' || S.view === 'done') {
     app.querySelector('[autofocus]')?.focus({ preventScroll: true });
@@ -1382,9 +1462,14 @@ function paint() {
 // Une confirmation n'est acceptée qu'un instant après la demande : un double-clic ne peut pas tout effacer par accident.
 const armed = () => Date.now() - (S.armedAt || 0) >= 800;
 app.addEventListener('click', e => {
-  const b = e.target.closest('[data-action]'); if (!b || S.locked) return;      // porte fermée : aucun geste de l'appli n'est possible
+  const b = e.target.closest('[data-action]'); if (!b || S.locked || sbBusy) return;      // porte fermée : aucun geste de l'appli n'est possible
   const { action, id, model } = b.dataset;
   if (action === 'start') startSession(id);
+  else if (action === 'sb-on') { if (S.sandbox) { S.view = 'home'; S.notice = null; window.scrollTo?.(0, 0); render(); } else setSandbox(true); }
+  else if (action === 'sb-off') setSandbox(false);
+  else if (action === 'sb-skip') sandboxSkip(+b.dataset.days);
+  else if (action === 'sb-reset') { if (!S.sandbox) return; S.confirmSb = true; S.armedAt = Date.now(); render(); }
+  else if (action === 'sb-reset-yes') { if (!S.sandbox || !S.confirmSb || !armed()) return; sandboxReset(); }
   else if (action === 'gate-copy') { navigator.clipboard?.writeText(S.door?.line || '').then(() => toast(t('copied')), () => app.querySelector('[data-line]')?.select()); }
   else if (action === 'start-force') startSession(id, true);
   else if (action === 'next') advance();
@@ -1520,7 +1605,7 @@ app.addEventListener('submit', e => {
   e.preventDefault();
   const kind = e.target.dataset.submit;
   if (kind === 'gate') { if (S.locked && !S.door?.busy) openGate(e.target.code.value); return; }
-  if (S.locked) return;
+  if (S.locked || sbBusy) return;
   if (kind === 'gate-make') { makeGate(e.target.code.value, e.target.again.value); return; }
   if (kind === 'import') { const f = e.target; importPacket({ files: [...f.files.files], text: f.text.value, name: f.name.value.trim(), lang: f.lang.value, level: f.level.value }); }
   else if (kind === 'card') { if (TEACHER && editing()) saveCard(e.target); }
@@ -1542,7 +1627,7 @@ app.addEventListener('error', e => {
   if (options) options.classList.add('nopics'); else img.remove();
 }, true);
 app.addEventListener('change', e => {
-  if (S.locked) return;
+  if (S.locked || sbBusy) return;
   if (e.target.dataset.file) return attach(e.target);
   if (e.target.dataset.remind) { S.remind = { ...S.remind, time: e.target.value || '18:00' }; return saveSettings(); }
   if (e.target.dataset.grid) {                 // grille des planches : colonnes ou rangées
@@ -1552,7 +1637,7 @@ app.addEventListener('change', e => {
   }
 });
 app.addEventListener('input', e => {
-  if (S.locked) return;
+  if (S.locked || sbBusy) return;
   const k = e.target.dataset?.b;
   if (k) { S.builder[k] = k === 'count' ? Math.min(500, Math.max(3, Math.round(+e.target.value) || 20)) : e.target.value; return refreshPrompts(); }
   if (e.target.dataset.input !== 'search') return;
@@ -1560,7 +1645,7 @@ app.addEventListener('input', e => {
   for (const li of app.querySelectorAll('.cardlist li')) li.hidden = !!q && !li.dataset.text.includes(q);
 });
 document.addEventListener('keydown', e => {
-  if (S.locked) return;
+  if (S.locked || sbBusy) return;
   if (S.view === 'race' && !S.race?.over) { const k = ['1', '2', '3', '4'].indexOf(e.key); if (k >= 0) racePick(k); return; }
   if (S.view !== 'session' || S.feedback || !S.step?.activity?.options) return;
   const i = ['1', '2', '3', '4'].indexOf(e.key);
