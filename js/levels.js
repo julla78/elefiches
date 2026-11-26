@@ -11,7 +11,9 @@
 // Orthographe d'une réponse écrite, à tous les niveaux (décision du 25 novembre 2026) : la forme exacte est exigée,
 // accents, cédille, « ñ » et « œ » compris. Un écart d'une lettre ou d'un accent n'est jamais accepté tel quel et
 // n'est jamais compté faux d'emblée : il donne un second essai, avec un message qui dit quoi regarder ; la réussite
-// compte alors comme aidée. Les descripteurs du CECRL (« relative exactitude phonétique, mais pas forcément
+// compte alors comme aidée. Depuis le 26 novembre 2026 : une majuscule garde son accent (« Ecole » est un écart), et,
+// en français et en espagnol, l'article écrit sur la fiche est exigé de la même façon (second essai s'il manque ou
+// s'il ne va pas avec le mot ; simple remarque en anglais). Les descripteurs du CECRL (« relative exactitude phonétique, mais pas forcément
 // orthographique » en A2) disent ce qu'un apprenant sait faire seul, pas ce que l'appli doit lui laisser mémoriser :
 // le niveau règle donc l'aide (indice, second essai plus généreux), pas la forme attendue.
 export const SPEC = {

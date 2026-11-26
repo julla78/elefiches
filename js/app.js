@@ -1249,12 +1249,12 @@ function activityView(step, lang) {
       <label>${t('answerLabel')} <input name="answer" maxlength="200" lang="${lang}" ${a.type === 'number' ? 'inputmode="numeric"' : ''} autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" ${fb ? `disabled value="${esc(fb.typed ?? '')}"` : `autofocus value="${esc(L.value || '')}"`}></label>
       ${fb || a.type === 'number' ? '' : keyRow(S.session.deck, lang)}
       ${a.hint && !fb ? `<p class="helpline"><span class="tag">${t('hintLabel')}</span> <span class="letters" lang="${lang}">${esc(a.hint)}</span></p>` : ''}
-      ${L.again && !fb ? `<p class="again" role="status">${L.form ? t(L.form === 'm' || L.form === 'f' ? 'tryForm_' + L.form : 'tryForm') : L.accent ? (L.slip && L.slip !== 'accent' ? t('tryChar', esc(L.slip)) : t('tryAccent')) : t('tryAgain')}</p>` : ''}
+      ${L.again && !fb ? `<p class="again" role="status">${againText(L)}</p>` : ''}
       ${fb ? '' : `<div class="row"><button class="primary">${t('validate')}</button>${skip}</div>`}</form>`;
     if (a.type === 'cloze-type') body = `<p class="question">${t('qClozeType')}</p>${sentence(a.cloze, lang, !!fb)}${hint}${typed}`;
     else if (a.type === 'listen-type') body = `<p class="question">${t('qListenType')}</p>${ear}${typed}${quiet}`;
     else if (a.type === 'situation-type') body = `<p class="question">${t('qSitType')}</p>${pic(card)}<p class="situation">${esc(a.situation)}</p>${sentence(a.cloze, lang, !!fb)}${typed}`;
-    else if (a.type === 'type') body = `<p class="question">${t('qType')}${a.ask === 'm' || a.ask === 'f' ? ` <span class="formtag">${t('ask_' + a.ask)}</span>` : ''}</p>${illus(card)}${sense(card, lang, 'def big')}${typed}`;
+    else if (a.type === 'type') body = `<p class="question">${t(a.art ? 'qTypeArt' : 'qType')}${a.ask === 'm' || a.ask === 'f' ? ` <span class="formtag">${t('ask_' + a.ask)}</span>` : ''}</p>${illus(card)}${sense(card, lang, 'def big')}${typed}`;
     else body = `<p class="question">${t('qNumber')}</p><h2 class="word" lang="${lang}">${esc(card.bare)} ${listenBtn(card)}</h2>${typed}`;
   }
   return `<div class="card study" style="--th:${hue(card.theme)}">${body}</div>${fb ? feedbackView(step, lang) : ''}`;
@@ -1366,9 +1366,22 @@ function accentKeys(deck) {
   keyCache.set(owner, keys);
   return keys;
 }
+// Majuscule d'une touche, quand elle tient en un seul signe différent (« é » : « É » ; « ¿ » n'en a pas, « ß » en a deux).
+const upKey = ch => { const u = ch.toUpperCase(); return u !== ch && [...u].length === 1 ? u : ''; };
 function keyRow(deck, lang) {
   const keys = accentKeys(deck);
-  return keys.length ? `<div class="keys" role="group" aria-label="${t('keysLabel')}">${keys.map(ch => `<button type="button" class="key" data-action="key" data-ch="${esc(ch)}" lang="${lang}">${esc(ch)}</button>`).join('')}</div>` : '';
+  if (!keys.length) return '';
+  // Une majuscule garde son accent (« École », « Ça va ») : la touche « Maj » donne É, È, À, Ç… pour la lettre
+  // suivante, comme sur un téléphone, puis la rangée revient d'elle-même aux minuscules.
+  const shift = keys.some(upKey) ? `<button type="button" class="key shift" data-action="shift" aria-pressed="false" aria-label="${t('shiftLabel')}" title="${t('shiftLabel')}"><span aria-hidden="true">⇧</span></button>` : '';
+  return `<div class="keys" role="group" aria-label="${t('keysLabel')}">${shift}${keys.map(ch => `<button type="button" class="key" data-action="key" data-ch="${esc(ch)}" data-low="${esc(ch)}" lang="${lang}">${esc(ch)}</button>`).join('')}</div>`;
+}
+// Bascule la rangée entre minuscules et majuscules, sans redessiner l'écran (le texte tapé et le curseur restent en place).
+function shiftKeys(row, on) {
+  if (!row) return;
+  const b = row.querySelector('.key.shift'); if (!b) return;
+  b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  for (const k of row.querySelectorAll('.key[data-low]')) { const low = k.dataset.low || '', ch = on ? upKey(low) || low : low; k.dataset.ch = ch; k.textContent = ch; }
 }
 // Écrit la lettre d'une touche à l'endroit du curseur, sans redessiner l'écran : le texte déjà tapé et le curseur restent en place.
 function typeKey(b) {
@@ -1378,6 +1391,18 @@ function typeKey(b) {
   if (el.maxLength > 0 && el.value.length - (to - from) + ch.length > el.maxLength) return el.focus({ preventScroll: true });
   el.setRangeText(ch, from, to, 'end');
   el.focus({ preventScroll: true });
+  shiftKeys(b.closest('.keys'), false);      // « Maj » ne vaut que pour une lettre
+}
+
+// Message du second essai : il dit quoi regarder, sans donner la réponse. Un écart d'article (oublié, ou qui ne va
+// pas avec le mot) peut être le seul écart, ou s'ajouter à un autre : le message dit alors les deux, pour que
+// l'étudiant ne corrige pas l'un et échoue sur l'autre.
+function againText(L) {
+  const art = L.article === 'wrong' ? 'wrong' : L.article === 'missing' ? 'missing' : '';
+  const main = L.form ? t(L.form === 'm' || L.form === 'f' ? 'tryForm_' + L.form : 'tryForm')
+    : L.accent ? (L.slip && L.slip !== 'accent' ? t('tryChar', esc(L.slip)) : t('tryAccent')) + (L.cap ? ' ' + t('tryCap') : '')
+    : art ? '' : t('tryAgain');
+  return main ? main + (art ? ' ' + t(art === 'wrong' ? 'alsoArtWrong' : 'alsoArtMissing') : '') : t(art === 'wrong' ? 'tryArtWrong' : 'tryArtMissing');
 }
 
 // Réponse courte écrite. Un écart d'une lettre, d'un accent ou d'un signe donne droit à un second essai, à tous les niveaux ;
@@ -1385,7 +1410,7 @@ function typeKey(b) {
 function submitTyped(value) {
   const a = S.step.activity, L = S.local || {}, r = judge(value, a, S.session.deck, !!L.again);
   if (r.empty) return;
-  if (r.retry) { S.local = { again: true, accent: r.accent, slip: r.slip, form: r.form, value }; sfx('steps'); return render(); }
+  if (r.retry) { S.local = { again: true, accent: r.accent, slip: r.slip, cap: r.cap, article: r.article, form: r.form, value }; sfx('steps'); return render(); }
   const extra = { typed: value, shown: a.cloze ? a.answer : S.step.card.word };
   if (r.ok && !L.again) return ask({ ok: true, note: r.note }, extra);
   cheer(commit({ ok: !!r.ok, note: r.note, near: r.near }, { ...extra, assisted: !!L.again })); render();
@@ -1618,6 +1643,7 @@ app.addEventListener('click', e => {
   }
   else if (action === 'tour') startTour(id);
   else if (action === 'key') { if (S.view === 'session' && !S.feedback) typeKey(b); }
+  else if (action === 'shift') { if (S.view === 'session' && !S.feedback) { shiftKeys(b.closest('.keys'), b.getAttribute('aria-pressed') !== 'true'); b.closest('.study')?.querySelector('input[name="answer"], textarea[name="mine"]')?.focus({ preventScroll: true }); } }
   else if (action === 'chunk' && !S.feedback && !S.dragged) {
     const L = S.local ??= { picked: [], lock: 0 }, k = +b.dataset.k, i = L.picked.indexOf(k);
     if (i < 0) L.picked.push(k); else if (i >= L.lock) L.picked.splice(i, 1);

@@ -444,8 +444,12 @@ export function serialize(deck) {
 // Paquet complet (avec images et sons intégrés) : format d'échange .json d'Éléfiches.
 export function deckToJSON(deck) {
   // Le doute noté sur une fiche est une note de travail de l'enseignant : il reste dans son navigateur, pas dans le fichier donné aux étudiants.
-  const out = serialize(deck);
-  return JSON.stringify({ elefiches: 1, ...out, cards: out.cards.map(({ doubt, ...c }) => c) }, null, 1);
+  // Il en va de même des colonnes qu'Éléfiches n'a pas reconnues dans un tableur (« Notes perso », « Commentaires ») :
+  // elles ne s'affichent nulle part, et leur contenu peut être personnel. Ni ces colonnes (extra) ni la liste des
+  // noms de colonnes du tableur (fields, que rien ne relit : elle dirait encore « Notes perso » ou « Doute ») ne
+  // partent dans le fichier (décision du 26 novembre 2026).
+  const { fields, ...out } = serialize(deck);
+  return JSON.stringify({ elefiches: 1, ...out, cards: out.cards.map(({ doubt, extra, ...c }) => c) }, null, 1);
 }
 // Une IA entoure souvent le paquet d'un bloc de code ou d'une phrase : on ne garde que l'objet JSON.
 export const looksJSON = text => /^\s*(```\w*\s*)?\{/.test(text);

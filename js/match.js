@@ -1,7 +1,7 @@
 // Éléfiches — comparaison des réponses et fabrication des phrases à trous.
 // Aucune dépendance : ce module est testé seul dans tests/engine.test.mjs.
 
-// Même nettoyage que norm, mais la casse est gardée : elle sert à reconnaître un accent absent d'une majuscule.
+// Même nettoyage que norm, mais la casse est gardée : elle sert à dire si un accent manque sur une majuscule.
 // La ponctuation finale est retirée par une boucle, pas par une expression régulière : sur un très long texte plein
 // de ponctuation (paquet hostile), « [.!?;:,]+$ » coûtait un temps quadratique et figeait l'appli.
 function clean(s) {
@@ -18,7 +18,7 @@ export function noAcc(s) {
   return s.normalize('NFD').replace(/\p{M}/gu, '').replace(/œ/g, 'oe').replace(/æ/g, 'ae');
 }
 
-const ARTICLE = /^(?:(?:de la|de l'|un|une|des|le|la|les|du|the|an|a|to|el|los|las|una|unos|unas)\s+|l')/;
+const ARTICLE = /^(?:(?:de la|un|une|des|le|la|les|du|the|an|a|to|el|los|las|una|unos|unas)\s+|de l'|l')/;      // « de l'eau » : pas d'espace après l'apostrophe
 
 // Retire l'article initial, sauf si le mot entier est un article (fiche « Le »).
 export function noArt(s) {
@@ -56,55 +56,131 @@ function lev1(a, b) {                       // vrai si la distance d'édition va
   return diff + (a.length - i) + (b.length - j) <= 1;
 }
 
-// Lettre par lettre : la lettre nue, la lettre telle qu'elle est écrite, si elle a été tapée en majuscule et si elle
-// commence un mot. « œ » et « æ » comptent pour deux lettres, afin de s'aligner sur « oe » et « ae ».
+// Lettre par lettre : la lettre nue, la lettre telle qu'elle est écrite (en minuscule) et si elle a été tapée en
+// majuscule. « œ » et « æ » comptent pour deux lettres, afin de s'aligner sur « oe » et « ae ».
 function letters(s) {
-  const out = []; let first = true;
+  const out = []; let pend = '';
   for (const ch of s) {
     const low = ch.toLowerCase(), base = noAcc(low), up = ch !== low;
-    if (base.length === 1) out.push({ b: base, c: low, up, first });
-    else for (const b of base) out.push({ b, c: low, up, first, lig: true });
-    first = !/[\p{L}\p{M}\p{N}]/u.test(ch);
+    // Accent isolé, en trop : il s'ajoute à la lettre qui le porte (ou à la suivante s'il vient avant toute lettre), et se voit.
+    if (!base.length) { if (out.length) out[out.length - 1].c += low; else pend += low; continue; }
+    const at = out.length;
+    if (base.length === 1) out.push({ b: base, c: low, up });
+    else for (const b of base) out.push({ b, c: low, up, lig: true });
+    if (pend) { out[at].c += pend; pend = ''; }
   }
   return out;
 }
 // Nature de l'écart quand les lettres nues sont les mêmes et que seule leur écriture diffère.
-//   ''       : rien à reprocher. Ne sont pas comptés : un accent, un tréma ou une cédille absents de la majuscule qui
-//              commence un mot (« Ecole », « Ca va », « A bientôt » : usage courant, touches rares), et « œ » tapé là
-//              où le paquet écrit « oe ». Tout écrire en majuscules ne dispense donc pas des accents (« ECOLE » ne
-//              passe que pour son É), et « ñ », lettre à part entière, est exigé même en majuscule ;
+//   ''       : rien à reprocher. La casse ne compte pas (« école », « École » et « ÉCOLE » sont la même réponse), mais
+//              une majuscule garde son accent, sa cédille ou son tilde : « Ecole » pour « école » est un écart, comme
+//              « ecole » (décision du 26 novembre 2026 : aucune tolérance ; la rangée de touches a une touche « Maj »).
+//              Seule exception : « œ » tapé là où le paquet écrit « oe » ;
 //   'accent' : accent aigu, grave ou circonflexe manquant, en trop ou confondu ;
 //   sinon, la lettre attendue elle-même (« ç », « ñ », « œ », « ë »…), pour que le message puisse la nommer.
+// cap : l'écart porte sur une lettre tapée en majuscule (le message rappelle alors la touche « Maj »).
 // Les deux textes sont alignés par la fin : un article oublié au début ne décale rien.
-export function slip(typed, expected) {
+function slipInfo(typed, expected) {
   const A = letters(clean(typed)), B = letters(norm(expected));
-  let kind = '';
+  let kind = '', cap = false;
   for (let i = 1; i <= Math.min(A.length, B.length); i++) {
     const a = A[A.length - i], b = B[B.length - i];
     if (a.b !== b.b) break;
     if (a.c === b.c || (a.lig && !b.lig && b.c === b.b)) continue;          // « sœur » tapé pour un paquet qui écrit « soeur » : l'étudiant n'a pas tort (mais « nœl » n'est pas « noël »)
     const marks = (b.c + a.c).normalize('NFD').replace(/[a-z]/g, '');
-    if (a.up && a.first && a.c === a.b && !b.lig && !marks.includes('\u0303')) continue;   // majuscule initiale sans son accent
     const plain = /^[\u0300-\u0302]*$/.test(marks) && !a.lig && !b.lig;
-    if (!plain) return b.c !== b.b ? b.c : a.c;
-    kind = 'accent';
+    if (!plain) return { kind: b.c !== b.b ? b.c : a.c, cap: a.up };
+    kind = 'accent'; cap = cap || a.up;
   }
-  return kind;
+  return { kind, cap };
 }
+export const slip = (typed, expected) => slipInfo(typed, expected).kind;
+
+// ---------- Articles ----------
+// Ce que dit chaque article, langue par langue : genre (m, f, ou '' quand l'article ne le montre pas), nombre, et
+// pour le français s'il est élidé (« l' ») ou s'il devrait l'être devant une voyelle (« le », « la », « du », « de la »).
+const ART = {
+  fr: { re: /^(?:(de la|du|une|un|les|le|la|des)\s+|(de l'|l'))(?=\S)/,
+    of: { un: 'ms', une: 'fs', le: 'ms-', la: 'fs-', du: 'ms-', 'de la': 'fs-', "l'": ' s+', "de l'": ' s+', les: ' p', des: ' p' } },
+  es: { re: /^(?:(el|la|los|las|unos|unas|una|un)\s+)(?=\S)/,
+    of: { el: 'ms', la: 'fs', los: 'mp', las: 'fp', un: 'ms', una: 'fs', unos: 'mp', unas: 'fp' } },
+  en: { re: /^(?:(an|a|the|to)\s+)(?=\S)/, of: { a: ' sa', an: ' sn', the: ' s', to: ' st' } },
+};
+// L'article qui ouvre une forme (déjà en minuscules), ou null. « Le » seul est un mot, pas un article suivi d'un nom.
+export function articleOf(form, lang) {
+  const T = ART[lang], m = T && T.re.exec(form);
+  if (!m) return null;
+  const word = m[1] || m[2], f = T.of[word];
+  return { word, g: f[0].trim(), n: f[1], x: f[2] || '' };
+}
+// Seul un nom (ou une fiche dont la catégorie n'est pas connue) a un article qui peut s'échanger contre un autre.
+// « Un peu », « la plupart », « a lot », « to run » ne sont pas un nom précédé de son article : leur premier mot
+// est exigé tel quel, et un article ajouté devant un verbe ou un adjectif ne convient jamais.
+const fixedArt = kind => !!kind && kind !== 'autre' && kind !== 'nom';
+// L'article tapé peut-il aller avec ce mot ? e : l'article de la fiche, s'il y en a un ; noun : le mot sans article.
+function clash(t, e, noun, lang, gender) {
+  if (lang === 'fr') {
+    // Élision : elle dépend du début du nom. Devant une voyelle, « l' » et « de l' » sont les seules formes justes
+    // (« l'école », jamais « la école ») ; devant une consonne, jamais (« l'café »). La fiche tranche quand son
+    // article le montre (« l'hôtel », « le haricot », « la ouate ») ; sinon, devant « h », « y » et quelques mots à
+    // part (« le onze », « le oui », « le iota »), les deux formes sont admises : l'appli ne devine pas.
+    const n = noAcc(noun), x = e ? e.x : '';
+    const start = x === '+' ? 'V' : x === '-' ? 'C' : /^(?:[hy]|onz|oui(?![a-z])|ouistiti|ouate|uhlan|ululement|iota|ola(?![a-z])|one-)/.test(n) ? 'H' : /^[aeiou]/.test(n) ? 'V' : 'C';
+    if ((t.x === '+' && start === 'C') || (t.x === '-' && start === 'V')) return true;
+  }
+  // Espagnol, nom féminin qui commence par un « a » tonique (« el agua », « un aula ») : « el » est obligatoire, « la »
+  // est une faute, et « una » reste admis à côté de « un » (Diccionario panhispánico de dudas, articles « el » et « uno »).
+  if (lang === 'es' && e && gender === 'f' && (e.word === 'el' || e.word === 'un')) return t.word === 'la';
+  const eg = gender === 'mf' ? '' : (e && e.g) || (gender === 'm' || gender === 'f' ? gender : '');
+  return !!(eg && t.g && eg !== t.g);
+}
+// Écart d'article entre la réponse tapée et la forme attendue, toutes deux en minuscules :
+//   null      : langue sans règle connue (l'appelant garde alors la simple remarque) ;
+//   ''        : rien à dire. L'article tapé convient : le même, ou un autre du même genre et du même nombre
+//               (« le café » pour « un café », « le pain » pour « du pain ») ; ou la forme attendue n'a pas
+//               d'article (rien n'est exigé) et celui que l'étudiant ajoute peut aller avec le mot ;
+//   'missing' : la forme attendue a un article, la réponse n'en a pas ;
+//   'wrong'   : l'article tapé ne va pas avec ce mot : autre genre (« une café »), autre nombre (« des café »),
+//               élision manquée ou en trop (« la addition », « l'café »), « a » pour « an », « the » pour « to ».
+// gender : genre connu de la fiche ('m', 'f', 'mf'), utile quand l'article attendu ne le montre pas (« l'addition »).
+function artGap(typed, expected, lang, gender, kind) {
+  const T = ART[lang];
+  if (!T) return null;
+  const e = articleOf(expected, lang), t = articleOf(typed, lang), fixed = fixedArt(kind);
+  // Article ajouté à une forme qui n'en a pas : pas une faute pour un nom, sauf s'il ne peut pas aller avec lui (« la école », « une café »).
+  if (!e) return !t ? '' : fixed ? 'wrong' : lang !== 'en' && clash(t, null, expected, lang, gender) ? 'wrong' : '';
+  if (!t) return 'missing';
+  if (t.word === e.word) return '';
+  if (fixed || t.n !== e.n) return 'wrong';
+  if (lang === 'en') return (t.word === 'the' || e.word === 'the') && t.word !== 'to' && e.word !== 'to' ? '' : 'wrong';      // « the cat » pour « a cat » : rien à dire ; « a apple », « to » : non
+  return clash(t, e, expected.replace(T.re, ''), lang, gender) ? 'wrong' : '';
+}
+
+// Signes invisibles : espace sans chasse, trait d'union virtuel (fréquent dans un texte copié), marques de sens
+// d'écriture, sélecteurs de variante, caractères de commande. Ils sont ignorés dans la comparaison, des deux côtés :
+// laissés dans le mot d'une fiche, ils la rendraient impossible à réussir (la réponse visible ne serait jamais égale).
+const UNSEEN = /[\p{Cf}͏ᅟᅠ឴឵᠋-᠏ㅤﾠ︀-️\u{E0100}-\u{E01EF}]|(?![\t\n\v\f\r])\p{Cc}/gu;
+const seen = s => String(s ?? '').replace(UNSEEN, '');
+// Ce qui reste de visible dans un mot : rien, pour une fiche faite seulement de signes invisibles.
+export const visible = s => seen(s).trim();
 
 const OPENING = /[¿¡]/g, HAS_OPENING = /[¿¡]/;
 
 // Compare une réponse écrite aux formes acceptées.
-//   ok:true                 : la forme exacte (casse et ponctuation finale à part) ;
-//   ok:true, note 'article' : le bon mot, sans son article ou avec un autre ;
+//   ok:true                 : la forme exacte (casse et ponctuation finale à part), ou le bon mot avec un autre article
+//                             qui lui convient ;
+//   ok:true, note 'article' : le bon mot, mais son article manque (art:'missing') ou ne lui convient pas (art:'wrong') ;
 //   ok:true, note 'open'    : il ne manque que le signe qui ouvre une question ou une exclamation en espagnol ;
-//   ok:true, note 'accent'  : les bonnes lettres, mais un accent ou un signe à revoir (slip dit lequel). C'est à
-//                             l'appelant de décider ce qu'il en fait : voir judge, dans session.js ;
-//   ok:false, near:true     : une lettre d'écart.
-export function check(input, accepted, minNear = 5) {
-  const typed = clean(input).replace(OPENING, '').trim(), a = typed.toLowerCase();
+//   ok:true, note 'accent'  : les bonnes lettres, mais un accent ou un signe à revoir (slip dit lequel, cap si la
+//                             lettre a été tapée en majuscule, art s'il y a aussi un écart d'article) ;
+//   ok:false, near:true     : une lettre d'écart (art s'il y a aussi un écart d'article).
+// C'est à l'appelant de décider ce qu'il fait des notes 'accent' et 'article' : voir judge, dans session.js.
+// opt.lang : langue du paquet (règles d'article) ; opt.gender : genre connu de la fiche ; opt.kind : sa catégorie
+// grammaticale (seul un nom, ou une fiche de catégorie inconnue, a un article qui s'échange contre un autre).
+export function check(input, accepted, minNear = 5, { lang = '', gender = '', kind = '' } = {}) {
+  const typed = clean(seen(input)).replace(OPENING, '').trim(), a = typed.toLowerCase();
   if (!a) return { ok: false, empty: true };
-  const strip = v => norm(v).replace(OPENING, '').trim(), acc = accepted.map(strip);
+  const strip = v => norm(seen(v)).replace(OPENING, '').trim(), acc = accepted.map(strip);
   // Le rappel du signe d'ouverture (« ¿ », « ¡ ») ne vaut que si la forme reconnue en porte un dans la fiche.
   const signless = new Set(accepted.filter(v => !HAS_OPENING.test(String(v))).map(strip)), bare1 = !HAS_OPENING.test(String(input));
   const fine = (forms, note) => (note ? { ok: true, note } : bare1 && forms.every(v => !signless.has(v)) ? { ok: true, note: 'open' } : { ok: true });
@@ -112,18 +188,29 @@ export function check(input, accepted, minNear = 5) {
   const a2 = noAcc(a);
   const same = acc.filter(v => noAcc(v) === a2);
   if (same.length) {
-    const kinds = same.map(v => slip(typed, v));
-    return kinds.includes('') ? fine(same.filter((v, i) => kinds[i] === '')) : { ok: true, note: 'accent', slip: kinds[0] };
+    const kinds = same.map(v => slipInfo(typed, v));
+    return kinds.some(k => !k.kind) ? fine(same.filter((v, i) => !kinds[i].kind)) : { ok: true, note: 'accent', slip: kinds[0].kind, ...(kinds[0].cap ? { cap: true } : {}) };
   }
   // L'article est retiré avant les accents : « à » n'est pas l'article anglais « a » (« côté » n'est pas « à côté »).
-  const bareOf = v => noAcc(noArt(v)), a3 = bareOf(a);
+  // Quand la langue du paquet est connue, seul un article de cette langue est retiré : « a veces » n'est pas « veces »
+  // en espagnol, ni « à bientôt » « bientôt » en français (« a » n'est un article qu'en anglais).
+  const T = ART[lang], unArt = v => (T ? v.replace(T.re, '') : noArt(v)), bareOf = v => noAcc(unArt(v)), a3 = bareOf(a);
+  const gap = v => artGap(a, v, lang, gender, kind), art = g => (g ? { art: g } : {});
   const bare = acc.filter(v => bareOf(v) === a3);
   if (bare.length) {
-    const kinds = bare.map(v => slip(typed, v));
-    return kinds.includes('') ? fine(bare, 'article') : { ok: true, note: 'accent', slip: kinds[0] };
+    const found = bare.map(v => ({ v, k: slipInfo(typed, v), g: gap(v) }));
+    const clear = found.filter(f => !f.k.kind);
+    if (clear.length) {
+      const right = clear.filter(f => f.g === '');
+      if (right.length) return fine(right.map(f => f.v));                    // un autre article, qui convient au mot
+      return { ok: true, note: 'article', art: clear[0].g || 'missing' };    // langue sans règle (g null) : simple remarque, comme avant
+    }
+    const f = found.find(x => !x.g) || found[0];
+    return { ok: true, note: 'accent', slip: f.k.kind, ...(f.k.cap ? { cap: true } : {}), ...art(f.g) };
   }
   // Une lettre d'écart, avec ou sans l'article (« chot » pour « un chat »).
-  if (acc.some(v => (v.length >= minNear && lev1(noAcc(v), a2)) || (bareOf(v).length >= minNear && lev1(bareOf(v), a3)))) return { ok: false, near: true };
+  const close = acc.filter(v => (v.length >= minNear && lev1(noAcc(v), a2)) || (bareOf(v).length >= minNear && lev1(bareOf(v), a3)));
+  if (close.length) { const gaps = close.map(gap); return { ok: false, near: true, ...(gaps.some(g => !g) ? {} : art(gaps[0])) }; }
   return { ok: false };
 }
 

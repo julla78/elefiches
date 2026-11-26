@@ -33,11 +33,16 @@ t('variants', () => {
 t('check', () => {
   assert.deepEqual(check('un emploi', ['un emploi']), { ok: true });
   assert.equal(check('Etre recrute', variants('Être recruté(e)')).note, 'accent');
-  assert.equal(check('Etre recruté', variants('Être recruté(e)')).note, undefined, 'majuscule sans accent : rien à signaler');
-  assert.equal(slip('Ecole', 'école'), ''); assert.equal(slip('ecole', 'école'), 'accent'); assert.equal(slip('soeur', 'une sœur'), 'œ'); assert.equal(slip('ano', 'año'), 'ñ'); assert.equal(slip('francais', 'français'), 'ç');
+  assert.equal(check('Etre recruté', variants('Être recruté(e)')).note, 'accent', 'majuscule sans accent : un écart, comme en minuscule');
+  assert.deepEqual(check('Être recruté', variants('Être recruté(e)')), { ok: true }); assert.equal(check('Etre recruté', variants('Être recruté(e)')).cap, true);
+  assert.equal(slip('Ecole', 'école'), 'accent'); assert.equal(slip('École', 'école'), ''); assert.equal(slip('ÉCOLE', 'école'), ''); assert.equal(slip('ecole', 'école'), 'accent'); assert.equal(slip('soeur', 'une sœur'), 'œ'); assert.equal(slip('ano', 'año'), 'ñ'); assert.equal(slip('francais', 'français'), 'ç');
   assert.deepEqual(check('hola', ['¡Hola!']), { ok: true, note: 'open' }); assert.deepEqual(check('¡Hola!', ['¡Hola!']), { ok: true }); assert.deepEqual(check('¡hola!', ['hola']), { ok: true });
   assert.equal(check('emploi', ['un emploi']).note, 'article');
   assert.equal(check('le emploi', ['un emploi']).ok, true);
+  // Avec la langue du paquet, l'écart d'article est qualifié : oublié, ou qui ne va pas avec le mot.
+  assert.deepEqual(check('emploi', ['un emploi'], 5, { lang: 'fr' }), { ok: true, note: 'article', art: 'missing' });
+  assert.deepEqual(check('une emploi', ['un emploi'], 5, { lang: 'fr' }), { ok: true, note: 'article', art: 'wrong' });
+  assert.deepEqual(check('le café', ['un café'], 5, { lang: 'fr' }), { ok: true }); assert.deepEqual(check('un café', ['café'], 5, { lang: 'fr' }), { ok: true });
   assert.equal(check('emplo', ['un emploi']).ok, false);
   assert.equal(check('un emploie', ['un emploi']).near, true);
   assert.equal(check('boulot', ['un emploi']).ok, false);
@@ -171,13 +176,18 @@ t('réponse écrite : forme exacte exigée à tous les niveaux, second essai pou
   // Mot court : le second essai est plus généreux en A1 et A2 (quatre lettres) qu'au-delà (cinq).
   const chat = { type: 'type', answer: 'chat', accepted: ['chat'] };
   assert.ok(judge('chta', chat, at('A1')).retry === undefined && judge('chas', chat, at('A1')).retry); assert.ok(!judge('chas', chat, at('B1')).retry && !judge('chas', chat, at('B1')).ok);
-  // Majuscule qui commence un mot, sans son accent : acceptée (« Ecole », « Ca va », « A bientôt »). En minuscule, l'accent est exigé.
+  // Majuscules : aucune tolérance (décision du 26 novembre). La casse ne compte pas, mais une majuscule garde son accent :
+  // « Ecole » donne un second essai comme « ecole », et le message rappelle la touche « Maj » (cap).
   const eco = { type: 'type', answer: 'école', accepted: ['école', 'une école'] }, one = w => ({ type: 'type', answer: w, accepted: [w] });
-  assert.deepEqual(judge('Ecole', eco, at('A1')), { ok: true }); assert.deepEqual(judge('Une Ecole', eco, at('B2')), { ok: true }); assert.deepEqual(judge('ECOLE', eco, at('B2')), { ok: true });
-  assert.deepEqual(judge('Ca va', one('ça va'), at('A1')), { ok: true }); assert.deepEqual(judge('A bientôt', one('à bientôt'), at('A1')), { ok: true });
+  assert.deepEqual(judge('Ecole', eco, at('A1')), { retry: true, accent: true, slip: 'accent', cap: true }); assert.deepEqual(judge('Une Ecole', eco, at('B2')), { retry: true, accent: true, slip: 'accent', cap: true });
+  assert.deepEqual(judge('ECOLE', eco, at('B2')), { retry: true, accent: true, slip: 'accent', cap: true }); assert.deepEqual(judge('Ecole', eco, at('A1'), true), { ok: false, near: true });
+  assert.deepEqual(judge('École', eco, at('A1')), { ok: true }); assert.deepEqual(judge('ÉCOLE', eco, at('C2')), { ok: true }); assert.deepEqual(judge('école', eco, at('A1')), { ok: true }); assert.deepEqual(judge('Une École', eco, at('B2')), { ok: true });
+  assert.deepEqual(judge('Ca va', one('ça va'), at('A1')), { retry: true, accent: true, slip: 'ç', cap: true }); assert.deepEqual(judge('Ça va', one('ça va'), at('A1')), { ok: true });
+  assert.deepEqual(judge('A bientôt', one('à bientôt'), at('A1')), { retry: true, accent: true, slip: 'accent', cap: true }); assert.deepEqual(judge('À bientôt', one('à bientôt'), at('A1')), { ok: true });
   assert.deepEqual(judge('ecole', eco, at('A1')), { retry: true, accent: true, slip: 'accent' });
   assert.deepEqual(judge('Ecole', one('élève'), at('A1')), { ok: false }, 'un autre mot reste faux');
-  assert.deepEqual(judge('Eleve', one('élève'), at('A1')), { retry: true, accent: true, slip: 'accent' }, 'la majuscule n’excuse que son propre accent');
+  assert.deepEqual(judge('Eleve', one('élève'), at('A1')), { retry: true, accent: true, slip: 'accent', cap: true });
+  assert.deepEqual(judge('El', one('él'), at('A1', 'es')), { retry: true, accent: true, slip: 'accent', cap: true }, 'plus de majuscule excusée, dans aucune langue');
   // Tout écrire en majuscules ne dispense pas des accents, et « ñ » est exigé même en majuscule (relecture de sécurité, C1).
   assert.equal(judge('ELEVE', one('élève'), at('A1')).slip, 'accent'); assert.equal(judge('GARCON', one('garçon'), at('A1')).slip, 'ç'); assert.equal(judge('NOEL', one('noël'), at('A1')).slip, 'ë');
   assert.equal(judge('ANO', one('año'), at('A1', 'es')).slip, 'ñ'); assert.equal(judge('NINO', one('niño'), at('A1', 'es')).slip, 'ñ'); assert.equal(judge('Ñu', one('ñu'), at('A1', 'es')).ok, true); assert.equal(judge('Nu', one('ñu'), at('A1', 'es')).slip, 'ñ');
@@ -190,11 +200,13 @@ t('réponse écrite : forme exacte exigée à tous les niveaux, second essai pou
   assert.equal(judge('noel', one('noël'), at('B1')).slip, 'ë'); assert.equal(judge('nino', one('niño'), at('A1', 'es'), true).ok, false);
   assert.deepEqual(judge('sœur', one('sœur'), at('A1')), { ok: true }); assert.deepEqual(judge('sœur', one('soeur'), at('A1')), { ok: true }, 'paquet écrit sans ligature : la bonne graphie de l’étudiant est acceptée'); assert.deepEqual(judge('año', one('año'), at('A1', 'es')), { ok: true });
   // Article oublié et accent oublié ensemble : c'est l'accent qui est signalé (il était pris pour un simple oubli d'article).
-  assert.deepEqual(judge('cafe', { type: 'type', answer: 'un café', accepted: ['un café'] }, at('A1')), { retry: true, accent: true, slip: 'accent' });
-  assert.equal(judge('café', { type: 'type', answer: 'un café', accepted: ['un café'] }, at('A1')).note, 'article');
+  // (depuis la 15a bis, l'article oublié est dit en même temps : voir le groupe « version 15a bis ».)
+  assert.deepEqual(judge('cafe', { type: 'type', answer: 'un café', accepted: ['un café'] }, at('A1')), { retry: true, accent: true, slip: 'accent', article: 'missing' });
+  assert.deepEqual(judge('café', { type: 'type', answer: 'un café', accepted: ['un café'] }, at('A1')), { retry: true, article: 'missing' });
   // Une lettre d'écart sans l'article : second essai aussi (« chot » pour « un chat »). « à » n'est pas un article.
-  assert.deepEqual(judge('chot', one('un chat'), at('A1')), { retry: true, accent: false }); assert.deepEqual(judge('adition', { type: 'type', answer: "l'addition", accepted: ["l'addition"] }, at('B1')), { retry: true, accent: false });
-  assert.deepEqual(judge('côté', one('à côté'), at('A1')), { ok: false }); assert.deepEqual(judge('A côté', one('à côté'), at('A1')), { ok: true }); assert.equal(judge('chat', one('un chat'), at('A1')).note, 'article');
+  assert.deepEqual(judge('chot', one('un chat'), at('A1')), { retry: true, accent: false, article: 'missing' }); assert.deepEqual(judge('adition', { type: 'type', answer: "l'addition", accepted: ["l'addition"] }, at('B1')), { retry: true, accent: false, article: 'missing' });
+  assert.deepEqual(judge('un chot', one('un chat'), at('A1')), { retry: true, accent: false });
+  assert.deepEqual(judge('côté', one('à côté'), at('A1')), { ok: false }); assert.deepEqual(judge('À côté', one('à côté'), at('A1')), { ok: true }); assert.deepEqual(judge('chat', one('un chat'), at('A1')), { retry: true, article: 'missing' });
   // « œ » tapé n'avale pas un accent attendu (« nœl » n'est pas « noël »), mais reste accepté quand le paquet écrit « oe ».
   assert.equal(judge('nœl', one('noël'), at('A1')).slip, 'ë'); assert.equal(judge('pœte', one('poète'), at('A1')).slip, 'è'); assert.deepEqual(judge('cœur', one('coeur'), at('A1')), { ok: true });
   // Espagnol : le signe qui ouvre la question n'est pas exigé (la ponctuation finale ne l'est pas non plus), mais il est rappelé.
@@ -216,8 +228,7 @@ t('réponse écrite : forme exacte exigée à tous les niveaux, second essai pou
   assert.deepEqual(judge('preferer', { type: 'cloze-type', answer: 'préfère', accepted: ['préfère'], lemmas: ['préférer'] }, at('B1')), { retry: true, accent: true, slip: 'accent' });
   assert.equal(judge('préférer', { type: 'cloze-type', answer: 'préfère', accepted: ['préfère'], lemmas: ['préférer'] }, at('B1')).note, 'form');
   for (const lv of ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']) assert.ok(SPEC[lv].near >= 4 && SPEC[lv].lenient === undefined);
-  // La forme de base à la place de la forme de la phrase est acceptée et signalée, à tous les niveaux.
-  assert.equal(judge('une terrasse', act, at('C1')).note, 'article'); assert.ok(judge('', act, at('B1')).empty);
+  assert.deepEqual(judge('une terrasse', act, at('C1')), { ok: true }, 'phrase à trou : l’article écrit en plus n’est pas une faute'); assert.ok(judge('', act, at('B1')).empty);
   assert.equal(judge('bosser', { type: 'cloze-type', answer: 'bosse', accepted: ['bosse'], lemmas: ['bosser'] }, at('B1')).note, 'form');
   assert.equal(hintOf('café', 'pattern'), 'c _ _ _'); assert.equal(hintOf('il y a', 'pattern'), 'i _   _   _'); assert.equal(hintOf('café', 'first'), 'c…'); assert.equal(hintOf('café', ''), '');
   for (const lv of ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']) { assert.ok(SPEC[lv].options >= 3); for (const k of ['words', 'def', 'ex', 'traps']) assert.ok(WRITING[lv][k].length > 20); }
@@ -1078,6 +1089,154 @@ t('code d’accès enseignant : seule l’empreinte est gardée, un mauvais code
   for (const broken of ['', null, 'pbkdf2$1$00$00', line.slice(0, -1), line.replace('pbkdf2', 'md5'), 'pbkdf2$99999999$' + '0'.repeat(32) + '$' + '0'.repeat(64)]) assert.equal(await checkAccess('quatre mots bien choisis', broken), false);
   await assert.rejects(() => makeAccess('court'), /short/); await assert.rejects(() => makeAccess('123456789012'), /weak/); await assert.rejects(() => makeAccess('1234 5678 9012'), /weak/); await assert.rejects(() => makeAccess('aaaaaaaaaaaab'), /weak/);
   for (const it of ['0000', '9999999']) assert.ok(!validAccess(line.replace('$1000$', '$' + it + '$')), 'une ligne qui ne pourrait jamais s’ouvrir n’active pas la porte');
+});
+
+t('version 15a bis : article exigé en français et en espagnol (second essai), simple remarque en anglais', async () => {
+  const at = (lv, lang = 'fr') => ({ level: lv, lang }), one = (w, extra = {}) => ({ type: 'type', answer: w, accepted: [w], ...extra });
+  const miss = { retry: true, article: 'missing' }, bad = { retry: true, article: 'wrong' }, fine = { ok: true };
+  for (const lv of ['A1', 'B1', 'C2']) {
+    // Article oublié : second essai, puis erreur s'il manque encore ; corrigé, c'est juste (et compté comme aidé par l'appli).
+    assert.deepEqual(judge('café', one('un café'), at(lv)), miss, lv); assert.deepEqual(judge('café', one('un café'), at(lv), true), { ok: false, near: true }); assert.deepEqual(judge('un café', one('un café'), at(lv), true), fine);
+    // Article qui ne va pas avec le mot : autre genre, autre nombre, élision manquée ou en trop.
+    for (const x of ['une café', 'la café', "l'café", 'des café', 'de la café']) assert.deepEqual(judge(x, one('un café'), at(lv)), bad, x);
+    // Un autre article du même genre et du même nombre : accepté sans remarque.
+    for (const x of ['le café', 'du café', 'Un café', 'LE CAFÉ']) assert.deepEqual(judge(x, one('un café'), at(lv)), fine, x);
+  }
+  // L'article ne dit pas le genre (« l' », « les », « des ») : il est exigé quand même, et le genre de la fiche départage.
+  const add = one("l'addition", { gender: 'f' });
+  assert.deepEqual(judge('addition', add, at('A1')), miss); assert.deepEqual(judge("l'addition", add, at('A1')), fine); assert.deepEqual(judge('L’addition', add, at('A1')), fine);
+  assert.deepEqual(judge('une addition', add, at('A1')), fine); assert.deepEqual(judge("de l'addition", add, at('A1')), fine);
+  assert.deepEqual(judge('un addition', add, at('A1')), bad); assert.deepEqual(judge('la addition', add, at('A1')), bad); assert.deepEqual(judge('les addition', add, at('A1')), bad);
+  assert.deepEqual(judge('un addition', one("l'addition"), at('A1')), fine, 'genre inconnu de la fiche : l’appli ne tranche pas');
+  assert.deepEqual(judge('un élève', one('un élève', { gender: 'mf' }), at('A1')), fine); assert.deepEqual(judge('une élève', one('un élève', { gender: 'mf' }), at('A1')), fine, 'nom des deux genres');
+  assert.deepEqual(judge('toilettes', one('les toilettes'), at('A2')), miss); assert.deepEqual(judge('des toilettes', one('les toilettes'), at('A2')), fine); assert.deepEqual(judge('la toilettes', one('les toilettes'), at('A2')), bad);
+  assert.deepEqual(judge('pain', one('du pain'), at('A1')), miss); assert.deepEqual(judge('le pain', one('du pain'), at('A1')), fine); assert.deepEqual(judge('un pain', one('du pain'), at('A1')), fine); assert.deepEqual(judge('la pain', one('du pain'), at('A1')), bad);
+  assert.deepEqual(judge('la confiture', one('de la confiture'), at('A1')), fine); assert.deepEqual(judge('du confiture', one('de la confiture'), at('A1')), bad); assert.deepEqual(judge('confiture', one('de la confiture'), at('A1')), miss);
+  // Fiche sans article : rien n'est exigé, et en écrire un n'est pas une faute. Un mot qui est lui-même un article reste un mot.
+  assert.deepEqual(judge('un café', one('café'), at('A1')), fine); assert.deepEqual(judge('café', one('café'), at('A1')), fine); assert.deepEqual(judge('le', one('le'), at('A1')), fine);
+  assert.deepEqual(judge('manger', one('manger'), at('A1')), fine); assert.ok(!judge('un thé', one('un café'), at('A1')).ok && !judge('un thé', one('un café'), at('A1')).retry, 'un autre mot reste faux');
+  // Deux écarts à la fois : le message doit dire les deux, sinon l'étudiant corrige l'un et échoue sur l'autre.
+  assert.deepEqual(judge('ecole', one('une école'), at('A1')), { retry: true, accent: true, slip: 'accent', article: 'missing' });
+  assert.deepEqual(judge('Ecole', one('une école'), at('A1')), { retry: true, accent: true, slip: 'accent', cap: true, article: 'missing' });
+  assert.deepEqual(judge('un ecole', one('une école'), at('A1')), { retry: true, accent: true, slip: 'accent', article: 'wrong' });
+  assert.deepEqual(judge('teras', one('une terrasse'), at('A1')), { ok: false }); assert.deepEqual(judge('terasse', one('une terrasse'), at('A1')), { retry: true, accent: false, article: 'missing' });
+  assert.deepEqual(judge('une terasse', one('une terrasse'), at('A1')), { retry: true, accent: false });
+  // Espagnol : même règle. Nom féminin à « a » tonique : « el » obligatoire, « un » et « una » admis, « la » fautif.
+  assert.deepEqual(judge('mesa', one('una mesa'), at('A1', 'es')), miss); assert.deepEqual(judge('la mesa', one('una mesa'), at('A1', 'es')), fine); assert.deepEqual(judge('un mesa', one('una mesa'), at('A1', 'es')), bad); assert.deepEqual(judge('unas mesa', one('una mesa'), at('A1', 'es')), bad);
+  const agua = one('el agua', { gender: 'f' }), aula = one('un aula', { gender: 'f' });
+  for (const x of ['el agua', 'un agua', 'una agua']) assert.deepEqual(judge(x, agua, at('A1', 'es')), fine, x);
+  assert.deepEqual(judge('la agua', agua, at('A1', 'es')), bad); assert.deepEqual(judge('agua', agua, at('A1', 'es')), miss);
+  assert.deepEqual(judge('una aula', aula, at('A1', 'es')), fine); assert.deepEqual(judge('la aula', aula, at('A1', 'es')), bad); assert.deepEqual(judge('el aula', aula, at('A1', 'es')), fine);
+  assert.deepEqual(judge('las gafas', one('unas gafas'), at('A1', 'es')), fine); assert.deepEqual(judge('unos gafas', one('unas gafas'), at('A1', 'es')), bad);
+  assert.deepEqual(judge('cafe', one('un café'), at('A1', 'es')), { retry: true, accent: true, slip: 'accent', article: 'missing' });
+  // Anglais : article oublié ou mal choisi (« a apple »), « to » oublié : accepté avec une remarque, jamais de second essai.
+  for (const x of ['apple', 'a apple']) assert.deepEqual(judge(x, one('an apple'), at('A1', 'en')), { ok: true, note: 'article', art: x === 'apple' ? 'missing' : 'wrong' }, x);
+  assert.deepEqual(judge('the apple', one('an apple'), at('A1', 'en')), fine); assert.equal(judge('eat', one('to eat'), at('B2', 'en-GB')).note, 'article'); assert.deepEqual(judge('an apple', one('apple'), at('A1', 'en')), fine);
+  // Langue sans règle d'article connue : la simple remarque d'avant.
+  assert.equal(judge('caffè', one('un caffè'), at('A1', 'it')).note, 'article'); assert.equal(judge('caffè', one('un caffè'), at('A1', 'it')).retry, undefined);
+  // Phrase à trou : seul ce que le trou contient est exigé. L'article écrit dans la phrase n'est pas demandé, et la forme de base reste reconnue.
+  const gap = { type: 'cloze-type', answer: 'café', accepted: ['café'], lemmas: ['un café'] }, plural = { type: 'cloze-type', answer: 'cafés', accepted: ['cafés'], lemmas: ['un café'] };
+  assert.deepEqual(judge('café', gap, at('A1')), fine); assert.deepEqual(judge('un café', gap, at('A1')), fine); assert.deepEqual(judge('café', plural, at('B1')), { ok: true, note: 'form' }); assert.deepEqual(judge('un café', plural, at('B1')), { ok: true, note: 'form' });
+  // Fiche à deux formes : l'article de la forme demandée est exigé lui aussi.
+  const srv = { type: 'type', answer: 'une serveuse', accepted: ['une serveuse'], both: ['un serveur', 'une serveuse'], ask: 'f', gender: 'f' };
+  assert.deepEqual(judge('serveuse', srv, at('A1')), miss, 'la bonne forme sans article : message de l’article, pas celui de la forme');
+  assert.deepEqual(judge('un serveuse', srv, at('A1')), bad); assert.deepEqual(judge('la serveuse', srv, at('A1')), fine); assert.deepEqual(judge('une serveuse', srv, at('A1')), fine);
+  assert.deepEqual(judge('un serveur', srv, at('A1')), { retry: true, form: 'f' }); assert.deepEqual(judge('serveur', srv, at('A1')), { retry: true, form: 'f', article: 'missing' });
+  assert.deepEqual(judge('un serveur, une serveuse', srv, at('A1')), { ok: true, note: 'both' }); assert.deepEqual(judge('serveur, serveuse', srv, at('A1')), miss);
+  assert.deepEqual(judge('serveuse', srv, at('A1'), true), { ok: false, near: true }); assert.deepEqual(judge('serveur', srv, at('A1'), true), { ok: false, near: true });
+  const cher = { type: 'type', answer: 'chère', accepted: ['chère'], both: ['cher', 'chère'], ask: 'f', gender: 'f' };
+  assert.deepEqual(judge('chère', cher, at('A1')), fine); assert.deepEqual(judge('cher', cher, at('A1')), { retry: true, form: 'f' }, 'adjectif : aucun article en jeu');
+  // Élision : elle se juge sur le début du nom, pas sur l'article de la fiche (relecture de sécurité, S1). Les prompts
+  // demandent « une école » : « l'école » est donc la bonne réponse d'un étudiant qui sait, et « la école » une faute.
+  const ecole = one('une école', { gender: 'f' }), ami = one('un ami', { gender: 'm' });
+  for (const x of ["l'école", "L'école", 'une école', "de l'école"]) assert.deepEqual(judge(x, ecole, at('A1')), fine, x);
+  for (const x of ['la école', 'le école', 'un école', 'de la école', 'du école']) assert.deepEqual(judge(x, ecole, at('A1')), bad, x);
+  assert.deepEqual(judge("l'ami", ami, at('A1')), fine); assert.deepEqual(judge('le ami', ami, at('A1')), bad); assert.deepEqual(judge('du ami', ami, at('A1')), bad); assert.deepEqual(judge('une ami', ami, at('A1')), bad);
+  assert.deepEqual(judge("l'ecole", ecole, at('A1')), { retry: true, accent: true, slip: 'accent' }); assert.deepEqual(judge('la ecole', ecole, at('A1')), { retry: true, accent: true, slip: 'accent', article: 'wrong' });
+  // Devant « h » ou « y », la fiche tranche quand elle le montre ; sinon l'appli ne devine pas et admet les deux formes.
+  for (const x of ["l'hôtel", 'le hôtel', 'un hôtel']) assert.deepEqual(judge(x, one('un hôtel', { gender: 'm' }), at('A1')), fine, x);
+  assert.deepEqual(judge('le hôtel', one("l'hôtel", { gender: 'm' }), at('A1')), bad); assert.deepEqual(judge('un hôtel', one("l'hôtel", { gender: 'm' }), at('A1')), fine);
+  assert.deepEqual(judge("l'haricot", one('le haricot'), at('A1')), bad); assert.deepEqual(judge('un haricot', one('le haricot'), at('A1')), fine); assert.deepEqual(judge('le yaourt', one('un yaourt'), at('A1')), fine);
+  // L'apostrophe se colle au mot : « l' eau » n'est pas reconnu comme un article (une lettre d'écart : second essai).
+  assert.ok(!judge("l' eau", one("l'eau", { gender: 'f' }), at('A1')).ok); assert.deepEqual(judge("de l'eau", one("de l'eau", { gender: 'f' }), at('A1')), fine); assert.deepEqual(judge("l'eau", one("de l'eau", { gender: 'f' }), at('A1')), fine); assert.deepEqual(judge('eau', one("de l'eau"), at('A1')), miss);
+  // Seul un article de la langue du paquet se retire (S2) : « a » n'est un article qu'en anglais, « los » qu'en espagnol.
+  for (const [x, w, l] of [['veces', 'a veces', 'es'], ['menudo', 'a menudo', 'es'], ['priori', 'a priori', 'fr'], ['bientôt', 'à bientôt', 'fr'], ['angeles', 'los angeles', 'fr'], ['miserables', 'les miserables', 'en'], ['the chat', 'un chat', 'fr']]) {
+    const r = judge(x, one(w), at('B1', l)); assert.ok(!r.ok && !r.article, `${x} pour ${w} (${l}) : ce n'est pas un article oublié`);
+  }
+  assert.deepEqual(judge('a veces', one('a veces'), at('A1', 'es')), fine); assert.deepEqual(judge('a priori', one('a priori'), at('B2')), fine);
+  // Anglais : « to » ne s'échange pas avec « the » (S3).
+  assert.deepEqual(judge('the run', one('to run'), at('A1', 'en')), { ok: true, note: 'article', art: 'wrong' }); assert.deepEqual(judge('to run', one('to run'), at('A1', 'en')), fine); assert.deepEqual(judge('a cat', one('the cat'), at('A1', 'en')), fine);
+  // Signes invisibles et accent en trop (S6, S7) : la réponse visible vaut le mot ; un second accent ne passe pas.
+  assert.deepEqual(judge("l'école", one("L'\u202Eécole\u202C\u200B"), at('A1')), fine); assert.deepEqual(judge('é\u200Bcole', one('école'), at('A1')), fine);
+  assert.deepEqual(judge('cafe\u0301', one('café'), at('A1')), fine); assert.deepEqual(judge('cafe\u0301\u0301', one('café'), at('A1')), { retry: true, accent: true, slip: 'accent' }); assert.deepEqual(judge('cafe\u0301\u0300', one('café'), at('A1'), true), { ok: false, near: true });
+  // Contre-vérification (N1 à N7).
+  // N1 : dans une phrase à trou aussi, seul un article de la langue du paquet se retire.
+  assert.ok(!judge('veces', { type: 'cloze-type', answer: 'a veces', accepted: ['a veces'], lemmas: ['a veces'] }, at('A2', 'es')).ok);
+  assert.ok(!judge('angeles', { type: 'cloze-type', answer: 'Los Angeles', accepted: ['Los Angeles'], lemmas: ['los angeles'] }, at('A2')).ok);
+  // N2 : fiche ou trou sans article. En ajouter un n'est pas une faute, sauf s'il ne peut pas aller avec le mot.
+  const bare = one('école', { gender: 'f' }), trou = { type: 'cloze-type', answer: 'café', accepted: ['café'], lemmas: ['un café'], gender: 'm', kind: 'nom' };
+  for (const x of ['la école', 'le école', 'un école']) assert.deepEqual(judge(x, bare, at('A1')), bad, x);
+  for (const x of ["l'école", 'une école', 'école']) assert.deepEqual(judge(x, bare, at('A1')), fine, x);
+  for (const x of ['une café', "l'café", 'la café']) assert.deepEqual(judge(x, trou, at('A1')), bad, x);
+  for (const x of ['café', 'un café', 'le café']) assert.deepEqual(judge(x, trou, at('A1')), fine, x);
+  // N3 : une fiche qui n'est pas un nom n'a pas d'article qui s'échange. Son premier mot est exigé tel quel (second essai).
+  const peu = one('un peu', { kind: 'adverbe' });
+  assert.deepEqual(judge('un peu', peu, at('A1')), fine); assert.deepEqual(judge('le peu', peu, at('A1')), bad); assert.deepEqual(judge('du peu', peu, at('A1')), bad); assert.deepEqual(judge('peu', peu, at('A1')), miss);
+  assert.deepEqual(judge('la fois', one('une fois', { kind: 'expression' }), at('A1')), bad); assert.deepEqual(judge('une plupart', one('la plupart', { kind: 'pronom' }), at('B1')), bad);
+  assert.deepEqual(judge('el poco', one('un poco', { kind: 'adverbe' }), at('A1', 'es')), bad); assert.deepEqual(judge('le manger', one('manger', { kind: 'verbe' }), at('A1')), bad);
+  assert.deepEqual(judge('the lot', one('a lot', { kind: 'adverbe' }), at('A1', 'en')), { ok: true, note: 'article', art: 'wrong' }); assert.deepEqual(judge('run', one('to run', { kind: 'verbe' }), at('A1', 'en')), { ok: true, note: 'article', art: 'missing' });
+  assert.deepEqual(judge('le café', one('un café', { kind: 'nom' }), at('A1')), fine, 'pour un nom, un autre article du bon genre reste accepté');
+  // N4 : trait d'union virtuel et autres signes invisibles, dans la fiche ou dans la réponse.
+  assert.deepEqual(judge('café', one('ca\u00ADfé'), at('A1')), fine); assert.deepEqual(judge('ca\u00ADfé\uFE0F', one('café'), at('A1')), fine); assert.deepEqual(judge('ca\u0000fé', one('café'), at('A1')), fine);
+  assert.ok(variants('ca\u00ADfé')[0].includes('\u00AD'), 'le mot enregistré n’est pas réécrit : les identifiants ne changent pas');
+  // N5 : accent isolé placé avant le mot.
+  assert.deepEqual(judge('\u0301café', one('café'), at('A1')), { retry: true, accent: true, slip: 'accent' }); assert.deepEqual(judge('\u0301un café', one('un café'), at('A1')), { retry: true, accent: true, slip: 'accent' });
+  // N7 : la fiche tranche dès que son article montre l'élision ; la première lettre se lit sans son accent.
+  assert.deepEqual(judge('de la ouate', one('la ouate'), at('B2')), fine); assert.deepEqual(judge("l'ouate", one('la ouate'), at('B2')), bad); assert.deepEqual(judge('du iota', one('le iota'), at('B2')), fine);
+  assert.deepEqual(judge('la ola', one('une ola'), at('B2')), fine); assert.deepEqual(judge("l'ångström", one('un ångström'), at('C1')), fine); assert.deepEqual(judge('le ångström', one('un ångström'), at('C1')), bad);
+  assert.deepEqual(judge("l'île", one('une île'), at('A1')), fine); assert.deepEqual(judge('la île', one('une île'), at('A1')), bad); assert.deepEqual(judge("l'œuf", one('un œuf'), at('A1')), fine); assert.deepEqual(judge('le œuf', one('un œuf'), at('A1')), bad);
+  // Vérification finale : « ouïe » n'est pas « oui » ; un signe invisible ne casse ni les deux formes écrites ensemble, ni l'indice.
+  assert.deepEqual(judge('la ouïe', one('une ouïe', { gender: 'f', kind: 'nom' }), at('B2')), bad); assert.deepEqual(judge("l'ouïe", one('une ouïe', { gender: 'f', kind: 'nom' }), at('B2')), fine); assert.deepEqual(judge('le oui', one('un oui'), at('B2')), fine);
+  assert.deepEqual(judge('un serveur \u200Bet une serveuse', { ...srv, answer: 'un serveur', accepted: ['un serveur'], ask: 'm', gender: 'm' }, at('A1')), { ok: true, note: 'both' });
+  // La consigne le dit : « Écris le mot avec son article » là où il est exigé, et seulement là.
+  const d = demoDeck(), by = w => d.cards.find(c => c.word === w), make = (deck, c) => buildActivity(deck, c, 5, Math.random, { force: 'type' });
+  assert.equal(make(d, by('Un café')).art, true); assert.equal(make(d, by("L'addition")).art, true); assert.equal(make(d, by("L'addition")).gender, 'f'); assert.equal(make(d, by('Payer')).art, false); assert.equal(make(d, by('Cher / chère')).art, false);
+  const srvA = make(d, by('Un serveur / une serveuse')); assert.equal(srvA.art, true); assert.equal(srvA.gender, srvA.ask); assert.equal(srvA.kind, 'nom'); assert.equal(make(d, by('Payer')).kind, 'verbe');
+  // Une locution qui commence par un mot-article n'est pas un nom : pas de consigne d'article. Fiche faite de signes invisibles (N6) : rien à écrire, pas d'exception.
+  const odd = prepare({ id: 'odd1', name: 'x', lang: 'fr', level: 'B1', cards: [{ id: 'p', word: 'Un peu', definition: 'pas beaucoup', examples: ['Je parle [un peu] français.'], pos: 'adverbe' }, { id: 'q', word: '\u200B\u200B', definition: 'rien', examples: [], pos: 'nom' }, { id: 'r', word: 'Un café', definition: 'une boisson', examples: ['Je bois un [café].'], pos: 'nom', gender: 'm' }] });
+  assert.equal(make(odd, odd.cards[0]).art, false); assert.equal(make(odd, odd.cards[0]).kind, 'adverbe'); assert.deepEqual(judge('le peu', make(odd, odd.cards[0]), odd), bad);
+  const soft = prepare({ id: 'soft1', name: 'y', lang: 'fr', level: 'A1', cards: [{ id: 'a', word: 'Un ca\u00ADfé', definition: 'une boisson', examples: [], pos: 'nom', gender: 'm' }, { id: 'b', word: 'Un thé', definition: 'une autre boisson', examples: [], pos: 'nom' }, { id: 'c', word: 'Un jus', definition: 'une boisson de fruit', examples: [], pos: 'nom' }] });
+  assert.equal(make(soft, soft.cards[0]).hint, 'u _   _ _ _ _', 'l’indice ne compte pas le trait d’union virtuel');
+  const ghost = make(odd, odd.cards[1]); assert.ok(!ghost || ghost.type !== 'type', 'fiche invisible : pas d’exercice d’écriture impossible');
+  const cz = buildActivity(odd, odd.cards[2], 3, Math.random, { force: 'cloze-type' }); assert.equal(cz.type, 'cloze-type'); assert.equal(cz.gender, 'm'); assert.deepEqual(judge('une café', cz, odd), bad); assert.deepEqual(judge('café', cz, odd), fine);
+  assert.deepEqual(judge('addition', make(d, by("L'addition")), d), miss); assert.deepEqual(judge('un addition', make(d, by("L'addition")), d), bad); assert.deepEqual(judge('une addition', make(d, by("L'addition")), d), fine);
+  const en = prepare({ id: 'en1', name: 'x', lang: 'en', level: 'A1', cards: [{ id: 'a', word: 'An apple', definition: 'a fruit', examples: ['I eat an [apple].'], pos: 'nom' }, { id: 'b', word: 'A pear', definition: 'another fruit', examples: [], pos: 'nom' }, { id: 'c', word: 'A plum', definition: 'a small fruit', examples: [], pos: 'nom' }] });
+  assert.equal(make(en, en.cards[0]).art, false, 'anglais : l’article n’est pas exigé, la consigne ne le demande pas');
+  const { STR } = await import('../js/i18n.js');
+  for (const l of ['fr', 'en', 'es']) for (const k of ['shiftLabel', 'tryCap', 'tryArtMissing', 'tryArtWrong', 'alsoArtMissing', 'alsoArtWrong', 'qTypeArt']) assert.ok(typeof STR[l][k] === 'string' && STR[l][k].length > 8 && !STR[l][k].includes('—'), l + ' ' + k);
+  // Prompts : l'IA écrit chaque nom avec l'article qui montre son genre, et les majuscules accentuées.
+  const P = l => buildPrompts({ lang: l, level: 'A2', topic: 'x' });
+  for (const k of ['file', 'cards', 'review']) {
+    assert.ok(P('fr')[k].includes('jamais « l\' », qui cache le genre') && P('fr')[k].includes('article écrit dans "word"'), 'fr ' + k);
+    assert.ok(P('es')[k].includes('« un aula »') && P('es')[k].includes('article écrit dans "word"') && P('es')[k].includes('« Él »'), 'es ' + k);
+    assert.ok(!P('en')[k].includes('article écrit dans "word"'), 'en ' + k);
+  }
+});
+
+t('version 15a bis : colonnes non reconnues d’un tableur gardées dans le navigateur, absentes du fichier exporté', () => {
+  const csv = 'Mot;Définition;Exemple 1;Notes perso;Remarque secrète\nUn café;Une boisson chaude et noire.;Je bois un [café].;Vu avec le groupe B;à revoir avec Paul\nUn thé;Une boisson chaude aux feuilles.;Je bois un [thé].;;\nUne tasse;Un objet pour boire.;Je prends une [tasse].;perso;';
+  const d = deckFromCSV(csv, 'Essai colonnes', 'fr');
+  assert.ok(Object.values(d.cards[0].extra).includes('Vu avec le groupe B'), 'la colonne non reconnue reste dans le paquet du navigateur');
+  assert.ok(JSON.stringify(serialize(d)).includes('Vu avec le groupe B') && d.fields.some(f => f.startsWith('extra:')), 'et dans ce que le navigateur enregistre');
+  const out = deckToJSON(d), back = JSON.parse(out);
+  for (const secret of ['Vu avec le groupe B', 'à revoir avec Paul', 'Notes perso', 'Remarque secrète', 'perso']) assert.ok(!out.includes(secret), 'absent du fichier exporté : ' + secret);
+  assert.ok(back.cards.every(c => !('extra' in c) && !('doubt' in c)) && !('fields' in back), 'ni les colonnes, ni la liste des noms de colonnes');
+  const withDoubt = deckFromCSV(csv.replace('Remarque secrète', 'Doute').replace('à revoir avec Paul', 'sens à vérifier'), 'Essai doute', 'fr');
+  assert.equal(withDoubt.cards[0].doubt, 'sens à vérifier'); assert.ok(!/doubt|Doute|sens à vérifier/.test(deckToJSON(withDoubt)), 'le fichier ne dit même pas qu’une colonne « Doute » existait');
+  const forged = deckFromJSON(JSON.stringify({ ...back, fields: ['Extra:Notes perso', ' extra:x', 'word'] })); assert.ok(!deckToJSON(forged).includes('Notes perso'), 'liste de colonnes forgée par un tiers : elle ne ressort pas');
+  assert.deepEqual(back.cards.map(c => c.word), ['Un café', 'Un thé', 'Une tasse']); assert.equal(back.cards[0].examples.length, 1);
+  const again = deckFromJSON(out); assert.equal(again.cards.length, 3); assert.equal(again.id, d.id, 'le paquet réimporté garde son identifiant, donc la progression');
+  assert.ok(d.cards[0].extra && Object.keys(d.cards[0].extra).length === 2, 'l’export ne modifie pas le paquet lui-même');
 });
 
 await Promise.all(pending);

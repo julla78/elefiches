@@ -267,6 +267,8 @@ p { max-width: 68ch; }
 .key { min-width: 44px; min-height: 44px; padding: 4px 10px; background: var(--brand-soft); color: var(--ink); border: 1.5px solid var(--brand); border-radius: 12px; font-size: 1.2rem; font-weight: 700; line-height: 1; touch-action: manipulation; }
 .key:hover { background: var(--card); }
 .key:active { background: var(--brand); color: var(--brand-ink); }
+.key.shift[aria-pressed="true"] { background: var(--brand); color: var(--brand-ink); }
+.key.shift { margin-right: 6px; }
 .mysentence + .keys { margin-bottom: 12px; }
 .again { color: var(--soft-ink); background: var(--soft); border-radius: 12px; padding: 8px 12px; }
 .spelling { font-size: 1.5rem; font-weight: 700; }

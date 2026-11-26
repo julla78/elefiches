@@ -23,7 +23,7 @@ zpath = out + '/_paquet.zip'
 with zipfile.ZipFile(zpath, 'w', zipfile.ZIP_DEFLATED) as z:
     z.writestr('paquet.json', PACKET.replace('Logement (B1)', 'Logement zip (B1)')); z.write(sheet, 'planche1.png')
 
-def play(page, right=True, shots=None, near=False):
+def play(page, right=True, shots=None, near=False, article=False):
     """Joue une session ou un défi en entier. right=True répond juste quand c'est possible."""
     kinds = set()
     def shot(name, full=False):
@@ -58,8 +58,11 @@ def play(page, right=True, shots=None, near=False):
                 assert page.inner_text('.saythis').strip() == model and len(model.split()) >= 2, ('oral : la phrase entière', model)
                 assert page.locator('.saythis b.target').count() == 1, 'oral : le mot étudié est en gras dans la phrase'
             if kind == 'sentence' and page.locator('.study .keys').count() and 'keys-sentence' not in kinds:      # mêmes touches sous la phrase libre
-                kinds.add('keys-sentence'); key = page.locator('.study .keys .key').first; ch = key.inner_text(); key.click()
+                kinds.add('keys-sentence'); key = page.locator('.study .keys .key[data-ch]').first; ch = key.inner_text(); key.click()
                 assert page.input_value('textarea[name=mine]') == ch, 'la touche écrit dans la phrase libre'
+                sh = page.locator('.study .keys .key.shift')
+                if sh.count() and ch.upper() != ch and len(ch.upper()) == 1:      # une phrase commence par une majuscule : « Maj » y sert vraiment
+                    sh.click(); key.click(); assert page.input_value('textarea[name=mine]') == ch + ch.upper() and sh.get_attribute('aria-pressed') == 'false', page.input_value('textarea[name=mine]')
             if kind == 'sentence': page.fill('textarea[name=mine]', 'Ma phrase.')
             page.click('[data-action=reveal-self]'); shot(kind + '_check', True)
             if kind == 'speak':
@@ -133,20 +136,51 @@ def play(page, right=True, shots=None, near=False):
             if kind != 'number' and 'keys' not in kinds and page.locator('.typed .keys').count():
                 # touches d'accents : la lettre s'écrit à l'endroit du curseur, le champ garde le curseur, rien n'est envoyé
                 kinds.add('keys'); page.fill('input[name=answer]', 'ab'); page.evaluate("document.querySelector('input[name=answer]').setSelectionRange(1, 1)")
-                key = page.locator('.typed .keys .key').first; ch = key.inner_text(); key.click()
+                key = page.locator('.typed .keys .key[data-ch]').first; ch = key.inner_text(); key.click()
                 assert page.input_value('input[name=answer]') == 'a' + ch + 'b', page.input_value('input[name=answer]')
                 assert page.evaluate("document.activeElement && document.activeElement.name") == 'answer', 'le champ garde le curseur après une touche'
                 assert page.evaluate("document.querySelector('input[name=answer]').selectionStart") == 2
                 assert not page.locator('.feedback').count() and not page.locator('p.again').count(), 'une touche d’accent n’envoie pas la réponse'
                 for b in page.locator('.typed .keys .key').all(): bb = b.bounding_box(); assert bb['width'] >= 44 and bb['height'] >= 44, ('touche trop petite', bb)
-                shot('keys', True); page.fill('input[name=answer]', '')
+                shot('keys', True)
+                # touche « Maj » : la rangée passe en majuscules pour une seule lettre, puis revient d'elle-même aux minuscules
+                sh = page.locator('.typed .keys .key.shift')
+                if sh.count() and ch.upper() != ch and len(ch.upper()) == 1:
+                    kinds.add('shift'); page.fill('input[name=answer]', ''); assert sh.get_attribute('aria-pressed') == 'false'
+                    sh.click(); assert sh.get_attribute('aria-pressed') == 'true' and key.inner_text() == ch.upper(), ('Maj : touches en majuscules', key.inner_text())
+                    assert page.evaluate("document.activeElement && document.activeElement.name") == 'answer', 'le champ garde le curseur après « Maj »'
+                    shot('keys_maj', True); key.click()
+                    assert page.input_value('input[name=answer]') == ch.upper(), page.input_value('input[name=answer]')
+                    assert sh.get_attribute('aria-pressed') == 'false' and key.inner_text() == ch, 'Maj ne vaut que pour une lettre'
+                    sh.click(); sh.click(); assert sh.get_attribute('aria-pressed') == 'false' and key.inner_text() == ch, 'un second appui annule « Maj »'
+                    assert not page.locator('.feedback').count() and not page.locator('p.again').count(), '« Maj » n’envoie pas la réponse'
+                page.fill('input[name=answer]', '')
             bare = ''.join(c for c in unicodedata.normalize('NFD', ans.lower()) if unicodedata.category(c) != 'Mn')
             lang2 = page.evaluate("window.__elefiches.state.session.deck.lang").split('-')[0]
-            if near and kind == 'type' and 'accent-try' not in kinds and bare == ans.lower() and lang2 != 'en':
+            art = kind == 'type' and lang2 in ('fr', 'es') and page.evaluate("!!window.__elefiches.step.activity.art")
+            if kind == 'type' and lang2 in ('fr', 'es'):
+                q = page.inner_text('p.question'); assert (('article' in q or 'artículo' in q) == art), ('la consigne demande l’article quand il est exigé, et seulement alors', q, ans)
+            if article and art and 'article-try' not in kinds:
+                # article oublié (français, espagnol) : second essai avec un message sur l'article, réussite comptée comme aidée
+                kinds.add('article-try'); noart = re.sub(r"^(?:(?:de la|du|une|un|les|le|la|des|el|los|las|una|unos|unas)\s+|de l'|l')", '', ans)
+                assert noart and noart != ans, ans
+                page.fill('input[name=answer]', noart); page.press('input[name=answer]', 'Enter')
+                assert page.locator('p.again').count() == 1 and not page.locator('.feedback').count(), ('article oublié : second essai, rien n’est noté', ans)
+                msg = page.inner_text('p.again'); assert any(w in msg for w in ('article', 'artículo')), msg
+                assert ans.split(' ')[0] not in msg.lower().split(), ('le message ne donne pas l’article', msg)
+                shot('article_try', True); page.fill('input[name=answer]', ans); page.press('input[name=answer]', 'Enter')
+                fb = page.evaluate("(f => ({ ok: f.ok, assisted: f.assisted, ask: !!f.ask }))(window.__elefiches.state.feedback)")
+                assert fb == {'ok': True, 'assisted': True, 'ask': False}, ('article corrigé au second essai : réussite aidée', fb)
+                assert page.locator('.feedback').count() == 1, kind
+                continue_ = True
+            else: continue_ = False
+            if continue_: pass
+            elif near and kind == 'type' and 'accent-try' not in kinds and bare == ans.lower() and lang2 != 'en':
                 # aucun mot accentué ne s'est présenté : le test en impose un à cette étape, pour que la règle soit toujours vérifiée à l'écran
                 page.evaluate("(a => { a.accepted = ['préavis']; a.answer = 'préavis'; delete a.both; delete a.lemmas; })(window.__elefiches.step.activity)")
                 ans, bare = 'préavis', 'preavis'
-            if near and kind != 'number' and 'accent-try' not in kinds and bare != ans.lower() and lang2 != 'en':
+            if continue_: pass
+            elif near and kind != 'number' and 'accent-try' not in kinds and bare != ans.lower() and lang2 != 'en':
                 # accent oublié : jamais accepté au premier essai, à aucun niveau ; second essai avec un message sur l'accent ; réussite comptée comme aidée
                 kinds.add('accent-try'); page.fill('input[name=answer]', bare); page.press('input[name=answer]', 'Enter')
                 assert page.locator('p.again').count() == 1 and not page.locator('.feedback').count(), ('accent oublié : second essai, rien n’est noté', ans)
@@ -369,13 +403,13 @@ with sync_playwright() as p:
     before = page.evaluate("JSON.stringify(window.__elefiches.state.progress)")
     page.locator('.decklist [data-action=tour]').first.click()
     kt = play(page, right=True, shots=shots, near=True); print('APERÇU A1:', sorted(kt))
-    assert {'qcm', 'cloze-choice', 'qcm-rev', 'gate', 'cloze-type', 'order', 'situation-type', 'type', 'match', 'bank', 'second-try', 'keys', 'accent-try'} <= kt and 'felt' not in kt, kt
+    assert {'qcm', 'cloze-choice', 'qcm-rev', 'gate', 'cloze-type', 'order', 'situation-type', 'type', 'match', 'bank', 'second-try', 'keys', 'shift', 'accent-try'} <= kt and 'felt' not in kt, kt
     assert 'tous les exercices' in page.inner_text('.done'); page.screenshot(path=f'{out}/tour_done.png')
     assert page.evaluate("JSON.stringify(window.__elefiches.state.progress)") == before, 'l’aperçu ne doit rien enregistrer'
     page.click('.done [data-action=teacher]')
     i_b1 = page.evaluate("window.__elefiches.state.decks.findIndex(d => d.name === 'Logement (B1)')")
     page.locator('.decklist [data-action=tour]').nth(i_b1).click()
-    kb = play(page, right=True, near=True); assert 'second-try' in kb, kb
+    kb = play(page, right=True, near=True, article=True, shots=shots); assert 'second-try' in kb and 'article-try' in kb, kb
     page.click('.done [data-action=home]')
     # « Coup de chance » : la bonne réponse n'est pas comptée, le mot revient
     page.locator('.deck').nth(i_b1).locator('[data-action=start]').click()

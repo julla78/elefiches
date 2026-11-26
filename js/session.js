@@ -1,7 +1,7 @@
 // Éléfiches — déroulement d'une session : quelles fiches, dans quel ordre, sous quelle forme.
 // Les questions se répondent par un choix ou par une réponse courte écrite (un mot ou une expression).
 import { review, isNew, isDue, boxOf, HERD_BOX } from './scheduler.js';
-import { check, variants } from './match.js';
+import { check, variants, articleOf, visible } from './match.js';
 import { spec, LIMITS } from './levels.js';
 
 const shuffle = (a, rnd) => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rnd() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
@@ -244,36 +244,56 @@ export function hintOf(answer, mode) {
 
 // Langues où l'accent d'un mot emprunté est facultatif : en anglais, « café » et « cafe » sont deux graphies admises.
 const ACCENT_FREE = ['en'];
+// Langues où l'article fait partie de ce qu'il faut savoir d'un nom (il porte le genre) : il est exigé quand la fiche
+// l'écrit. Ailleurs (anglais), un article oublié ne donne qu'une remarque.
+const ARTICLE_DUE = GENDERED_LANGS;
 // Juge une réponse courte écrite (voir levels.js). second : c'est déjà le second essai.
 // La forme exacte est exigée à tous les niveaux, mais un écart d'une lettre, d'un accent ou d'un signe (ç, ñ, œ)
 // n'est jamais compté faux d'emblée : il donne un second essai, et la réussite compte alors comme aidée (voir
 // submitTyped dans app.js). Au second essai, le même écart est une erreur.
-// Renvoie {ok, note} ; {retry:true, accent, slip} pour un second essai (slip : 'accent' ou la lettre à revoir) ;
+// Il en va de même, en français et en espagnol, de l'article écrit sur la fiche (décision du 26 novembre 2026) :
+// oublié (« café » pour « un café », « addition » pour « l'addition ») ou qui ne va pas avec le mot (« une café »),
+// il donne un second essai. Un autre article qui convient au mot (« le café ») est accepté sans remarque. Seul ce
+// que la forme attendue contient est exigé : dans une phrase à trou, l'article écrit hors du trou n'est pas demandé.
+// Renvoie {ok, note} ; {retry:true, accent, slip, cap, article} pour un second essai (slip : 'accent' ou la lettre à
+// revoir ; cap : sur une majuscule ; article : 'missing' ou 'wrong', seul ou en plus d'un autre écart) ;
 // {retry:true, form} quand c'est l'autre forme du mot ; {empty:true} si rien n'est écrit.
 export function judge(value, a, deck, second = false) {
   if (a.type === 'number') { const c = v => String(v).replace(/[\s.,]/g, ''); return c(value) ? { ok: c(value) === c(a.answer) } : { empty: true }; }
-  const free = ACCENT_FREE.includes(String(deck.lang || '').slice(0, 2));
+  const lang = String(deck.lang || '').slice(0, 2), free = ACCENT_FREE.includes(lang), due = ARTICLE_DUE.includes(lang);
+  const near = spec(deck).near;
   // Un accent à revoir : accepté comme autre graphie en anglais, écart à corriger ailleurs.
-  const strict = r => (r.ok && r.note === 'accent' ? (free ? { ok: true, note: 'variant' } : { ok: false, near: true, accent: true, slip: r.slip || 'accent' }) : r);
-  const exact = (x, list) => strict(check(x, list)).ok;
-  let r = strict(check(value, a.accepted, spec(deck).near));
+  const accents = r => (r.ok && r.note === 'accent' ? (free ? { ok: true, note: 'variant' } : { ok: false, near: true, accent: true, slip: r.slip || 'accent', cap: !!r.cap, art: r.art }) : r);
+  // L'article : écart à corriger là où il est exigé, simple remarque ailleurs.
+  const strict = r0 => { const r = accents(r0); return due && r.ok && r.note === 'article' ? { ok: false, near: true, article: r.art || 'missing' } : r; };
+  const plus = r => (due && r.art ? { article: r.art } : {});                 // écart d'article qui s'ajoute à un autre écart
+  const opt = { lang, kind: a.kind }, loose = (x, list) => check(x, list, near, opt).ok;      // loose : le bon mot, accent ou article à part
+  let r = strict(check(value, a.accepted, near, { ...opt, gender: a.gender }));
   if (r.empty) return r;
-  if (!r.ok && !r.accent && a.both) {
+  if (!r.ok && !r.accent && !r.article && a.both) {
     // Fiche à deux formes. Les deux formes écrites ensemble (« un serveur, une serveuse ») : c'est juste. L'autre forme
     // seule : le bon mot, mais pas la forme demandée ; l'étudiant a droit à un second essai.
-    const parts = String(value).replace(/\s+/g, ' ').trim().slice(0, 400).split(/\s*[\/,;]\s*|\s+(?:et|ou|and|or|y|o)\s+/i).map(x => x.trim()).filter(Boolean);
-    if (parts.length > 1 && parts.length <= 3 && parts.every(x => check(x, a.both).ok) && parts.some(x => check(x, a.accepted).ok)) {
-      if (parts.every(x => exact(x, a.both))) return { ok: true, note: 'both' };
-      r = { ok: false, near: true, accent: true, slip: 'accent' };            // les deux formes, mais un accent à revoir
+    const parts = visible(value).replace(/\s+/g, ' ').trim().slice(0, 400).split(/\s*[\/,;]\s*|\s+(?:et|ou|and|or|y|o)\s+/i).map(x => x.trim()).filter(Boolean);
+    if (parts.length > 1 && parts.length <= 3 && parts.every(x => loose(x, a.both)) && parts.some(x => loose(x, a.accepted))) {
+      const each = parts.map(x => strict(check(x, a.both, near, opt)));
+      if (each.every(x => x.ok)) return { ok: true, note: 'both' };
+      r = each.find(x => !x.ok);                                              // les deux formes, mais un accent ou un article à revoir
     }
-    else if (check(value, a.both).ok) return second ? { ok: false, near: true } : { retry: true, form: a.ask || 'other' };
+    else if (loose(value, a.both)) {
+      if (second) return { ok: false, near: true };
+      const art = strict(check(value, a.both, near, opt)).article;           // l'autre forme, et sans son article : le message dit les deux
+      return { retry: true, form: a.ask || 'other', ...(art ? { article: art } : {}) };
+    }
   }
-  if (!r.ok && !r.accent && a.lemmas) {                                       // forme de base au lieu de la forme de la phrase
-    const l = strict(check(value, a.lemmas));
+  if (!r.ok && !r.accent && !r.article && a.lemmas) {                         // forme de base au lieu de la forme de la phrase
+    const l = accents(check(value, a.lemmas, near, opt));
     if (l.ok) return { ok: true, note: 'form' };
     if (l.accent) r = l;
   }
-  if (!r.ok && r.near) return second ? { ok: false, near: true } : r.accent ? { retry: true, accent: true, slip: r.slip } : { retry: true, accent: false };
+  if (!r.ok && r.near) {
+    if (second) return { ok: false, near: true };
+    return r.accent ? { retry: true, accent: true, slip: r.slip, ...(r.cap ? { cap: true } : {}), ...plus(r) } : r.article ? { retry: true, article: r.article } : { retry: true, accent: false, ...plus(r) };
+  }
   return r;
 }
 
@@ -306,7 +326,7 @@ export const SELF = ['speak', 'sentence', 'recall'];
 // opts.help : aide maximale à l'écriture (rattrapage). opts.gate : impose le rappel de tête (aperçu des exercices).
 export function buildActivity(deck, card, box, rnd = Math.random, { force = null, prefer = [], contrast = null, help = false, gate = false, audio = false, vary = false, turn = 0, mixed = false } = {}) {
   const mean = c => meaning(c, deck.help), L = spec(deck), lures = L.options - 1;
-  const typable = c => c && !c.multi && c.n <= 3, discontinuous = /…|\.\.\./.test(card.word);
+  const typable = c => c && !c.multi && c.n <= 3 && !!visible(c.answer), discontinuous = /…|\.\.\./.test(card.word);
   const first = card.clozes.find(c => card.examples[0] && c.text === apos(card.examples[0]));      // phrase à trous du premier exemple
   const cl = card.clozes.length ? pick(card.clozes, rnd) : null;
   const surface = d => (d.clozes.length ? lowerFirst(pick(d.clozes, rnd).answer, d.word) : null);
@@ -320,17 +340,21 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
     const pool = base ? [lemma(d)] : d.clozes.filter(x => !x.multi).map(x => lowerFirst(x.answer, d.word)).filter(f => f.toLowerCase() !== lemma(d).toLowerCase() && last(f) === last(answer));
     return caseLike(pool.find(f => f && count(f) === count(answer)) || null, answer);
   };
-  const hint = answer => hintOf(answer, help ? 'pattern' : L.hint);
+  const hint = answer => hintOf(visible(answer), help ? 'pattern' : L.hint);      // les signes invisibles ne comptent pas dans l'indice
   // Une seule forme par question pour une fiche qui en a deux ; elle alterne d'une révision à l'autre.
   const forms = formsOf(card, deck.lang), fi = forms.length ? (hashInt(card.id) + box + turn) % forms.length : 0, form = forms[fi] || null;
   const one = d => { const f = d.id === card.id ? forms : formsOf(d, deck.lang); return f.length ? f[Math.min(fi, f.length - 1)].text : d.bare; };
   const asked = form ? { both: variants(card.word), ask: form.gender, say: form.text } : {};
+  // Genre connu de la forme demandée (pour juger l'article quand celui de la fiche ne le montre pas : « l'addition »),
+  // et consigne : là où l'article est exigé, la question le dit (« Écris le mot avec son article »).
+  const sex = form ? form.gender : genderOf(card), lang2 = String(deck.lang || '').slice(0, 2), kind = kindOf(card, deck.lang);
+  const wantsArticle = v => ARTICLE_DUE.includes(lang2) && (kind === 'nom' || kind === 'autre') && v.length > 0 && v.every(x => !!articleOf(x, lang2));
   const choice = (answer, ds, extra = {}) => {
     if (!answer || ds.length < (mixed || contrast ? 1 : Math.min(2, lures))) return null;
     const keep = contrast && contrast.text !== answer ? [contrast] : ds;
     return { answer, options: shuffle([answer, ...keep.map(d => d.text)], rnd), from: Object.fromEntries(keep.filter(d => d.id).map(d => [d.text, d.id])), ...extra };
   };
-  const written = (c, extra = {}) => (typable(c) ? { cloze: c, answer: c.answer, accepted: [c.answer], lemmas: variants(card.word), hint: hint(c.answer), ...extra } : null);
+  const written = (c, extra = {}) => (typable(c) ? { cloze: c, answer: c.answer, accepted: [c.answer], lemmas: variants(card.word), hint: hint(c.answer), kind, gender: forms.length ? '' : genderOf(card), ...extra } : null);
   // Aux niveaux A1 et A2, le sens se choisit parmi des images quand le paquet en a assez : une définition en langue
   // apprise est elle-même difficile à lire pour un débutant.
   const meanings = extra => {
@@ -346,7 +370,7 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
     qcm: () => meanings({}),
     // Écoute : le mot est entendu, pas montré. L'étudiant choisit son sens, ou l'écrit.
     listen: () => (sayable ? meanings({ listen: true, ...(form ? { say: form.text } : {}) }) : null),
-    'listen-type': () => (discontinuous || !sayable ? null : (v => ({ answer: form ? form.text : card.word, accepted: v, hint: hint(v[0]), listen: true, ...asked, ask: '' }))(variants(form ? form.text : card.word))),      // la forme entendue : inutile de la nommer
+    'listen-type': () => (discontinuous || !sayable ? null : (v => (v.length ? { answer: form ? form.text : card.word, accepted: v, hint: hint(v[0]), listen: true, ...asked, ask: '', gender: sex, kind } : null))(variants(form ? form.text : card.word).filter(visible))),      // la forme entendue : inutile de la nommer
     // Oral : l'étudiant dit le mot à partir de son sens, compare avec la voix, puis répète une phrase en même temps qu'elle.
     speak: () => {
       const cloze = card.clozes.find(c => !c.multi) || null, model = cloze ? cloze.text : card.examples[0] ? apos(card.examples[0]) : '';
@@ -371,7 +395,7 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
     },
     'cloze-type': () => written(pick(card.clozes.filter(typable), rnd)),
     'situation-type': () => (card.situation ? written(first, { situation: card.situation }) : null),
-    type: () => (discontinuous || isNumber(card.definition) ? null : (v => ({ answer: form ? form.text : card.word, accepted: v, hint: hint(v[0]), ...asked }))(variants(form ? form.text : card.word))),
+    type: () => (discontinuous || isNumber(card.definition) ? null : (v => (v.length ? { answer: form ? form.text : card.word, accepted: v, hint: hint(v[0]), ...asked, gender: sex, kind, art: wantsArticle(v) } : null))(variants(form ? form.text : card.word).filter(visible))),
     order: () => {
       for (const text of shuffle(card.examples.map(apos), rnd)) {
         const raw = chunks(text, L.chunks);
