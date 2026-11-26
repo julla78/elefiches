@@ -1239,5 +1239,215 @@ t('version 15a bis : colonnes non reconnues d’un tableur gardées dans le navi
   assert.ok(d.cards[0].extra && Object.keys(d.cards[0].extra).length === 2, 'l’export ne modifie pas le paquet lui-même');
 });
 
+// ---------- Version 15b : plan personnel, première partie ----------
+const { PACES, paceDays, newToday, simulate, minutes, cleanMeasure, emptyMeasure, addTime, addTry, rates, startPlan, cleanPlan, missedNow, markWorked, today: planToday, stepsLeft, outlook, milestone, dayStart, dayEnd, dayIndex, DAY: PDAY } = await import('../js/plan.js');
+const { adviseDays, PLAN_DAYS } = await import('../js/deck.js');
+const { orderNew } = await import('../js/session.js');
+const { cleanProgress, mergeProgress } = await import('../js/backup.js');
+const { shiftProgress } = await import('../js/scheduler.js');
+const T0 = new Date(2026, 10, 24, 10, 0, 0).getTime();      // un mardi matin, heure locale
+// Paquet d'essai : la démonstration, sans ses familles de sens (elles ont leur propre groupe de tests), en A2.
+const planDeck = (extra = {}) => { const d = demoDeck(); d.demo = false; for (const c of d.cards) delete c.family; Object.assign(d, { days: 6, seen: true, level: 'A2' }, extra); return prepare(d); };
+
+t('15b : jours conseillés et « mots déjà vus en classe », deux champs facultatifs du paquet', () => {
+  assert.equal(adviseDays(6), 6); assert.equal(adviseDays('6'), 6); assert.equal(adviseDays(' 12 '), 12); assert.equal(adviseDays(60), 60);
+  for (const bad of [3, 0, -6, 61, 'six', '', null, undefined, true, '6 jours', 1e9, NaN, {}, [6], '6.5']) assert.equal(adviseDays(bad), 0, 'refusé : ' + JSON.stringify(bad));
+  const d = planDeck(), out = deckToJSON(d), raw = JSON.parse(out);
+  assert.equal(raw.days, 6); assert.equal(raw.seen, true, 'les deux champs partent dans le fichier donné aux étudiants');
+  const back = deckFromJSON(out); assert.equal(back.days, 6); assert.equal(back.seen, true); assert.equal(back.id, d.id);
+  assert.equal(serialize(d).days, 6); assert.equal(serialize(d).seen, true, 'et sont enregistrés dans le navigateur');
+  const plain = demoDeck(), rawPlain = JSON.parse(deckToJSON(plain));
+  assert.ok(!('days' in rawPlain) && !('seen' in rawPlain) && plain.days === undefined && plain.seen === undefined, 'paquet sans réglage : aucun champ, rien ne change');
+  const forged = k => deckFromJSON(JSON.stringify({ ...rawPlain, ...k }));
+  assert.equal(forged({ days: 3 }).days, undefined, 'moins de quatre jours : pas de plan'); assert.equal(forged({ days: '<img>' }).days, undefined); assert.equal(forged({ days: 9999 }).days, undefined);
+  assert.equal(forged({ seen: 'true' }).seen, undefined, 'seul le booléen vrai compte'); assert.equal(forged({ seen: 1 }).seen, undefined);
+  assert.equal(forged({ jours: 8, vus: true }).days, 8); assert.equal(forged({ jours: 8, vus: true }).seen, true, 'noms français acceptés');
+  assert.equal(deckFromCSV(DEMO_CSV, 'Sans rythme', 'fr', 'A1').days, undefined);
+});
+
+t('15b : trois pas autour des jours conseillés, jamais moins de quatre jours', () => {
+  assert.deepEqual(PACES, ['slow', 'mid', 'fast']);
+  assert.deepEqual(paceDays(6), [['slow', 9], ['mid', 6], ['fast', 4]]);
+  assert.deepEqual(paceDays(10), [['slow', 15], ['mid', 10], ['fast', 7]]);
+  assert.deepEqual(paceDays(5), [['slow', 8], ['mid', 5], ['fast', 4]]);
+  assert.deepEqual(paceDays(4), [['slow', 6], ['mid', 4]], 'le pas rapide retomberait sur le pas du cours : il n’est pas proposé');
+  assert.deepEqual(paceDays(3), []); assert.deepEqual(paceDays(undefined), []);
+  for (let D = PLAN_DAYS.min; D <= PLAN_DAYS.max; D++) for (const [, n] of paceDays(D)) assert.ok(n >= PLAN_DAYS.min && n <= PLAN_DAYS.long);
+});
+
+t('15b : découverte dans la première moitié du plan, retard étalé, tout le reste le dernier jour', () => {
+  const run = (M, D, missed = 0, skip = []) => { let left = M; const out = []; for (let d = 0; d < D; d++) { if (skip.includes(d)) { out.push(0); continue; } const n = newToday(left, D, d, missed && d > skip[0] ? missed : 0); out.push(n); left -= n; } return out; };
+  assert.deepEqual(run(60, 6), [20, 20, 20, 0, 0, 0]); assert.deepEqual(run(60, 9), [12, 12, 12, 12, 12, 0, 0, 0, 0], 'neuf jours : moitié arrondie au-dessus');
+  assert.deepEqual(run(60, 4), [30, 30, 0, 0]); assert.deepEqual(run(85, 6), [29, 28, 28, 0, 0, 0]); assert.deepEqual(run(7, 1), [7]);
+  assert.deepEqual(run(60, 6, 1, [1]), [20, 0, 20, 20, 0, 0], 'jour manqué : la découverte se prolonge d’un jour, le retard s’étale');
+  assert.equal(newToday(10, 6, 5, 0), 10, 'dernier jour : tout ce qui reste'); assert.equal(newToday(10, 6, 9, 0), 10, 'plan dépassé : tout ce qui reste');
+  assert.equal(newToday(0, 6, 0), 0); assert.equal(newToday(12, 4, 2, 3), 12, 'les jours manqués ne repoussent jamais la découverte sur le dernier jour');
+});
+
+t('15b : le calendrier joué à blanc donne des durées stables et plausibles', () => {
+  const a = simulate({ fresh: 60, days: 6, now: T0 }), b = simulate({ fresh: 60, days: 6, now: T0 + 3600000 });
+  assert.deepEqual(a.per, b.per, 'même plan, mêmes nombres : le tirage est à graine fixe');
+  assert.equal(a.per.length, 6); assert.ok(Math.abs(a.total - a.per.reduce((x, y) => x + y, 0)) < 1e-9); assert.ok(a.max >= a.avg);
+  const one = simulate({ fresh: 60, days: 6, single: true, now: T0 }), slow = simulate({ fresh: 60, days: 9, single: true, now: T0, mark: 6 }), fast = simulate({ fresh: 60, days: 4, single: true, now: T0 });
+  assert.ok(one.total < a.total - 100, 'mots déjà vus en classe : pas d’écran de découverte, une question au lieu de deux');
+  assert.ok(slow.avg < one.avg && one.avg < fast.avg, 'plus de jours, moins d’étapes par jour'); assert.ok(slow.total > one.total, 'et davantage de rappels en tout');
+  assert.ok(one.total / 60 > 2 && one.total / 60 < 3.2, 'entre deux et trois réponses par mot sur six jours : ' + (one.total / 60).toFixed(2));
+  assert.equal(slow.seen, 1, 'pas lent : tous les mots découverts au bout des jours conseillés'); assert.ok(slow.again > 0.4 && slow.again < 0.9, 'mais pas tous rappelés un autre jour : ' + slow.again.toFixed(2));
+  const weak = simulate({ fresh: 60, days: 6, single: true, ok: 0.75, now: T0 }); assert.ok(weak.total > one.total, 'moins de réussite : plus de rattrapages');
+  assert.equal(minutes(24, 15), 6); assert.equal(minutes(0, 15), 1, 'jamais « 0 minute »'); assert.equal(minutes(40, 30), 20);
+  const t1 = performance.now(); for (const D of [9, 6, 4]) simulate({ fresh: 85, days: D, ok: 0.8, now: T0 + D }); assert.ok(performance.now() - t1 < 1500, 'assez rapide pour un téléphone');
+});
+
+t('15b : mesure locale de la vitesse et de la réussite', () => {
+  const m = emptyMeasure(); assert.deepEqual(rates(m), { sec: 15, ok: 0.9, measured: false });
+  addTime(m, 500); addTime(m, 91000); addTime(m, NaN); assert.equal(m.t.length, 0, 'ni double appui, ni téléphone posé');
+  for (let i = 0; i < 9; i++) addTime(m, 20000); assert.equal(rates(m).sec, 15, 'neuf mesures : pas encore'); addTime(m, 20000); assert.equal(rates(m).sec, 20);
+  for (let i = 0; i < 80; i++) addTime(m, 8000); assert.equal(m.t.length, 60); assert.equal(rates(m).sec, 8, 'les soixante dernières : la médiane suit l’étudiant');
+  for (let i = 0; i < 19; i++) addTry(m, i % 2 === 0); assert.equal(rates(m).ok, 0.9); addTry(m, true); assert.equal(rates(m).ok, 0.55); assert.equal(rates(m).measured, true);
+  for (let i = 0; i < 400; i++) addTry(m, true); assert.ok(m.tries <= 200 && m.ok <= m.tries && rates(m).ok === 0.98, 'taux borné, anciennes réponses allégées');
+  for (let i = 0; i < 400; i++) addTry(m, false); assert.equal(rates(m).ok, 0.5);
+  assert.deepEqual(cleanMeasure({ t: [5, '9', -1, 500, null, 12.345], tries: 10, ok: 99 }), { t: [5, 12.3], tries: 10, ok: 10 });
+  assert.deepEqual(cleanMeasure('<script>'), emptyMeasure()); assert.deepEqual(cleanMeasure({ t: '<img>', tries: '<b>', ok: {} }), emptyMeasure());
+});
+
+t('15b : programme du jour, en une ou deux fois, arrêté le matin', () => {
+  const d = planDeck(), M = d.cards.length, P = {}; P._plan = startPlan('mid', 6, T0, 6);
+  assert.equal(P._plan.start, dayStart(T0)); assert.equal(dayIndex(P._plan.start, T0 + 5 * PDAY), 5);
+  let T = planToday(d, P, P._plan, T0); const perDay = Math.ceil(M / 3);
+  assert.equal(T.d, 0); assert.equal(T.fresh, perDay); assert.equal(T.rev, 0); assert.equal(T.freshLeft, perDay); assert.equal(T.complete, false); assert.equal(T.done, 0);
+  Object.assign(P._plan, T.snap);
+  const s = new Session(d, P, { now: T0, rnd: () => 0.5, plan: { fresh: T.freshLeft, dueBy: dayEnd(T0) } });
+  assert.equal(s.planned, true); assert.equal(s.endAt, Infinity, 'pas de minuteur qui coupe'); assert.equal(s.held, false);
+  assert.deepEqual(s.today, d.cards.slice(0, perDay).map(c => c.id), 'découverte dans l’ordre des fiches'); assert.deepEqual(orderNew(d, P, 3).map(c => c.id), d.cards.slice(0, 3).map(c => c.id));
+  assert.ok(s.queue.every(i => i.kind === 'quiz' && i.first && i.force === 'type'), 'mots déjà vus en classe : aucun écran de découverte, première question écrite');
+  // Première moitié de la journée : deux mots, puis l'étudiant s'arrête.
+  for (let k = 0; k < 2; k++) { const step = s.next(T0 + k * 20000); assert.equal(step.activity.type, 'type'); assert.ok(step.activity.accepted.length); s.answer(step, true, T0 + k * 20000 + 9000); markWorked(P._plan, T0 + k * 20000 + 9000); }
+  assert.ok(d.cards.slice(0, 2).every(c => P[c.id].seen && P[c.id].born >= T0 && P[c.id].box === 2), 'le mot naît à sa première réponse, écrite et réussie : boîte 2');
+  assert.equal(s.stats.fresh, 2); assert.equal(P._plan.last, 0); assert.equal(P._plan.missed, 0);
+  T = planToday(d, P, P._plan, T0 + 6 * 3600000);
+  assert.equal(T.fresh, perDay, 'le programme annoncé le matin ne bouge pas'); assert.equal(T.freshLeft, perDay - 2); assert.equal(T.done, 2); assert.equal(T.total, perDay); assert.equal(T.complete, false);
+  // Seconde fois, le soir : le reste du programme, rien de plus.
+  const s2 = new Session(d, P, { now: T0 + 6 * 3600000, rnd: () => 0.5, plan: { fresh: T.freshLeft, dueBy: dayEnd(T0) } });
+  assert.deepEqual(s2.today, d.cards.slice(2, perDay).map(c => c.id)); assert.equal(s2.queue.filter(i => !i.first).length, 0, 'aucune révision : les mots du matin ne sont pas dus avant plusieurs jours');
+  for (let step = s2.next(T0 + 7 * 3600000); step; step = s2.next(T0 + 7 * 3600000)) { if (!step.activity.multi) s2.answer(step, true, T0 + 7 * 3600000); }
+  T = planToday(d, P, P._plan, T0 + 8 * 3600000); assert.equal(T.complete, true, 'journée faite'); assert.equal(T.done, perDay); assert.equal(T.freshLeft, 0);
+  assert.ok(stepsLeft(T) === 0);
+  // Le lendemain : nouveau programme, calculé sur ce qu'il reste.
+  T = planToday(d, P, P._plan, T0 + PDAY); assert.equal(T.d, 1); assert.equal(T.fresh, Math.ceil((M - perDay) / 2)); assert.equal(T.done, 0); assert.equal(T.complete, false);
+  // Programme refait en cours de journée (changement de pas) : ce qui est fait aujourd'hui reste compté.
+  const Q = JSON.parse(JSON.stringify(P)); Q._plan.day = -1; const R = planToday(d, Q, Q._plan, T0 + 8 * 3600000);
+  assert.equal(R.done, perDay); assert.ok(R.total >= R.done && R.fresh >= perDay, 'le total ne passe jamais sous ce qui est fait');
+});
+
+t('15b : première question écrite, et fiche ratée redemandée avec l’aide maximale', () => {
+  const d = planDeck(), P = {}; P._plan = startPlan('mid', 6, T0);
+  const s = new Session(d, P, { now: T0, rnd: () => 0.5, plan: { fresh: 3, dueBy: dayEnd(T0) } });
+  const step = s.next(T0); assert.equal(step.intro, undefined); assert.equal(step.activity.type, 'type');
+  s.answer(step, false, T0 + 5000);
+  assert.equal(P[step.card.id].box, 1); assert.equal(P[step.card.id].lastOk, false); assert.ok(P[step.card.id].born >= T0);
+  const retry = s.queue.find(i => i.retry && i.id === step.card.id); assert.ok(retry && retry.force === 'type' && retry.help === true, 'rattrapage sous la même forme, avec première lettre et longueur');
+  assert.ok(!isDue(P[step.card.id], dayEnd(T0)), 'un mot raté n’est pas dû une seconde fois le même jour : seul le rattrapage de la séance le redemande');
+  // Paquet à jours conseillés dont les mots n'ont PAS été vus en classe : l'écran de découverte reste, avec ses deux questions.
+  const e = planDeck({ seen: undefined }), Pe = {}; assert.equal(e.seen, undefined);
+  const se = new Session(e, Pe, { now: T0, rnd: () => 0.5, plan: { fresh: 4, dueBy: dayEnd(T0) } });
+  assert.equal(se.noIntro, false); assert.equal(se.queue.filter(i => i.kind === 'intro').length, 4); assert.ok(se.next(T0).intro);
+  // Paquet sans jours conseillés mais « vus en classe » : pas de plan, « Appétit du jour » garde la main, sans écran de découverte.
+  const f = planDeck({ days: undefined }), sf = new Session(f, {}, { now: T0, maxNew: 3, rnd: () => 0.5 });
+  assert.equal(f.days, undefined); assert.equal(sf.planned, false); assert.ok(Number.isFinite(sf.endAt)); assert.equal(sf.today.length, 3); assert.ok(sf.queue.every(i => i.kind === 'quiz' && i.force === 'type'));
+});
+
+t('15b : jour manqué constaté à la première réponse, plan recalculé, reste à faire rejoué', () => {
+  const d = planDeck(), P = {}; P._plan = startPlan('mid', 6, T0, 6); const plan = P._plan;
+  assert.equal(missedNow(plan, 0), 0, 'le premier jour n’est jamais manqué d’avance'); assert.equal(missedNow(plan, 1), 1, 'pas choisi, rien fait, retour le lendemain : un jour manqué'); assert.equal(missedNow(plan, 3), 3);
+  markWorked(plan, T0); assert.equal(plan.last, 0); assert.equal(missedNow(plan, 1), 0); assert.equal(missedNow(plan, 3), 2, 'jours 1 et 2 sans séance');
+  markWorked(plan, T0 + 3 * PDAY); assert.equal(plan.missed, 2); assert.equal(plan.last, 3); markWorked(plan, T0 + 3 * PDAY + 60000); assert.equal(plan.missed, 2, 'constaté une seule fois');
+  const full = simulate({ fresh: 60, days: 6, single: true, now: T0 }), late = simulate({ fresh: 40, days: 6, from: 3, missed: 2, single: true, now: T0 + 3 * PDAY }), longer = simulate({ fresh: 40, days: 8, from: 3, missed: 2, single: true, now: T0 + 3 * PDAY });
+  assert.equal(late.days, 3); assert.ok(late.avg > full.avg * 0.5 && longer.avg < late.avg, 'garder la fin coûte plus par jour que la reculer');
+  const o = outlook(d, P, plan, T0 + 3 * PDAY, { single: true }); assert.equal(o.days, 3); assert.ok(o.total >= d.cards.length, 'ce qu’il reste : tous les mots encore nouveaux');
+  const over = outlook(d, P, plan, T0 + 30 * PDAY, { single: true }); assert.equal(over.days, 1, 'plan dépassé : il reste aujourd’hui');
+  const T = planToday(d, P, plan, T0 + 30 * PDAY); assert.equal(T.over, true); assert.equal(T.fresh, d.cards.length, 'plan dépassé : tout ce qui reste est proposé');
+});
+
+t('15b : le plan est sauvegardé, restauré et décalé comme le reste, jamais repris tel quel', () => {
+  const plan = { ...startPlan('slow', 9, T0, 7), last: 2, missed: 1, ack: 1, day: 3, fresh: 12, rev: 20 }, now = T0 + 4 * PDAY;
+  assert.deepEqual(cleanPlan(plan, now), plan); assert.deepEqual(cleanProgress({ _plan: plan }, now)._plan, plan);
+  for (const bad of [null, 'slow', { pace: 'mammouth', days: 6, start: T0 }, { pace: 'mid', days: '<img>', start: T0 }, { pace: 'mid', days: 6 }, { pace: 'mid', days: 6, start: 'hier' }]) assert.equal(cleanPlan(bad, now), null);
+  assert.ok(!('_plan' in cleanProgress({ _plan: { pace: '<img src=x onerror=alert(1)>', days: 6, start: T0 } }, now)), 'pas forgé : écarté');
+  const odd = cleanPlan({ pace: 'fast', days: 1e9, start: now + 90 * PDAY, last: -50, missed: 3, ack: 99, est: -4, day: 'x', fresh: 1e9, rev: -3 }, now);
+  assert.deepEqual(odd, { pace: 'fast', days: PLAN_DAYS.long, start: dayStart(now), last: -1, missed: 3, ack: 3, est: 0, day: -1, fresh: 2000, rev: 0 }, 'chaque champ borné ; jamais un début dans le futur');
+  assert.ok(Object.values(odd).every(v => typeof v === 'number' || PACES.includes(v)), 'rien d’autre que des nombres et un nom de pas connu : aucun texte ne peut atteindre l’écran');
+  const shifted = shiftProgress({ _plan: plan }, 2 * PDAY)._plan; assert.equal(shifted.start, plan.start - 2 * PDAY, 'mode essai : avancer de deux jours fait avancer le plan de deux jours'); assert.equal(dayIndex(shifted.start, T0), 2); assert.equal(shifted.pace, 'slow');
+  const mine = { _plan: plan }, saved = { _plan: startPlan('fast', 4, T0 - 9 * PDAY) };
+  assert.equal(mergeProgress(mine, saved, now)._plan.pace, 'slow', 'restaurer une sauvegarde ne remplace pas le plan en cours'); assert.equal(mergeProgress({}, saved, now)._plan.pace, 'fast', 'mais le rend à un appareil qui n’en a pas');
+});
+
+t('15b, relecture de sécurité : un plan forgé ou très ancien ne ralentit ni ne trompe l’appli', () => {
+  const now = T0 + 4 * PDAY, top = 2 * PLAN_DAYS.long;
+  assert.equal(cleanPlan({ pace: 'slow', days: 180, start: T0, last: 0, missed: 3650 }, now).missed, top, 'jours manqués bornés à deux fois la durée la plus longue');
+  assert.equal(cleanPlan({ pace: 'fast', days: 4, start: 0, missed: 3650 }, now), null, 'plan daté de 1970 : écarté, l’étudiant choisit de nouveau son pas');
+  assert.equal(cleanPlan({ pace: 'mid', days: 6, start: now - (top + 2) * PDAY }, now), null); assert.ok(cleanPlan({ pace: 'mid', days: 6, start: now - (top - 2) * PDAY }, now));
+  const t1 = performance.now(), big = simulate({ fresh: 2000, days: 180 + 3650, single: true, now: T0 + 7 }); const ms = performance.now() - t1;
+  assert.ok(big.days <= top, 'jamais plus de ' + top + ' jours joués à blanc : ' + big.days); assert.ok(ms < 4000, 'paquet de deux mille fiches : ' + ms.toFixed(0) + ' ms');
+  const d = planDeck(), P = { _plan: startPlan('mid', 6, T0) }, back = planToday(d, P, P._plan, T0 - 3 * PDAY);
+  assert.equal(back.d, 0, 'horloge reculée après le choix du pas : jamais un jour négatif'); markWorked(P._plan, T0 - 3 * PDAY); assert.equal(P._plan.last, 0); assert.equal(P._plan.missed, 0);
+  const mine = { _plan: startPlan('mid', 6, T0) }, forged = { _plan: { pace: 'fast', days: 4, start: T0 - 2 * PDAY, missed: 300, best: 1e9 } };
+  assert.equal(mergeProgress(mine, forged, now)._plan.pace, 'mid', 'sauvegarde forgée, même avec un champ « best » : le plan en cours reste');
+});
+
+t('15b : deux mots de sens proche ne sont jamais découverts le même jour', () => {
+  const d = planDeck(); d.cards[0].family = 'boisson'; d.cards[1].family = 'boisson'; prepare(d); const ids = d.cards.map(c => c.id), P = {};
+  assert.deepEqual(orderNew(d, P, 5, T0).map(c => c.id), [ids[0], ids[2], ids[3], ids[4], ids[5]], 'le voisin cède sa place au mot suivant');
+  P[ids[0]] = { seen: true, box: 2, born: T0 }; assert.ok(!orderNew(d, P, 5, T0 + 3600000).some(c => c.id === ids[1]), 'même en seconde partie de journée');
+  assert.equal(orderNew(d, P, 5, T0 + PDAY)[0].id, ids[1], 'et passe en tête du lendemain');
+  const all = orderNew(d, {}, 99, T0).map(c => c.id); assert.equal(all.length, d.cards.length); assert.equal(all.at(-1), ids[1], 'dernier jour : il entre quand même, en fin de séance, loin de son voisin');
+  const s = new Session(d, { _plan: startPlan('mid', 6, T0) }, { now: T0, rnd: () => 0.5, plan: { fresh: 5, dueBy: dayEnd(T0) } }); assert.ok(!s.today.includes(ids[1]) && s.today.length === 5);
+  // Relecture de sécurité : mille fiches d'une famille nées aujourd'hui, mille d'une autre encore nouvelles, une intruse en fin de paquet.
+  const big = { cards: Array.from({ length: 2000 }, (_, i) => ({ id: 'k' + i, family: i < 1000 ? 'A' : 'B', neighbours: [] })) }, Pb = {};
+  for (let i = 0; i < 1000; i++) Pb['k' + i] = { seen: true, box: 2, born: T0 }; Pb.k1999 = { seen: true, box: 2, born: T0 };
+  const t1 = performance.now(), got = orderNew(big, Pb, 1, T0 + 60000), ms = performance.now() - t1;
+  assert.ok(ms < 200, 'coût linéaire : ' + ms.toFixed(0) + ' ms'); assert.equal(got.length, 1, 'il ne reste que des voisins : un seul entre quand même');
+  assert.deepEqual(orderNew({ cards: [{ id: 'a' }, { id: 'b', neighbours: null }] }, {}, 2, T0).map(c => c.id), ['a', 'b'], 'fiche sans liste de voisins : aucune exception');
+});
+
+t('15b : tous les mots vus dans le temps imparti, quel que soit le pas et malgré les jours manqués', () => {
+  const run = (M, D, cap, skip = []) => { let left = M, missed = 0; const out = []; for (let d = 0; d < D; d++) { if (skip.includes(d)) { out.push(0); missed++; continue; } const n = newToday(left, D, d, missed, cap); out.push(n); left -= n; } return out; };
+  for (const [D, skip] of [[9, []], [9, [0]], [9, [1, 2]], [9, [0, 1, 2, 3]], [6, [1]], [6, [0, 1, 2]], [4, [1]], [12, [2, 3]]]) {
+    const days = run(60, D, 6, skip), by5 = days.slice(0, 5).reduce((a, b) => a + b, 0);
+    assert.equal(by5, 60, `pas de ${D} jours, jours manqués ${skip} : tout est découvert avant le dernier jour conseillé (${days})`);
+  }
+  assert.deepEqual(run(60, 9, 6), [12, 12, 12, 12, 12, 0, 0, 0, 0]); assert.deepEqual(run(60, 9, 6, [1, 2]), [12, 0, 0, 24, 24, 0, 0, 0, 0], 'pas lent, deux jours manqués : la découverte se resserre, elle ne déborde pas');
+  const sim = simulate({ fresh: 60, days: 9, cap: 6, perNew: 1, now: T0, mark: 6 }); assert.equal(sim.seen, 1);
+  const d = planDeck(), P = { _plan: { ...startPlan('slow', 9, T0), last: 0, missed: 0 } }, T = planToday(d, P, P._plan, T0 + 4 * PDAY);
+  assert.equal(T.fresh, d.cards.length, 'cinquième jour, rien de découvert : tout ce qui reste est au programme, avant la fin des jours conseillés');
+  const m = milestone(d, P, P._plan, T0 + 2 * PDAY); assert.deepEqual([m.daysLeft, m.total, m.seen, m.again, m.unseen], [4, d.cards.length, 0, 0, d.cards.length]);
+  P[d.cards[0].id] = { seen: true, box: 3, born: T0, fsrs: { last_review: T0 + 2 * PDAY, due: T0 + 9 * PDAY } }; P[d.cards[1].id] = { seen: true, box: 2, born: T0, fsrs: { last_review: T0 + 60000, due: T0 + 3 * PDAY } };
+  const m2 = milestone(d, P, P._plan, T0 + 2 * PDAY); assert.deepEqual([m2.seen, m2.again], [2, 1], 'vu, et rappelé un autre jour que celui de sa découverte');
+});
+
+t('15b : niveau A1, mots vus en classe, choisir le mot puis l’écrire avec aide ; à partir de A2, écrire tout de suite', () => {
+  const a1 = planDeck({ level: 'A1' }), P = { _plan: startPlan('mid', 6, T0) }, s = new Session(a1, P, { now: T0, rnd: () => 0.5, plan: { fresh: 3, dueBy: dayEnd(T0) } });
+  assert.equal(s.ease, true); assert.ok(s.queue.every(i => i.first && i.force === 'qcm-rev'));
+  const step = s.next(T0); assert.ok(step.activity.options && step.activity.type !== 'type' && !step.activity.gated, 'premier temps : un choix, sans écran de découverte');
+  s.answer(step, true, T0 + 4000); assert.equal(P[step.card.id], undefined, 'le choix réussi ne prouve encore rien : le mot n’est pas né');
+  const bonus = s.queue.find(i => i.bonus && i.id === step.card.id); assert.ok(bonus && bonus.force === 'type' && bonus.help === true);
+  let b; do { b = s.next(T0 + 9000); if (b.item !== bonus) s.answer(b, true, T0 + 9000); } while (b.item !== bonus);
+  assert.equal(b.activity.type, 'type'); assert.ok(/_/.test(b.activity.hint), 'second temps : écrire, avec première lettre et longueur');
+  s.answer(b, true, T0 + 20000, {}); assert.equal(P[step.card.id].box, 2); assert.ok(P[step.card.id].born >= T0, 'c’est la réponse écrite qui fait naître le mot');
+  const a2 = planDeck(), s2 = new Session(a2, {}, { now: T0, rnd: () => 0.5, plan: { fresh: 3, dueBy: dayEnd(T0) } }); assert.equal(s2.ease, false); assert.ok(s2.queue.every(i => i.force === 'type'));
+  const b1 = planDeck({ level: 'B1' }), s3 = new Session(b1, {}, { now: T0, rnd: () => 0.5, plan: { fresh: 3, dueBy: dayEnd(T0) } }); assert.equal(s3.next(T0).activity.hint, '', 'B1 : aucune aide');
+  const cost = (lv) => simulate({ fresh: 60, days: 6, perNew: lv === 'A1' ? 2 : 1, cap: 6, now: T0 }).total; assert.ok(cost('A1') > cost('A2') + 50, 'le plan compte l’étape de plus du niveau A1');
+});
+
+t('15b : prompts, ordre des fiches gardé et rien sur le rythme', () => {
+  const withList = buildPrompts({ lang: 'fr', level: 'A2', topic: 'Le logement', words: 'un loyer\nun bail\nun voisin' }), free = buildPrompts({ lang: 'en', level: 'B1', topic: 'Work', count: 20 });
+  for (const k of ['file', 'cards']) {
+    assert.ok(withList[k].includes('ORDRE DES FICHES') && withList[k].includes('Ne la trie pas'), 'liste imposée : ordre gardé (' + k + ')');
+    assert.ok(free[k].includes('ORDRE DES FICHES') && free[k].includes('des mots les plus utiles aux moins utiles'), 'sans liste : du plus utile au moins utile (' + k + ')');
+    assert.ok(withList[k].includes('rien sur le rythme de travail') && free[k].includes('Ce rythme se règle dans l\'application'), 'aucun champ de rythme (' + k + ')');
+    assert.ok(!/"days"|"seen"/.test(withList[k]), 'le modèle de paquet donné à l’IA ne contient ni « days » ni « seen »');
+  }
+  assert.ok(withList.review.includes('Ne change pas l\'ordre des fiches'));
+});
+
 await Promise.all(pending);
 console.log(`${n} groupes de tests réussis`);

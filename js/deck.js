@@ -140,6 +140,12 @@ const imgRef = v => (typeof v === 'string' && v.length < 16 && SHEET.test(v.trim
 
 // Niveau du paquet (A1 à C2) : il décide de la langue des consignes et du feedback.
 export const LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
+// Plan personnel (version 15b). L'enseignant peut conseiller un nombre de jours pour apprendre la liste (« days ») et
+// dire que les mots ont déjà été vus en classe (« seen »). Les deux sont facultatifs. Pas de plan de moins de quatre
+// jours : plus court, trop peu de mots sont rappelés un autre jour que celui de leur découverte (simulation du
+// calendrier). « long » borne la durée d'un plan d'étudiant (pas lent, jours manqués reportés).
+export const PLAN_DAYS = { min: 4, max: 60, long: 180 };
+export const adviseDays = v => { const n = typeof v === 'number' || (typeof v === 'string' && /^\s*\d{1,3}\s*$/.test(v)) ? Math.round(+v) : 0; return n >= PLAN_DAYS.min && n <= PLAN_DAYS.max ? n : 0; };
 export const levelIn = name => (String(name).toUpperCase().match(/(?<![A-Z0-9])([ABC][12])(?![0-9])/) || [])[1] || '';      // « Logement (A2) », « A1SQ2_Londres »
 export const guessLevel = name => (String(name).toUpperCase().match(/(?<![A-Z0-9])([ABC][12])(?![A-Z0-9])/) || [])[1] || 'A2';
 
@@ -389,6 +395,8 @@ export function prepare(deck) {
   deck.homographs = new Set([...seen].filter(([, n]) => n > 1).map(([k]) => k));   // deux fiches « En »
   deck.helpLangs = [...new Set(deck.cards.flatMap(c => Object.keys(c.translations)))];
   if (typeof deck.grid !== 'string' || !/^\d{1,2}x\d{1,2}$/.test(deck.grid)) deck.grid = '3x3';        // cases d'une planche d'images : colonnes x rangées
+  deck.days = adviseDays(deck.days) || undefined;      // jours conseillés : un entier de 4 à 60, sinon rien
+  deck.seen = deck.seen === true ? true : undefined;   // mots déjà vus en classe : vrai, ou rien
   // Table sans prototype : un identifiant forgé (« __proto__ », « constructor ») n'y trouve jamais rien.
   deck.byId = Object.assign(Object.create(null), Object.fromEntries(deck.cards.map(c => [c.id, c])));
   return deck;
@@ -436,7 +444,7 @@ export function audit(deck) {
 // Forme enregistrable d'un paquet (sans les champs calculés).
 export function serialize(deck) {
   return {
-    id: deck.id, name: deck.name, lang: deck.lang, level: deck.level, grid: deck.grid, fields: deck.fields, demo: deck.demo,
+    id: deck.id, name: deck.name, lang: deck.lang, level: deck.level, grid: deck.grid, days: deck.days, seen: deck.seen, fields: deck.fields, demo: deck.demo,
     cards: deck.cards.map(({ clozes, neighbours, bare, key, ...c }) => c),   // helpLangs, byId et twins sont recalculés
   };
 }
@@ -486,7 +494,7 @@ export function deckFromJSON(text, name, level) {
   })).filter(c => c.definition || Object.keys(c.translations).length);
   if (cards.length < 3) throw new Error('too-few');
   const nm = nameOf(name || str(d.name) || 'Paquet');
-  return prepare({ id: 'd' + hash(norm(nm)), name: nm, lang: str(d.lang) || 'fr', level: LEVELS.includes(level) ? level : str(d.level).toUpperCase(), grid: str(d.grid), cards, skipped: d.cards.length - cards.length, fields: d.fields || [] });
+  return prepare({ id: 'd' + hash(norm(nm)), name: nm, lang: str(d.lang) || 'fr', level: LEVELS.includes(level) ? level : str(d.level).toUpperCase(), grid: str(d.grid), days: d.days ?? d.jours, seen: d.seen === true || d.vus === true, cards, skipped: d.cards.length - cards.length, fields: d.fields || [] });
 }
 
 // Paquet de démonstration, écrit pour Éléfiches.

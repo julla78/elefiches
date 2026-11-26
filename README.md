@@ -10,12 +10,13 @@ Application web pour mémoriser le vocabulaire d'une langue : répétition espac
 - Chaque mot est lu à voix haute dans la langue apprise, par la voix de synthèse de l'appareil ou par un fichier son joint à la fiche.
 - Un paquet de fiches est un seul fichier, fabriqué par une IA à partir d'un prompt fourni par l'espace enseignant : archive `.zip` (fiches et images), paquet Anki `.apkg`, `.json` ou `.csv`. L'application contrôle ce qu'une machine peut vérifier (images, longueur des définitions, exemples).
 - Un paquet rangé dans le dossier `paquets/` s'ouvre par un lien : `…/?paquet=nom-du-fichier`.
+- Plan personnel : quand l'enseignant conseille un nombre de jours pour une liste, chaque étudiant choisit son pas parmi trois (minutes par jour contre nombre de jours) et reçoit un programme chaque jour. Les durées annoncées sont estimées sur l'appareil, d'après la vitesse et les réussites de l'étudiant.
 - Rappels par l'agenda du téléphone (fichier `.ics`), course de rapidité sur les mots connus, défi d'étape, match amical de fin de paquet.
 - Interface en français, anglais et espagnol ; niveaux du CECRL de A1 à C2.
 
 ## État
 
-Version 15a bis, en cours d'essai. Elle n'a pas encore été essayée avec des étudiants, ni sur tous les téléphones.
+Version 15b, en cours d'essai. Elle n'a pas encore été essayée avec des étudiants, ni sur tous les téléphones.
 
 ## Données personnelles
 
@@ -40,6 +41,8 @@ puis ouvrir `http://localhost:8000`.
 ```
 node tests/engine.test.mjs
 python3 tests/browser_test.py "http://localhost:8000/enseignant.html#accueil" chemin/vers/un.csv dossier-de-captures
+python3 tests/essai_test.py "http://localhost:8000/enseignant.html#accueil" dossier-de-captures
+python3 tests/plan_test.py "http://localhost:8000/enseignant.html#accueil" dossier-de-captures chemin/vers/un.csv
 ```
 
 ## Droits

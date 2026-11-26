@@ -25,6 +25,26 @@ export function pickNew(deck, progress, max) {
   }
   return chosen;
 }
+// Plan personnel : les mots nouveaux du jour sont pris dans l'ordre des fiches, qui est l'ordre de priorité donné par
+// l'enseignant. Rien n'est écarté : tous les mots doivent être découverts dans la première moitié du plan.
+// Une seule exception à l'ordre : deux mots de sens proche (même « famille », ou définis l'un par l'autre) ne sont jamais
+// découverts le même jour. Le second cède sa place au mot suivant et passe en tête du lendemain. S'il ne reste que des
+// voisins (dernier jour de découverte), ils entrent quand même, en fin de séance : le plus loin possible de leur voisin.
+export function orderNew(deck, progress, max, now = Date.now()) {
+  const t0 = new Date(now).setHours(0, 0, 0, 0), n = Math.max(0, Math.round(max) || 0), chosen = [], held = [];
+  // Voisinage tenu dans des ensembles : le coût reste linéaire, même sur un paquet de deux mille fiches d'une même famille
+  // (relecture de sécurité, 15b).
+  const ids = new Set(), around = new Set(), fams = new Set();
+  const take = c => { ids.add(c.id); for (const id of c.neighbours || []) around.add(id); if (c.family) fams.add(c.family); };
+  const near = c => around.has(c.id) || (!!c.family && fams.has(c.family)) || (c.neighbours || []).some(id => ids.has(id));
+  for (const c of deck.cards) { const st = progress[c.id]; if (!isNew(st) && (st.born || 0) >= t0) take(c); }      // découverts aujourd'hui
+  for (const c of deck.cards) {
+    if (chosen.length >= n) break;
+    if (!isNew(progress[c.id])) continue;
+    if (near(c)) held.push(c); else { chosen.push(c); take(c); }
+  }
+  return [...chosen, ...held.slice(0, n - chosen.length)];
+}
 
 // Leurres : [{text, id}]. Des leurres qu'on peut vraiment confondre avec la réponse obligent à retrouver
 // ce qu'on sait de chacun pour l'écarter : c'est ce qui rend un choix utile à la mémoire.
@@ -452,24 +472,35 @@ function bankStep(deck, ids, pool, rnd) {
 export const roomFor = (due, maxNew) => (due >= 20 ? 0 : due >= 10 ? Math.min(maxNew, 2) : maxNew);
 
 export class Session {
-  constructor(deck, progress, { minutes = 5, maxNew = 3, now = Date.now(), rnd = Math.random, force = false, audio = false } = {}) {
-    Object.assign(this, { deck, progress, rnd, audio, startedAt: now, endAt: now + minutes * 60000 });
+  // plan : {fresh, dueBy} en plan personnel. La séance contient alors le programme du jour (toutes les révisions dues
+  // avant « dueBy », puis « fresh » mots nouveaux dans l'ordre des fiches) et ne s'arrête pas à l'heure : c'est le
+  // programme qui la borne, pas un minuteur. Sans plan, rien ne change (durée choisie, « Appétit du jour », frein).
+  // Paquet « mots déjà vus en classe » (deck.seen) : pas d'écran de découverte ; la première question d'un mot nouveau
+  // demande de l'écrire à partir de son sens, et la fiche complète s'affiche après la réponse, juste ou fausse.
+  constructor(deck, progress, { minutes = 5, maxNew = 3, now = Date.now(), rnd = Math.random, force = false, audio = false, plan = null } = {}) {
+    Object.assign(this, { deck, progress, rnd, audio, startedAt: now, endAt: plan ? Infinity : now + minutes * 60000, planned: !!plan, noIntro: deck.seen === true });
+    // Niveau A1, mots déjà vus en classe : écrire d'emblée un mot entier dépasse ce que le niveau permet. L'étudiant
+    // choisit d'abord le mot (reconnaître sa forme), puis l'écrit un peu plus loin dans la séance avec la première lettre
+    // et la longueur : c'est cette réponse écrite qui compte. À partir de A2, il écrit tout de suite.
+    this.ease = this.noIntro && deck.level === 'A1';
     this.stats = { answered: 0, ok: 0, fresh: 0, up: [], again: [], herd: [], streak: 0, best: 0 };
     this.served = 0; this.today = []; this.tamed = []; this.waiting = new Set();
-    const due = deck.cards.filter(c => isDue(progress[c.id], now))
+    const due = deck.cards.filter(c => isDue(progress[c.id], plan ? plan.dueBy : now))
       .sort((a, b) => (progress[a.id].fsrs?.due ?? 0) - (progress[b.id].fsrs?.due ?? 0));
     const reviews = due.map(c => ({ id: c.id, kind: 'quiz' }));
     // Principe de Leitner : les révisions passent avant les nouveautés. Introduire trop de mots nouveaux quand les
     // révisions s'accumulent fait s'effondrer l'apprentissage (Reddy et al., 2016) ; les seuils (10 et 20) sont un choix pratique.
     // L'étudiant garde la main : « J'en veux quand même » (force) lève ce frein pour la session.
-    const room = force ? maxNew : roomFor(due.length, maxNew);
-    const fresh = pickNew(deck, progress, room);
-    this.held = room < maxNew && pickNew(deck, progress, maxNew).length > fresh.length;
+    const room = plan ? Math.max(0, Math.round(plan.fresh) || 0) : force ? maxNew : roomFor(due.length, maxNew);
+    const fresh = plan ? orderNew(deck, progress, room, now) : pickNew(deck, progress, room);
+    this.held = !plan && room < maxNew && pickNew(deck, progress, maxNew).length > fresh.length;
     this.today = fresh.map(c => c.id);
     // Une question posée juste après la découverte est trop facile pour servir la mémoire (le mot est encore
     // « sous les yeux »). On découvre donc trois mots d'affilée, puis découvertes et premières questions alternent :
     // au moins deux autres étapes séparent chaque mot de sa première question.
-    const intros = fresh.map(c => ({ id: c.id, kind: 'intro' })), firsts = fresh.map(c => ({ id: c.id, kind: 'quiz', first: true }));
+    // Mots déjà vus en classe : la leçon a tenu lieu de découverte. La première question est donc un rappel écrit, à
+    // distance de la rencontre du mot ; si la fiche ne peut pas être écrite, l'échelle habituelle la remplace.
+    const intros = this.noIntro ? [] : fresh.map(c => ({ id: c.id, kind: 'intro' })), firsts = fresh.map(c => ({ id: c.id, kind: 'quiz', first: true, ...(this.noIntro ? { force: this.ease ? 'qcm-rev' : 'type' } : {}) }));
     const news = intros.splice(0, 3);
     while (intros.length) news.push(firsts.shift(), intros.shift());
     news.push(...firsts);
@@ -524,11 +555,13 @@ export class Session {
     if (activity.multi) return P[card.id];
     const before = boxOf(P[card.id]);
     const record = grade => {
+      const fresh = isNew(P[card.id]);
       P[card.id] = review(P[card.id], grade, now);
+      if (fresh) { P[card.id].born = now; this.stats.fresh++; }      // sans écran de découverte, le mot naît à sa première réponse
       if (P[card.id].box > before) this.stats.up.push(card.id);
       if (before < HERD_BOX && P[card.id].box >= HERD_BOX) this.stats.herd.push(card.id);
     };
-    const twoStep = this.today.includes(card.id) && card.clozes.length > 0;
+    const twoStep = this.today.includes(card.id) && (this.noIntro ? this.ease : card.clozes.length > 0);      // mot déjà vu en classe : une réponse écrite suffit, précédée d'un choix en A1
     let tamedNow = false;
     if (!item.retry) {                                   // première réponse du jour sur cette fiche
       this.stats.answered++;
@@ -537,12 +570,12 @@ export class Session {
       else record(!ok ? 'again' : info.assisted || info.hesitated ? 'hard' : 'good');
     } else if (item.bonus && this.waiting.has(card.id)) {  // phrase à trous du mot du jour : c'est elle qui décide
       this.waiting.delete(card.id);
-      record(!ok ? 'again' : info.hesitated ? 'hard' : 'good');
+      record(!ok ? 'again' : info.assisted || info.hesitated ? 'hard' : 'good');
     }
     this.stats.streak = ok ? this.stats.streak + 1 : 0;
     this.stats.best = Math.max(this.stats.best, this.stats.streak);
     if (ok && this.today.includes(card.id) && !this.tamed.includes(card.id)) {
-      if (item.first && twoStep) this.queue.splice(Math.min(this.queue.length, 3), 0, { id: card.id, kind: 'quiz', retry: true, bonus: true, force: 'cloze-choice' });
+      if (item.first && twoStep) this.queue.splice(Math.min(this.queue.length, 3), 0, { id: card.id, kind: 'quiz', retry: true, bonus: true, ...(this.ease ? { force: 'type', help: true } : { force: 'cloze-choice' }) });
       else if (!this.waiting.has(card.id) && P[card.id].lastOk) { this.tamed.push(card.id); tamedNow = true; }
     }
     this.lastTamed = tamedNow;

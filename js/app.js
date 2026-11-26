@@ -1,7 +1,7 @@
 // Éléfiches — interface : accueil, espace enseignant, session, bilan.
 import * as store from './store.js';
-import { deckFromCSV, deckFromJSON, deckFromAnki, mergeDecks, audit, REGISTERS, safeKey, deckToJSON, looksJSON, levelIn, prepare, serialize, hash, demoDeck, MODELS, safeUrl, LEVELS } from './deck.js';
-import { summary, boxOf, dueInDays, isNew, stageOf, HERD_BOX, shiftProgress, nextDueIn } from './scheduler.js';
+import { deckFromCSV, deckFromJSON, deckFromAnki, mergeDecks, audit, REGISTERS, safeKey, deckToJSON, looksJSON, levelIn, prepare, serialize, hash, demoDeck, MODELS, safeUrl, LEVELS, PLAN_DAYS, adviseDays } from './deck.js';
+import { summary, boxOf, dueInDays, isNew, isDue, stageOf, HERD_BOX, shiftProgress, nextDueIn } from './scheduler.js';
 import { Session, Challenge, Tour, meaning, gloss, pickNew, judge, roomFor, buildActivity, SELF, kindOf, suggestKind, genderOf, needsGender, GENDERED_LANGS } from './session.js';
 import { clozeParts, norm, noAcc, noArt, diffParts, remark, spoken, slug } from './match.js';
 import { unzip, typeOf } from './zip.js';
@@ -11,6 +11,7 @@ import { buildICS } from './remind.js';
 import { makeBackup, readBackup, mergeProgress, cleanProgress, countReplaced, countAdded } from './backup.js';
 import { ACCESS, MIN_CODE, validAccess, makeAccess, checkAccess } from './acces.js';
 import { STR, LANG_NAMES } from './i18n.js';
+import { PACES, DAY, EXTRA_MIN, paceDays, simulate, today as planToday, outlook, startPlan, cleanMeasure, emptyMeasure, addTime, addTry, rates, minutes, missedNow, markWorked, stepsLeft, milestone, dayEnd, dayIndex } from './plan.js';
 
 const app = document.getElementById('app');
 // En ligne, l'application ne s'affiche pas à l'intérieur de la page d'un autre site (protection contre le détournement de clics).
@@ -25,7 +26,7 @@ const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 const GATED = TEACHER && validAccess(ACCESS) && (!LOCAL || new URLSearchParams(location.search).has('verrou'));
 const siteBase = () => location.origin + location.pathname.replace(/[^/]*\.html$/, '');
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const S = { locked: GATED, lang: 'auto', minutes: 5, maxNew: 3, help: 'fr', sound: true, voice: true, remind: { time: '18:00', days: 'daily' }, savedAt: 0, decks: [], progress: {}, view: 'home', notice: null, toast: null, confirmReset: null, confirmDel: null, editId: null, cardId: null, draft: {}, local: null, gate: false, builder: { lang: 'fr', level: '', topic: '', count: 20, words: '', grid: '3x3', examples: 4 }, sheets: [], loose: [], perm: 0, sandbox: false, sbDays: 0, confirmSb: false };
+const S = { locked: GATED, lang: 'auto', minutes: 5, maxNew: 3, help: 'fr', sound: true, voice: true, remind: { time: '18:00', days: 'daily' }, savedAt: 0, decks: [], progress: {}, view: 'home', notice: null, toast: null, confirmReset: null, confirmDel: null, editId: null, cardId: null, draft: {}, local: null, gate: false, builder: { lang: 'fr', level: '', topic: '', count: 20, words: '', grid: '3x3', examples: 4 }, sheets: [], loose: [], perm: 0, sandbox: false, sbDays: 0, confirmSb: false, measure: emptyMeasure(), planId: null, stepAt: 0 };
 // Langue des consignes et du feedback. En mode automatique : français jusqu'au niveau B1,
 // langue apprise à partir de B2 (règle fixée par la responsable du projet). L'étudiant peut toujours choisir lui-même.
 function uiLang() {
@@ -123,7 +124,12 @@ const SAVANNA = `<svg class="savanna" viewBox="0 0 800 34" preserveAspectRatio="
   <g fill="#aebb8c"><path d="M60 26q1-13 7-18q0 10-3 18zM70 26q6-10 13-12q-4 8-9 12zM236 24q2-12 7-16q0 9-3 16zM246 24q5-9 12-10q-4 7-8 10zM392 25q1-13 7-18q0 10-3 18zM402 25q6-10 13-12q-4 8-9 12zM486 24q2-11 6-15q0 9-2 15zM700 25q1-13 7-18q0 10-3 18zM710 25q6-10 13-12q-4 8-9 12z"/></g></svg>`;
 // Paire de défenses : la récompense d'un défi d'étape réussi.
 const tusks = (size = 30, on = true) => `<svg class="tusks${on ? '' : ' off'}" width="${size}" height="${Math.round(size * 0.8)}" viewBox="0 0 40 32" aria-hidden="true"><path d="M12 3c-7 3-10 12-6 19 3 5 9 7 13 6-5-2-8-6-8-11 0-5 1-9 4-13z"/><path d="M28 3c7 3 10 12 6 19-3 5-9 7-13 6 5-2 8-6 8-11 0-5-1-9-4-13z"/></svg>`;
-const FOOT = '<svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true"><ellipse cx="13" cy="15" rx="9" ry="8.500" fill="currentColor"/><ellipse cx="5.500" cy="6.500" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="10.500" cy="3.800" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="15.800" cy="3.800" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="20.700" cy="6.500" rx="2.300" ry="2.800" fill="currentColor"/></svg>';
+const PRINT = '<ellipse cx="13" cy="15" rx="9" ry="8.500" fill="currentColor"/><ellipse cx="5.500" cy="6.500" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="10.500" cy="3.800" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="15.800" cy="3.800" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="20.700" cy="6.500" rx="2.300" ry="2.800" fill="currentColor"/>';
+const FOOT = `<svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">${PRINT}</svg>`;
+// Piste d'empreintes : l'icône d'un pas du plan personnel. La même patte pour les trois pas, une empreinte par jour du
+// plan : l'icône montre la vraie différence entre les pas (le nombre de jours), jamais une taille ni un rang.
+// done : jours déjà passés, dessinés en plein ; au-delà de douze empreintes, le reste est écrit en chiffres.
+const trail = (days, done = -1) => `<span class="trail" aria-hidden="true">${Array.from({ length: Math.min(days, 12) }, (_, i) => `<svg class="paw${done >= 0 && i >= done ? ' todo' : ''}" width="16" height="16" viewBox="0 0 26 26">${PRINT}</svg>`).join('')}${days > 12 ? `<span class="trailmore">+${days - 12}</span>` : ''}</span>`;
 // Barre de progression : la trompe s'allonge de la tête vers la cacahuète.
 const trunkBar = (pct, cls, label) => `<div class="trunk" role="progressbar" aria-label="${esc(label)}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">${head(cls)}<div class="track"><span style="width:${pct}%"></span></div>${NUT}</div>`;
 
@@ -255,6 +261,7 @@ async function load() {
   const set = (await store.get('settings')) || {};
   const sb = TEACHER ? await store.get('essai') : null;      // l'interface étudiant ignore toujours le mode essai
   S.sandbox = !!(sb && typeof sb === 'object' && sb.on === true); S.sbDays = S.sandbox && typeof sb.days === 'number' && Number.isFinite(sb.days) ? Math.max(0, Math.min(36500, sb.days)) : 0;
+  S.measure = cleanMeasure(await store.get(mkey()));      // vitesse et réussite mesurées sur cet appareil (plan personnel)
   Object.assign(S, { lang: set.lang || 'auto', minutes: set.minutes || 5, maxNew: set.maxNew || 3, help: set.help || 'fr', sound: set.sound ?? true, voice: set.voice ?? true, remind: { time: '18:00', days: 'daily', ...(set.remind || {}) }, savedAt: set.savedAt || 0 });
   const saved = (await store.get('decks')) || [];
   // Un paquet abîmé dans le stockage ne doit pas empêcher les autres de s'ouvrir : il est laissé de côté.
@@ -314,6 +321,10 @@ const saveSettings = () => store.set('settings', { lang: S.lang, minutes: S.minu
 const pkey = id => (S.sandbox ? 'essai:' : 'progress:') + id;
 const saveProgress = id => store.set(pkey(id), S.progress[id]);
 const saveSandbox = () => store.set('essai', { on: S.sandbox, days: S.sbDays });
+// Mesure locale du plan personnel (durée d'une étape, part de premières réponses justes). Comme la progression, celle du
+// mode essai est rangée à part : un enseignant qui teste ne fausse pas sa propre mesure.
+const mkey = () => (S.sandbox ? 'mesure-essai' : 'mesure');
+const saveMeasure = () => store.set(mkey(), S.measure);
 // Un seul changement à la fois : pendant un basculement, un saut dans le temps ou une remise à zéro, aucun autre geste
 // n'est accepté (sbBusy). Sans ce verrou, deux gestes rapprochés pourraient écrire des essais sous la clé de la vraie progression.
 let sbBusy = false;
@@ -332,11 +343,12 @@ async function setSandbox(on) {
   try {
     stopRace(); dropRecording();
     if (S.session && !S.session.challenge) await saveProgress(S.session.deck.id);      // sous la clé du mode que l'on quitte
+    await saveMeasure();                                                              // la mesure aussi, avant de changer de clé
     S.session = null;
-    const P = {};
+    const P = {}, M = cleanMeasure(await store.get(on ? 'mesure-essai' : 'mesure'));
     for (const d of S.decks) P[d.id] = cleanProgress(await store.get((on ? 'essai:' : 'progress:') + d.id));
     // Le drapeau et la progression changent ensemble, sans attente entre les deux : pkey() ne voit jamais un état mixte.
-    Object.assign(S, { sandbox: !!on, progress: P, pendingBackup: null, confirmReset: null, confirmSb: false, notice: null, view: on ? 'home' : 'teacher' });
+    Object.assign(S, { sandbox: !!on, progress: P, measure: M, pendingBackup: null, confirmReset: null, confirmSb: false, notice: null, view: on ? 'home' : 'teacher' });
     // Un paquet importé pendant le basculement n'était pas dans la boucle : sa progression est lue maintenant.
     for (let again = true; again;) { again = false; for (const d of S.decks) if (!S.progress[d.id]) { S.progress[d.id] = cleanProgress(await store.get(pkey(d.id))); again = true; } }
     await saveSandbox();
@@ -365,6 +377,7 @@ async function sandboxReset() {
     S.session = null;
     for (const d of S.decks) { S.progress[d.id] = {}; await store.set('essai:' + d.id, {}); }      // clé d'essai écrite en dur : jamais la vraie
     S.sbDays = 0; S.confirmSb = false; await saveSandbox();
+    S.measure = emptyMeasure(); await store.set('mesure-essai', S.measure);      // clé d'essai écrite en dur, comme la progression
   } finally { sbBusy = false; }
   S.notice = { text: t('sbResetDone') }; S.view = 'home'; render();
 }
@@ -423,7 +436,7 @@ function startFriendly(id) {
   const deck = S.decks.find(d => d.id === id), P = S.progress[id]; deck.help = helpFor(deck);
   const pool = deck.cards.filter(c => !isNew(P[c.id])).map(c => [Math.random(), c]).sort((a, b) => a[0] - b[0]).slice(0, 12).map(x => x[1]);
   S.session = new Challenge(deck, P, pool); S.session.friendly = true;
-  S.chStage = 0; S.view = 'session'; S.notice = null; advance();
+  S.chStage = 0; S.view = 'session'; S.notice = null; S.stepAt = 0; advance();
 }
 function pendingStage(d, P) {
   const st = stageOf(d, P), done = P._stages || {}, today = new Date(Date.now()).setHours(0, 0, 0, 0);
@@ -435,18 +448,123 @@ function pendingStage(d, P) {
   return 0;
 }
 
+// ---------- Plan personnel ----------
+// Premier temps (version 15b) : le plan vaut pour les paquets auxquels l'enseignant a conseillé un nombre de jours.
+// Les autres paquets gardent « Appétit du jour » et le frein, jusqu'à l'extension du plan à toutes les listes.
+const planned = d => !!d?.days;
+// Étapes d'un mot nouveau : 3 avec l'écran de découverte ; 1 quand les mots ont été vus en classe ; 2 au niveau A1, où
+// l'étudiant choisit le mot avant de l'écrire.
+const perNew = d => (d.seen === true ? (d.level === 'A1' ? 2 : 1) : 3);
+// Une autre liste qui attend aujourd'hui (la plus chargée) : proposée quand le paquet en cours est fini pour la journée.
+function nextList(id) {
+  let best = null; const now = Date.now();
+  for (const o of S.decks) {
+    const P = S.progress[o.id]; if (o.id === id || !P) continue;
+    let n = 0;
+    if (planned(o)) { const T = P._plan ? ensureDay(o) : null; n = T && !T.complete ? T.revLeft + T.freshLeft : 0; } else n = o.cards.filter(c => isDue(P[c.id], now)).length;
+    if (n > (best?.n || 0)) best = { deck: o, n };
+  }
+  return best;
+}
+// Arrête le programme du jour à la première visite de la journée, puis le relit : il ne bouge plus si l'étudiant
+// travaille en deux fois.
+function ensureDay(d) {
+  const P = S.progress[d.id], plan = P?._plan; if (!planned(d) || !plan) return null;
+  const T = planToday(d, P, plan);
+  if (plan.day !== T.d) { Object.assign(plan, T.snap); saveProgress(d.id); }
+  return T;
+}
+// Les trois pas d'un paquet : durée totale, jours qui restent, minutes par jour. Au premier choix, le calcul porte sur
+// tous les mots ; ensuite, sur ce qu'il reste, à partir de la vraie progression.
+function planOptions(d, P, now = Date.now()) {
+  const plan = P._plan || null, R = rates(S.measure), one = perNew(d), dNow = plan ? Math.max(0, dayIndex(plan.start, now)) : 0;
+  return paceDays(d.days).map(([pace, total]) => {
+    const sim = plan ? outlook(d, P, plan, now, { ok: R.ok, perNew: one, days: total }) : simulate({ fresh: d.cards.length, days: total, ok: R.ok, perNew: one, cap: d.days, now, mark: d.days });
+    return { pace, total, left: plan ? Math.max(1, total - dNow) : total, min: minutes(sim.avg, R.sec), peak: minutes(sim.max, R.sec), seen: sim.seen, again: sim.again };
+  });
+}
+// Révisions que les autres paquets demanderont pendant ce plan, en minutes par jour : elles se font depuis leur carte.
+function otherReviews(d, now = Date.now()) {
+  const R = rates(S.measure), until = now + d.days * DAY; let n = 0;
+  for (const o of S.decks) if (o.id !== d.id) for (const c of o.cards) { const st = S.progress[o.id]?.[c.id]; if (!isNew(st) && (!st.fsrs || st.fsrs.due <= until)) n++; }
+  const m = n * (2 - R.ok) / d.days * R.sec / 60;
+  return m >= 1 ? Math.round(m) : 0;
+}
+function openPlan(id) {
+  if (!S.decks.some(d => d.id === id && planned(d)) || !S.progress[id]) return;
+  S.planId = id; S.view = 'plan'; S.notice = null; window.scrollTo?.(0, 0); render();
+}
+function choosePace(id, pace) {
+  const d = S.decks.find(x => x.id === id), P = S.progress[id]; if (!d || !planned(d) || !P || !PACES.includes(pace)) return;
+  const now = Date.now(), o = planOptions(d, P, now).find(x => x.pace === pace); if (!o) return;
+  if (!P._plan) { P._plan = startPlan(pace, o.total, now, o.min); saveProgress(id); return startSession(id); }      // premier choix : la première journée commence
+  // Changement de pas : le premier jour ne bouge pas, la durée devient celle du nouveau pas, le programme du jour est refait.
+  Object.assign(P._plan, { pace, days: o.total, est: o.min, day: -1, ack: missedNow(P._plan, Math.max(0, dayIndex(P._plan.start, now))) });
+  saveProgress(id); S.view = 'home'; S.notice = { text: t('plChanged', t('pace_' + pace), o.min) }; window.scrollTo?.(0, 0); render();
+}
+// Jour manqué, quand rattraper coûte plus de cinq minutes par jour : l'étudiant choisit de garder la fin ou ses minutes.
+function keepPlan(id, v, k) {
+  const d = S.decks.find(x => x.id === id), plan = S.progress[id]?._plan; if (!d || !planned(d) || !plan) return;
+  const now = Date.now(), dNow = Math.max(0, dayIndex(plan.start, now)), miss = missedNow(plan, dNow) - plan.ack;
+  if (miss <= 0) return;
+  if (v === 'min') plan.days = Math.min(PLAN_DAYS.long, plan.days + Math.min(miss, Math.max(1, Math.round(k) || 1)));
+  plan.ack = missedNow(plan, dNow); plan.day = -1;
+  saveProgress(id); render();
+}
+function planView() {
+  const d = S.decks.find(x => x.id === S.planId), P = S.progress[d.id], plan = P._plan || null, now = Date.now();
+  const left = d.cards.filter(c => isNew(P[c.id])).length, others = otherReviews(d, now);
+  const card = o => `<article class="pace card${plan?.pace === o.pace ? ' current' : ''}">
+      <p class="pacetags">${o.pace === 'mid' ? `<span class="tag ok">${t('plAdvised')}</span>` : ''}${plan?.pace === o.pace ? `<span class="tag">${t('plCurrent')}</span>` : ''}</p>
+      ${trail(o.total)}
+      <h2>${t('pace_' + o.pace)}</h2>
+      <p class="big">${t('plMin', o.min)}</p>
+      <p>${plan ? t('plDaysLeft', o.left) : t('plDays', o.total)}${o.peak - o.min >= 3 ? ` <span class="meta">· ${t('plPeak', o.peak)}</span>` : ''}</p>
+      <p class="pacenote">${t('plNote_' + o.pace)}</p>
+      ${!plan && o.total > d.days ? `<p class="pacenote">${t('plReady', d.days, pctOf(o.seen), pctOf(o.again))}</p>` : ''}
+      <button class="${o.pace === 'mid' ? 'primary' : 'secondary'}" data-action="pace" data-pace="${o.pace}">${t('plPick', t('pace_' + o.pace))}</button></article>`;
+  return `<button class="link" data-action="home">← ${t('back')}</button>
+    <h1>${t('plTitle')}</h1><p class="lead" lang="${d.lang}">${esc(d.name)}</p>
+    <p class="planlead">${plan ? t('plLeadChange', left) : t('plLead', d.cards.length, d.days)}</p>
+    <p class="planlead why">${t('plWhy', d.days)}</p>
+    <section class="paces">${planOptions(d, P, now).map(card).join('')}</section>
+    <p class="pacenote">${t('plFoot')}</p>
+    ${others ? `<p class="pacenote">${t('plOthers', others)}</p>` : ''}`;
+}
+// Sur la carte du paquet : le pas choisi, le programme du jour et sa barre, jusqu'à « journée faite ».
+function planBlock(d, P, T, nextDays) {
+  const plan = P._plan, R = rates(S.measure);
+  if (!plan) return `<p class="planline">${t('plNone', d.cards.length, d.days)}</p><button class="primary" data-action="plan" data-id="${d.id}">${t('plChoose')}</button>`;
+  const now = Date.now(), miss = T.over ? 0 : missedNow(plan, T.d) - plan.ack; let missed = '';
+  if (miss > 0 && !T.complete) {
+    const opt = { ok: R.ok, perNew: perNew(d) }, a = minutes(outlook(d, P, plan, now, opt).avg, R.sec), b = minutes(outlook(d, P, plan, now, { ...opt, days: Math.min(PLAN_DAYS.long, plan.days + miss) }).avg, R.sec);
+    missed = a - b > EXTRA_MIN ? `<div class="banner warn planmiss"><p>${t('plMissedAsk', miss)}</p><div class="stack"><button class="secondary" data-action="plan-keep" data-v="end" data-id="${d.id}">${t('plKeepEnd', a)}</button>
+        <button class="secondary" data-action="plan-keep" data-v="min" data-k="${miss}" data-id="${d.id}">${t('plKeepMin', b, miss)}</button></div></div>`
+      : `<p class="banner planmiss">${t('plMissed', miss, a)}</p>`;
+  }
+  const pct = T.total ? Math.min(100, Math.round(100 * T.done / T.total)) : 100;
+  return `<p class="planline">${trail(plan.days, Math.min(plan.days, T.d + 1))}<span><b>${t('pace_' + plan.pace)}</b> <span class="meta">${T.over ? t('plOverTag') : t('plDay', T.d + 1, plan.days)}</span></span>
+      <button class="link" data-action="plan" data-id="${d.id}">${t('plChange')}</button></p>
+    ${missed}
+    ${(m => `<p class="milestone">${T.d < d.days ? t('plMile', d.days, m.seen, m.total, m.again) : m.unseen ? t('plMileLate', d.days, m.unseen) : t('plMileDone', d.days, m.again, m.total)}</p>`)(milestone(d, P, plan, now))}
+    ${T.complete ? `<p class="rest">${T.over ? t('nothing', nextDays) : t('plDayDone')}</p>`
+      : `<p class="todayline">${t('plToday', T.freshLeft, T.revLeft, minutes(stepsLeft(T, { ok: R.ok, perNew: perNew(d) }), R.sec))}</p>
+      <div class="daybar" role="progressbar" aria-label="${esc(t('plDayAria', T.done, T.total))}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div>
+      <button class="primary" data-action="start" data-id="${d.id}">${t(T.done ? 'plResume' : 'plGo')}</button>`}`;
+}
+
 function deckCard(d) {
   if (!S.progress[d.id]) return '';      // paquet dont la progression n'est pas encore chargée : il s'affichera au prochain dessin
-  const P = S.progress[d.id], s = summary(d, P), canStart = s.due + pickNew(d, P, S.maxNew).length > 0;
+  const P = S.progress[d.id], s = summary(d, P), plan = planned(d), T = plan ? ensureDay(d) : null, canStart = plan ? !T?.complete : s.due + pickNew(d, P, S.maxNew).length > 0;
   const nextDays = Math.min(...d.cards.map(c => dueInDays(P[c.id])).filter(n => n > 0), 999);
   const pct = Math.round(100 * s.stage.seen / s.stage.size);
-  const held = pickNew(d, P, S.maxNew).length > roomFor(s.due, S.maxNew);
+  const held = !plan && pickNew(d, P, S.maxNew).length > roomFor(s.due, S.maxNew);
   const mute = voices.length && !voiceFor(d.lang) && d.cards.some(c => !c.audio);
   return `<article class="deck card" style="--th:${hue(d.cards[0].theme || d.name)}">
     <div><h2 lang="${d.lang}">${esc(d.name)}</h2><p class="meta">${esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang)} · ${d.level}${d.demo ? ' · ' + t('demo') : ''}</p></div>
     ${prairie(d, s, [], !canStart)}
     <div class="stagebar"><span>${t('stageN', s.stage.index)}</span>${trunkBar(pct, 'idle', t('stageAria', s.stage.index, s.stage.count, s.stage.seen, s.stage.size))}</div>
-    ${canStart ? `<button class="primary" data-action="start" data-id="${d.id}">${S.sandbox ? t('sbGo') : t('start', S.minutes)}</button>` : `<p class="rest">${t('nothing', nextDays)}</p>`}
+    ${plan ? planBlock(d, P, T, nextDays) : canStart ? `<button class="primary" data-action="start" data-id="${d.id}">${S.sandbox ? t('sbGo') : t('start', S.minutes)}</button>` : `<p class="rest">${t('nothing', nextDays)}</p>`}
     ${held ? `<p class="heldline">${t('heldHome')} <button class="link" data-action="start-force" data-id="${d.id}">${t('heldForce')}</button></p>` : ''}
     ${mute ? `<p class="banner warn">${t('noVoiceDeck', esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang))}</p>` : ''}
     ${challengeLine(d, P)}
@@ -514,7 +632,7 @@ function home() {
       <p class="tagline">${t('tagline')}</p>
       <button class="rulesbtn" data-action="rules">${FOOT}<span>${t('rules')}</span></button>${SAVANNA}</header>
     ${S.sandbox ? sandboxBar(true) : ''}${banners()}
-    <div class="appetite"><span class="aplabel">${NUT}${t('appetite')}</span>${seg('maxNew', S.maxNew, [[3, t('ap1')], [5, t('ap2')], [8, t('ap3')]])}</div>
+    ${S.decks.some(d => !planned(d)) ? `<div class="appetite"><span class="aplabel">${NUT}${t('appetite')}</span>${seg('maxNew', S.maxNew, [[3, t('ap1')], [5, t('ap2')], [8, t('ap3')]])}</div>` : ''}
     <section class="decks">${S.decks.map(deckCard).join('')}</section>
     <section class="tools" aria-label="${t('toolsLabel')}">
     <details class="card settings"><summary>${ICON.gear} ${t('settings')}</summary>
@@ -565,7 +683,7 @@ function teacherView() {
     <section class="card sbcard"><h2>${t('sbTitle')}</h2><p class="sethint">${t('sbIntro')}</p>
       <div class="row"><button type="button" class="primary" data-action="sb-on">${t(S.sandbox ? 'sbResume' : 'sbStart')}</button>${S.sandbox ? `<button type="button" class="link" data-action="sb-off">${t('sbQuit')}</button>` : ''}</div></section>
     <section class="card"><h2>${t('myDecks')}</h2><ul class="decklist">${S.decks.map(d => `<li class="tdeck">
-      <span><b lang="${d.lang}">${esc(d.name)}</b><br><span class="meta">${t('nCards', d.cards.length)} · ${esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang)} · ${d.level}</span>${auditView(d)}</span>
+      <span><b lang="${d.lang}">${esc(d.name)}</b><br><span class="meta">${t('nCards', d.cards.length)} · ${esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang)} · ${d.level}${d.days ? ' · ' + t('tDaysMeta', d.days) : ''}${d.seen ? ' · ' + t('tSeenMeta') : ''}</span>${auditView(d)}</span>
       <span class="row"><button class="secondary small" data-action="tour" data-id="${d.id}">${t('tourBtn')}</button>
       <button class="secondary small" data-action="edit" data-id="${d.id}">${t('edit')}</button>
       <button class="secondary small" data-action="images" data-id="${d.id}">${t('imgBtn')}</button>
@@ -601,6 +719,12 @@ function teacherView() {
           <label>${t('deckName')} <input name="name" autocomplete="off"></label>
           <label>${t('deckLang')} <select name="lang">${langOpts('fr')}</select></label>
           <label>${t('level')} <select name="level">${levels('')}</select></label></details>
+        <details class="more"><summary>${t('fRhythmSum')}</summary>
+        <fieldset class="rhythm"><legend>${t('fRhythm')}</legend>
+          <p class="sethint">${t('fRhythmHint')}</p>
+          <label>${t('fDays')} <input name="days" type="number" min="${PLAN_DAYS.min}" max="${PLAN_DAYS.max}" step="1" inputmode="numeric" value="" autocomplete="off"><span class="sethint">${t('fDaysHint', PLAN_DAYS.min, PLAN_DAYS.max)}</span></label>
+          <label class="pick"><input type="checkbox" name="seen"> <span>${t('fSeen')}</span></label><p class="sethint">${t('fSeenHint')}</p></fieldset>
+        </details>
         <button class="primary">${t('importBtn')}</button>
       </form></section>
     <details class="card more"><summary>${t('manual')}</summary>
@@ -635,7 +759,7 @@ const ERR = { 'too-many': 'errMany', 'zip-big': 'errBig', zip: 'errEmpty', 'anki
 
 // Import : un texte collé ou un fichier de paquet (.json, .csv), accompagné ou non d'images, de sons et de planches,
 // le tout éventuellement réuni dans une archive .zip. Rien n'est envoyé nulle part : tout est lu sur l'appareil.
-async function importPacket({ files = [], text = '', name = '', lang = 'fr', level = '', home = false }) {
+async function importPacket({ files = [], text = '', name = '', lang = 'fr', level = '', home = false, days = 0, seen = false }) {
   try {
     files = files.map(f => ({ name: f.name, blob: f }));
     const budget = { left: 250e6 };                 // place totale pour tout ce qui se décompresse pendant cet import
@@ -683,9 +807,19 @@ async function importPacket({ files = [], text = '', name = '', lang = 'fr', lev
       for (const f of images.filter(f => !used.has(f)).slice(0, 200)) { const url = safeUrl(await imageToDataURL(f.blob)); if (url) S.loose.push(url); }
     }
     await ensureProgress(deck.id); keepDoubts(deck);
+    // Rythme du paquet. Dans l'espace enseignant, ce qui est saisi au moment de l'import l'emporte ; sinon le fichier ; sinon
+    // le réglage du paquet qu'on remplace (un fichier refait par une IA ne le contient jamais). Un paquet reçu par un
+    // étudiant est pris tel quel : c'est le fichier de l'enseignant qui fait foi.
+    let fromFile = '';
+    if (!home) {
+      const old = S.decks.find(d => d.id === deck.id), typed = adviseDays(days);
+      // Un rythme écrit dans le fichier (par une IA, par un tiers) et non saisi ici est annoncé : l'enseignant doit le voir.
+      if ((deck.days && !typed) || (deck.seen && !seen)) fromFile = ' ' + t('importedRhythm', deck.days && !typed ? deck.days : '–', t(deck.seen && !seen ? 'rhYes' : 'rhNo'));
+      deck.days = typed || deck.days || old?.days; if (seen || (deck.seen === undefined && old?.seen)) deck.seen = true;
+    }
     S.decks = [...S.decks.filter(d => d.id !== deck.id), deck];
     await saveDecks();
-    S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped), sort: sortNotice(deck) };
+    S.notice = { text: t('imported', deck.name, deck.cards.length, deck.skipped) + fromFile, sort: sortNotice(deck) };
     const toCheck = S.sheets.length || S.loose.length || deck.cards.some(c => c.image || c.sheet);   // toute image se vérifie d'un coup d'œil
     S.imgId = deck.id; S.view = toCheck && !home ? 'images' : 'home';
   } catch (e) {
@@ -829,6 +963,11 @@ function editView() {
       <label>${t('deckName')} <input name="name" value="${esc(d.name)}" autocomplete="off"></label>
       <label>${t('deckLang')} <select name="lang">${langOpts(d.lang)}</select></label>
       <label>${t('level')} <select name="level">${LEVELS.map(l => opt(l, d.level, l)).join('')}</select></label>
+      <fieldset class="rhythm"><legend>${t('fRhythm')}</legend>
+        <p class="sethint">${t('fRhythmHint')}</p>
+        <label>${t('fDays')} <input name="days" type="number" min="${PLAN_DAYS.min}" max="${PLAN_DAYS.max}" step="1" inputmode="numeric" value="${d.days || ''}" autocomplete="off"><span class="sethint">${t('fDaysHint', PLAN_DAYS.min, PLAN_DAYS.max)}</span></label>
+        <label class="pick"><input type="checkbox" name="seen"${d.seen ? ' checked' : ''}> <span>${t('fSeen')}</span></label><p class="sethint">${t('fSeenHint')}</p></fieldset>
+      ${d.days ? (e => `<p class="banner" role="status">${t('fEstimate', d.cards.length, d.days, minutes(e.avg), minutes(e.max))}</p>`)(simulate({ fresh: d.cards.length, days: d.days, perNew: perNew(d), cap: d.days })) : ''}
       <button class="primary">${t('save')}</button></form></section>
     <section class="card">
       <div class="row tools"><input type="search" data-input="search" placeholder="${t('eSearch')}" aria-label="${t('eSearch')}">
@@ -1096,10 +1235,18 @@ function raceView() {
 function startSession(id, force = false) {
   const deck = S.decks.find(d => d.id === id);
   deck.help = helpFor(deck);
+  let plan = null;
+  if (planned(deck)) {
+    // Plan personnel : pas de séance sans pas choisi ; la séance contient le programme du jour, ou ce qu'il en reste.
+    const P = S.progress[id]; if (!P._plan) return openPlan(id);
+    const T = ensureDay(deck); if (T.complete) return render();
+    P._plan.ack = missedNow(P._plan, T.d);      // commencer sans choisir, après un jour manqué : la fin du plan ne bouge pas
+    plan = { fresh: T.freshLeft, dueBy: dayEnd(Date.now()) };
+  }
   S.stageBefore = summary(deck, S.progress[id]).stage;
   // Mode essai : ni frein sur les nouveaux mots, ni fin de session à l'heure (l'enseignant examine chaque écran à son rythme).
-  S.session = new Session(deck, S.progress[id], { minutes: S.sandbox ? 600 : S.minutes, maxNew: S.maxNew, force: force || S.sandbox, audio: canListen(deck) });
-  S.view = 'session'; S.notice = null;
+  S.session = new Session(deck, S.progress[id], { minutes: S.sandbox ? 600 : S.minutes, maxNew: S.maxNew, force: force || S.sandbox, audio: canListen(deck), plan });
+  S.view = 'session'; S.notice = null; S.stepAt = 0;
   advance();
   store.keep();                            // demande au navigateur de ne pas effacer la progression s'il manque de place
   if (S.session?.held) toast(t('heldNew'));
@@ -1110,7 +1257,7 @@ function startChallenge(id, stage) {
   deck.help = helpFor(deck);
   const [a, b] = stageOf(deck, P).bounds[stage - 1];
   S.session = new Challenge(deck, P, deck.cards.slice(a, b));
-  S.chStage = stage; S.view = 'session'; S.notice = null;
+  S.chStage = stage; S.view = 'session'; S.notice = null; S.stepAt = 0;
   advance();
 }
 
@@ -1119,14 +1266,18 @@ function startTour(id) {
   const deck = S.decks.find(d => d.id === id);
   deck.help = helpFor(deck);
   S.session = new Tour(deck, S.progress[id]);
-  S.view = 'session'; S.notice = null;
+  S.view = 'session'; S.notice = null; S.stepAt = 0;
   advance();
 }
 
 function advance() {
   dropRecording(); S.feedback = null; S.local = null; S.gate = false;
+  // Mesure locale : durée de l'étape qui s'achève (découverte ou question, retour compris), dans une vraie séance seulement.
+  if (S.stepAt && S.step && !S.session.challenge) addTime(S.measure, Date.now() - S.stepAt);
   S.step = S.session.next();
+  S.stepAt = S.step ? Date.now() : 0;
   if (!S.step) {
+    if (!S.session.challenge) saveMeasure();
     const id = S.session.deck.id;
     if (S.session.friendly) { const st = S.session.stats, old = S.progress[id]._match || {}; S.progress[id]._match = { best: Math.max(old.best || 0, st.ok), runs: (old.runs || 0) + 1 }; }
     else if (S.session.challenge && !S.session.tour) { S.chWon = S.session.stats.answered - S.session.stats.ok <= 1; if (S.chWon) (S.progress[id]._stages ??= {})[S.chStage] = Date.now(); }
@@ -1339,6 +1490,9 @@ function ask(result, extra = {}) {
 function commit(result, extra = {}) {
   const step = S.step, s = S.session, before = boxOf(s.progress[step.card.id]);
   const st = s.answer(step, result.ok, undefined, { assisted: extra.assisted, hesitated: extra.hesitated, chosen: result.ok || extra.lucky ? null : extra.chosen, missed: extra.missed });
+  // Mesure locale : seule la première réponse à une question compte pour le taux de réussite, jamais un rattrapage.
+  if (!s.challenge && !step.activity.multi && !step.item.retry) { addTry(S.measure, !!result.ok); saveMeasure(); }
+  if (s.planned && s.progress._plan && !step.activity.multi) markWorked(s.progress._plan);      // la journée est travaillée ; les jours manqués sont constatés
   const after = boxOf(st), retry = !!s.challenge || (!!step.item.retry && after === before);
   S.feedback = { ...result, ...extra, retry, boxBefore: before, boxAfter: after, days: dueInDays(st), n: s.served,
     tamed: s.lastTamed, joined: before < HERD_BOX && after >= HERD_BOX, pun: !result.ok && !step.activity.multi && (S.errors = (S.errors || 0) + 1) % 3 === 1 };
@@ -1483,7 +1637,8 @@ function doneView() {
   }
   const { stats, deck, tamed, today } = S.session, P = S.progress[deck.id];
   const words = ids => [...new Set(ids)].map(id => `<span class="chip" lang="${deck.lang}">${esc(deck.byId[id].word)}</span>`).join(' ');
-  const s = summary(deck, P), more = s.due + pickNew(deck, P, S.maxNew).length > 0;
+  const T = S.session.planned ? ensureDay(deck) : null;
+  const s = summary(deck, P), more = T ? !T.complete : s.due + pickNew(deck, P, S.maxNew).length > 0, other = more ? null : nextList(deck.id);
   const stageDone = s.stage.count > 1 && (s.stage.index > S.stageBefore.index || (s.stage.allSeen && !S.stageBefore.allSeen));
   const line = (label, ids) => (ids.length ? `<p><span class="label">${t(label)}</span><br>${words(ids)}</p>` : '');
   return `<div class="card done">
@@ -1497,8 +1652,9 @@ function doneView() {
     ${prairie(deck, s, [...today, ...stats.up])}
     <p class="quip">${t('quips')[(stats.answered + s.animals.length) % t('quips').length]}</p>
     ${line('doneHerd', stats.herd)}${line('doneUp', stats.up)}${line('doneAgain', stats.again)}
+    ${T ? `<p class="win planwin">${trail(1)}<span>${T.complete ? t('plDayDone') : t('plDonePart', T.freshLeft, T.revLeft)}</span></p>` : ''}
     ${S.session.held ? `<p class="heldline">${t('heldDone')} <button class="link" data-action="start-force" data-id="${deck.id}">${t('heldForce')}</button></p>` : ''}
-    <div class="row">${more ? `<button class="secondary" data-action="start" data-id="${deck.id}">${t('again')}</button>` : ''}<button class="primary" data-action="home" autofocus>${t('home')}</button></div>
+    <div class="row">${more ? `<button class="secondary" data-action="start" data-id="${deck.id}">${t(T ? 'plResume' : 'again')}</button>` : ''}${other ? `<button class="secondary" data-action="start" data-id="${other.deck.id}">${t('nextList', esc(other.deck.name), other.n)}</button>` : ''}<button class="primary" data-action="home" autofocus>${t('home')}</button></div>
     <button class="link" data-action="share">${t('share')}</button>
     <button class="link" data-action="remind">${ICON.bell} ${t('remDone')}</button>
   </div>`;
@@ -1556,7 +1712,7 @@ function paint() {
   if (S.locked) { document.documentElement.lang = 'fr'; app.innerHTML = gateView(); app.querySelector('[autofocus]')?.focus({ preventScroll: true }); return; }
   document.documentElement.lang = uiLang();
   const open = app.querySelector('details.settings')?.open;
-  app.innerHTML = (S.sandbox && !['home', 'teacher'].includes(S.view || 'home') ? sandboxBar(false) : '') + (S.view === 'session' ? sessionView() : S.view === 'done' ? doneView() : S.view === 'teacher' ? teacherView() : S.view === 'rules' ? rulesView() : S.view === 'herd' ? herdView() : S.view === 'images' ? imagesView() : S.view === 'edit' ? editView() : S.view === 'sort' && TEACHER && S.decks.some(d => d.id === S.sortId) ? sortView() : S.view === 'card' ? cardView() : S.view === 'race' ? raceView() : S.view === 'privacy' ? privacyView() : home());
+  app.innerHTML = (S.sandbox && !['home', 'teacher'].includes(S.view || 'home') ? sandboxBar(false) : '') + (S.view === 'session' ? sessionView() : S.view === 'done' ? doneView() : S.view === 'teacher' ? teacherView() : S.view === 'rules' ? rulesView() : S.view === 'herd' ? herdView() : S.view === 'images' ? imagesView() : S.view === 'edit' ? editView() : S.view === 'sort' && TEACHER && S.decks.some(d => d.id === S.sortId) ? sortView() : S.view === 'card' ? cardView() : S.view === 'race' ? raceView() : S.view === 'privacy' ? privacyView() : S.view === 'plan' && S.decks.some(d => d.id === S.planId && planned(d)) && S.progress[S.planId] ? planView() : home());
   if (open && app.querySelector('details.settings')) app.querySelector('details.settings').open = true;
   if (S.view === 'session' || S.view === 'done') {
     app.querySelector('[autofocus]')?.focus({ preventScroll: true });
@@ -1577,8 +1733,11 @@ app.addEventListener('click', e => {
   else if (action === 'sb-reset-yes') { if (!S.sandbox || !S.confirmSb || !armed()) return; sandboxReset(); }
   else if (action === 'gate-copy') { navigator.clipboard?.writeText(S.door?.line || '').then(() => toast(t('copied')), () => app.querySelector('[data-line]')?.select()); }
   else if (action === 'start-force') startSession(id, true);
+  else if (action === 'plan') openPlan(id);
+  else if (action === 'pace') { if (S.view === 'plan') choosePace(S.planId, b.dataset.pace); }
+  else if (action === 'plan-keep') keepPlan(id, b.dataset.v, +b.dataset.k);
   else if (action === 'next') advance();
-  else if (action === 'home' || action === 'quit') { stopRace(); dropRecording(); if (S.session) saveProgress(S.session.deck.id); S.view = 'home'; S.session = null; window.scrollTo?.(0, 0); render(); }
+  else if (action === 'home' || action === 'quit') { stopRace(); dropRecording(); if (S.session) { saveProgress(S.session.deck.id); if (!S.session.challenge) saveMeasure(); } S.stepAt = 0; S.view = 'home'; S.session = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'teacher') { if (!TEACHER) return; if (S.session) S.session = null; S.view = 'teacher'; S.notice = null; S.confirmDel = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'set') applySetting(b.dataset.key, b.dataset.value);
   else if (action === 'rules') { S.view = 'rules'; window.scrollTo?.(0, 0); render(); }
@@ -1718,9 +1877,19 @@ app.addEventListener('submit', e => {
   if (kind === 'gate') { if (S.locked && !S.door?.busy) openGate(e.target.code.value); return; }
   if (S.locked || sbBusy) return;
   if (kind === 'gate-make') { makeGate(e.target.code.value, e.target.again.value); return; }
-  if (kind === 'import') { const f = e.target; importPacket({ files: [...f.files.files], text: f.text.value, name: f.name.value.trim(), lang: f.lang.value, level: f.level.value }); }
+  if (kind === 'import') {
+    if (!TEACHER) return;      // ce formulaire n'existe que dans l'espace enseignant
+    const f = e.target, raw = f.days.value.trim();
+    if (raw && !adviseDays(raw)) { S.notice = { bad: true, text: t('errDays', PLAN_DAYS.min, PLAN_DAYS.max) }; toast(S.notice.text); return; }
+    importPacket({ files: [...f.files.files], text: f.text.value, name: f.name.value.trim(), lang: f.lang.value, level: f.level.value, days: adviseDays(raw), seen: f.seen.checked });
+  }
   else if (kind === 'card') { if (TEACHER && editing()) saveCard(e.target); }
-  else if (kind === 'rename') { if (!TEACHER || !editing()) return; const d = editing(), n = e.target.name.value.trim(); if (n) { d.name = n; d.lang = e.target.lang.value; d.level = e.target.level.value; d.demo = false; saveDecks(); S.notice = { text: t('saved') }; render(); } }
+  else if (kind === 'rename') {
+    if (!TEACHER || !editing()) return; const d = editing(), f = e.target, n = f.name.value.trim(), raw = f.days.value.trim(), days = adviseDays(raw);
+    // Jours conseillés : un nombre de 4 à 60, ou rien. Une valeur refusée n'est jamais enregistrée en silence : le message dit quoi écrire.
+    if (raw && !days) { S.notice = { bad: true, text: t('errDays', PLAN_DAYS.min, PLAN_DAYS.max) }; toast(S.notice.text); return; }
+    if (n) { d.name = n; d.lang = f.lang.value; d.level = f.level.value; d.days = days || undefined; d.seen = f.seen.checked ? true : undefined; d.demo = false; saveDecks(); S.notice = { text: t('saved') }; render(); }
+  }
   else if (kind === 'typed' && !S.feedback) submitTyped(e.target.answer.value);
 });
 function applySetting(k, v) {

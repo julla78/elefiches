@@ -69,6 +69,7 @@ export function shiftProgress(P, ms) {
   for (const [id, st] of Object.entries(P)) {
     if (!st || typeof st !== 'object') continue;
     if (id === '_stages') out[id] = Object.fromEntries(Object.entries(st).map(([k, v]) => [k, back(v)]));
+    else if (id === '_plan') out[id] = { ...st, start: back(st.start) };      // le plan personnel recule avec le reste : un jour d'avance est un jour de plan
     else if (id.startsWith('_')) out[id] = { ...st };
     else {
       out[id] = { ...st };

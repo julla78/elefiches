@@ -33,6 +33,7 @@ PUBLIC
 CONTENU
 Thème : ${theme}.
 ${list.length ? `Mots imposés, dans cet ordre :\n${list.map(w => '- ' + w).join('\n')}` : `Choisis ${n} mots ou expressions utiles pour ce thème à ce niveau : ${W.words}. Mélange noms, verbes, adjectifs et expressions.`}
+ORDRE DES FICHES : ${list.length ? `les fiches du paquet suivent exactement l'ordre de la liste ci-dessus. Ne la trie pas, ne la regroupe pas par catégorie ou par thème, ne déplace aucun mot.` : `range les fiches des mots les plus utiles aux moins utiles pour ce thème, sans les regrouper par catégorie.`} L'application fait découvrir les mots dans l'ordre du paquet : c'est l'ordre de priorité de l'enseignant.
 
 CHAQUE FICHE
 - "word" : le mot ou l'expression en ${target}, à la forme du dictionnaire, avec son article indéfini si c'est un nom.${gendered ? ` Un nom ou un adjectif qui change de forme au féminin s'écrit avec ses deux formes, masculin d'abord, séparées par une barre oblique entourée d'espaces : ${lang === 'es' ? '« un camarero / una camarera », « caro / cara »' : '« un serveur / une serveuse », « cher / chère »'}. L'application n'en demandera jamais qu'une à la fois, en disant laquelle. N'emploie cette barre pour rien d'autre : deux synonymes font deux fiches.` : ''}
@@ -120,7 +121,9 @@ Si, en écrivant une ligne, tu vois qu'une règle éliminatoire n'est pas respec
 Sous le tableau, écris la liste des DOUTES en clair : paires de mots presque synonymes (${twinsEx}) avec ce qui les distingue selon toi, mots à deux sens, ${gendered ? 'genres ou ' : ''}catégories dont tu n'es pas sûr, catégories qui comptent moins de quatre mots. S'il n'y en a aucun, écris « Aucun doute ».
 Puis ARRÊTE-TOI et attends ma réponse. Ne passe pas à l'étape 2 sans mon accord, même si tout te semble clair.
 ÉTAPE 2, après mon accord seulement : applique mes corrections, puis rédige le paquet en suivant tout ce qui suit.`;
-  const json = `Règles du JSON : guillemets droits doubles pour les clés et les valeurs ; à l'intérieur d'un texte, n'utilise jamais de guillemet droit (écris « » ou une apostrophe) ; pas de commentaire ; pas de virgule après la dernière fiche.`;
+  // Rythme : les jours conseillés et « mots déjà vus en classe » se règlent dans l'appli, par l'enseignant. Une IA qui les
+  // inventerait donnerait un plan à des étudiants sans que personne l'ait décidé.
+  const json = `Règles du JSON : guillemets droits doubles pour les clés et les valeurs ; à l'intérieur d'un texte, n'utilise jamais de guillemet droit (écris « » ou une apostrophe) ; pas de commentaire ; pas de virgule après la dernière fiche. N'ajoute aucun champ qui ne figure pas dans le modèle ci-dessus : en particulier rien sur le rythme de travail (nombre de jours, date, minutes par jour, mots déjà vus en classe). Ce rythme se règle dans l'application, par l'enseignant.`;
   const drawable = `si le mot désigne un objet, un lieu, une personne ou une action que l'on reconnaît sur un dessin sans légende`;
   // Au niveau débutant, l'image porte le sens : chaque fiche en a une.
   const imgFile = every ? `le nom du fichier image de la fiche, par exemple "images/loyer.png" (voir IMAGES). Au niveau ${level}, CHAQUE fiche a une image : pour un mot que l'on ne peut pas montrer directement, dessine une petite scène qui le montre sans ambiguïté.`
@@ -187,6 +190,7 @@ Pour chaque fiche, vérifie et corrige :
 4 bis. Tout doute qui reste (quasi-synonymes, genre, sens double) est écrit dans le champ "doubt" de la fiche, en français.
 4 ter. ${spelling}${every ? `
 5. Chaque fiche a une image, qui montre le sens du mot sans ambiguïté.` : ''}
+Ne change pas l'ordre des fiches et n'ajoute aucun champ au paquet (rien sur le rythme de travail : il se règle dans l'application).
 Donne d'abord la liste des fiches corrigées, avec ce que tu as changé, en une ligne par fiche, et pour chacune le mot que tu as essayé à la place du mot entre crochets. Livre ensuite de nouveau le paquet COMPLET, sous la même forme que la première fois (le même fichier, ou le même bloc de code JSON).`,
   };
 }
