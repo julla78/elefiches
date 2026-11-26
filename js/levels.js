@@ -6,19 +6,21 @@
 //   options : nombre de réponses proposées dans un choix.
 //   chunks  : nombre maximal de morceaux d'une phrase à reconstruire.
 //   hint    : aide à l'écriture. 'pattern' = première lettre et longueur ; 'first' = première lettre ; '' = aucune.
-//   lenient : tolérance d'orthographe d'une réponse écrite.
-//             2 = une lettre d'écart est acceptée et corrigée (A1 « peut recopier des mots familiers »,
-//                 A2 « relative exactitude phonétique, mais pas forcément orthographique ») ;
-//             1 = un accent oublié est accepté et signalé, une lettre d'écart donne droit à un second essai
-//                 (B1 « suffisamment justes », B2 « relativement exactes ») ;
-//             0 = orthographe exacte, accents compris ; un écart donne droit à un second essai (C1, C2).
+//   near    : longueur minimale d'un mot pour qu'une lettre d'écart donne droit à un second essai (plus généreux en A1 et A2).
+//
+// Orthographe d'une réponse écrite, à tous les niveaux (décision du 25 novembre 2026) : la forme exacte est exigée,
+// accents, cédille, « ñ » et « œ » compris. Un écart d'une lettre ou d'un accent n'est jamais accepté tel quel et
+// n'est jamais compté faux d'emblée : il donne un second essai, avec un message qui dit quoi regarder ; la réussite
+// compte alors comme aidée. Les descripteurs du CECRL (« relative exactitude phonétique, mais pas forcément
+// orthographique » en A2) disent ce qu'un apprenant sait faire seul, pas ce que l'appli doit lui laisser mémoriser :
+// le niveau règle donc l'aide (indice, second essai plus généreux), pas la forme attendue.
 export const SPEC = {
-  A1: { options: 3, chunks: 4, hint: 'pattern', lenient: 2 },
-  A2: { options: 3, chunks: 4, hint: 'first', lenient: 2 },
-  B1: { options: 4, chunks: 6, hint: '', lenient: 1 },
-  B2: { options: 4, chunks: 6, hint: '', lenient: 1 },
-  C1: { options: 4, chunks: 8, hint: '', lenient: 0 },
-  C2: { options: 4, chunks: 8, hint: '', lenient: 0 },
+  A1: { options: 3, chunks: 4, hint: 'pattern', near: 4 },
+  A2: { options: 3, chunks: 4, hint: 'first', near: 4 },
+  B1: { options: 4, chunks: 6, hint: '', near: 5 },
+  B2: { options: 4, chunks: 6, hint: '', near: 5 },
+  C1: { options: 4, chunks: 8, hint: '', near: 5 },
+  C2: { options: 4, chunks: 8, hint: '', near: 5 },
 };
 export const spec = deck => SPEC[deck.level] || SPEC.A2;
 

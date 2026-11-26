@@ -1,7 +1,7 @@
 // Tests du moteur : node tests/engine.test.mjs [chemin d'un CSV réel]
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { check, variants, findSpans, clozes, clozeParts } from '../js/match.js';
+import { check, slip, variants, findSpans, clozes, clozeParts } from '../js/match.js';
 import { parseCSV, deckFromCSV, DEMO_CSV, serialize, prepare, demoDeck, MODELS, safeUrl, deckToJSON, deckFromJSON, mergeDecks, decode, audit, normGender } from '../js/deck.js';
 import { review, isDue, inHerd, summary, stageOf } from '../js/scheduler.js';
 import { guessLevel } from '../js/deck.js';
@@ -33,6 +33,9 @@ t('variants', () => {
 t('check', () => {
   assert.deepEqual(check('un emploi', ['un emploi']), { ok: true });
   assert.equal(check('Etre recrute', variants('Être recruté(e)')).note, 'accent');
+  assert.equal(check('Etre recruté', variants('Être recruté(e)')).note, undefined, 'majuscule sans accent : rien à signaler');
+  assert.equal(slip('Ecole', 'école'), ''); assert.equal(slip('ecole', 'école'), 'accent'); assert.equal(slip('soeur', 'une sœur'), 'œ'); assert.equal(slip('ano', 'año'), 'ñ'); assert.equal(slip('francais', 'français'), 'ç');
+  assert.deepEqual(check('hola', ['¡Hola!']), { ok: true, note: 'open' }); assert.deepEqual(check('¡Hola!', ['¡Hola!']), { ok: true }); assert.deepEqual(check('¡hola!', ['hola']), { ok: true });
   assert.equal(check('emploi', ['un emploi']).note, 'article');
   assert.equal(check('le emploi', ['un emploi']).ok, true);
   assert.equal(check('emplo', ['un emploi']).ok, false);
@@ -151,18 +154,68 @@ t('activités : une forme par boîte, du choix à la réponse écrite', () => {
   const num = buildActivity(nums, nums.cards[0], 3, rnd); assert.equal(num.type, 'number');
   assert.ok(judge(' 92 ', num, nums).ok); assert.ok(!judge('93', num, nums).ok); assert.ok(judge('', num, nums).empty);
 });
-t('réponse écrite : tolérance réglée par le niveau du CECRL', () => {
+t('réponse écrite : forme exacte exigée à tous les niveaux, second essai pour une lettre ou un accent', () => {
   const act = { type: 'cloze-type', answer: 'terrasse', accepted: ['terrasse'], lemmas: ['une terrasse'] }, acc = { type: 'cloze-type', answer: 'café', accepted: ['café'], lemmas: ['un café'] };
-  const at = lv => ({ level: lv });
-  // A1 et A2 : une lettre d'écart est acceptée et corrigée ; l'accent oublié aussi.
-  assert.deepEqual(judge('terasse', act, at('A1')), { ok: true, note: 'near' }); assert.deepEqual(judge('caffé', acc, at('A2')), { ok: true, note: 'near' });
-  assert.equal(judge('cafe', acc, at('A2')).note, 'accent'); assert.ok(!judge('tarase', act, at('A1')).ok);
-  // B1 et B2 : accent accepté et signalé ; une lettre d'écart donne droit à un second essai, puis compte comme une erreur.
-  assert.equal(judge('cafe', acc, at('B1')).note, 'accent'); assert.deepEqual(judge('terasse', act, at('B2')), { retry: true, accent: false });
-  assert.deepEqual(judge('terasse', act, at('B2'), true), { ok: false, near: true }); assert.ok(judge('terrasse', act, at('B2'), true).ok);
-  // C1 et C2 : orthographe exacte, accents compris.
-  assert.deepEqual(judge('cafe', acc, at('C1')), { retry: true, accent: true }); assert.deepEqual(judge('cafe', acc, at('C2'), true), { ok: false, near: true });
-  assert.ok(judge('Café ', acc, at('C2')).ok);
+  const at = (lv, lang = 'fr') => ({ level: lv, lang });
+  for (const lv of ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']) {
+    // Un accent oublié n'est jamais accepté au premier essai : second essai, avec un message sur l'accent.
+    assert.deepEqual(judge('cafe', acc, at(lv)), { retry: true, accent: true, slip: 'accent' }, lv);
+    assert.deepEqual(judge('cafe', acc, at(lv), true), { ok: false, near: true }, lv + ' : le même écart au second essai est une erreur');
+    assert.deepEqual(judge('café', acc, at(lv), true), { ok: true }, lv + ' : corrigé au second essai');
+    // Une lettre d'écart : second essai aussi, y compris en A1 et A2 (plus d'acceptation d'une forme fausse).
+    assert.deepEqual(judge('terasse', act, at(lv)), { retry: true, accent: false }, lv);
+    assert.deepEqual(judge('terasse', act, at(lv), true), { ok: false, near: true }); assert.ok(judge('terrasse', act, at(lv), true).ok);
+    assert.ok(!judge('tarase', act, at(lv)).ok && !judge('tarase', act, at(lv)).retry, 'deux lettres d’écart : faux');
+    assert.deepEqual(judge('Café ', acc, at(lv)), { ok: true });
+  }
+  // Mot court : le second essai est plus généreux en A1 et A2 (quatre lettres) qu'au-delà (cinq).
+  const chat = { type: 'type', answer: 'chat', accepted: ['chat'] };
+  assert.ok(judge('chta', chat, at('A1')).retry === undefined && judge('chas', chat, at('A1')).retry); assert.ok(!judge('chas', chat, at('B1')).retry && !judge('chas', chat, at('B1')).ok);
+  // Majuscule qui commence un mot, sans son accent : acceptée (« Ecole », « Ca va », « A bientôt »). En minuscule, l'accent est exigé.
+  const eco = { type: 'type', answer: 'école', accepted: ['école', 'une école'] }, one = w => ({ type: 'type', answer: w, accepted: [w] });
+  assert.deepEqual(judge('Ecole', eco, at('A1')), { ok: true }); assert.deepEqual(judge('Une Ecole', eco, at('B2')), { ok: true }); assert.deepEqual(judge('ECOLE', eco, at('B2')), { ok: true });
+  assert.deepEqual(judge('Ca va', one('ça va'), at('A1')), { ok: true }); assert.deepEqual(judge('A bientôt', one('à bientôt'), at('A1')), { ok: true });
+  assert.deepEqual(judge('ecole', eco, at('A1')), { retry: true, accent: true, slip: 'accent' });
+  assert.deepEqual(judge('Ecole', one('élève'), at('A1')), { ok: false }, 'un autre mot reste faux');
+  assert.deepEqual(judge('Eleve', one('élève'), at('A1')), { retry: true, accent: true, slip: 'accent' }, 'la majuscule n’excuse que son propre accent');
+  // Tout écrire en majuscules ne dispense pas des accents, et « ñ » est exigé même en majuscule (relecture de sécurité, C1).
+  assert.equal(judge('ELEVE', one('élève'), at('A1')).slip, 'accent'); assert.equal(judge('GARCON', one('garçon'), at('A1')).slip, 'ç'); assert.equal(judge('NOEL', one('noël'), at('A1')).slip, 'ë');
+  assert.equal(judge('ANO', one('año'), at('A1', 'es')).slip, 'ñ'); assert.equal(judge('NINO', one('niño'), at('A1', 'es')).slip, 'ñ'); assert.equal(judge('Ñu', one('ñu'), at('A1', 'es')).ok, true); assert.equal(judge('Nu', one('ñu'), at('A1', 'es')).slip, 'ñ');
+  assert.equal(judge('SI', one('sí'), at('A1', 'es')).slip, 'accent'); assert.equal(judge('OU', one('où'), at('A1')).slip, 'accent'); assert.equal(judge('SOEUR', one('sœur'), at('A1')).slip, 'œ');
+  // Accent en trop ou confondu : même traitement.
+  assert.equal(judge('ecolé', eco, at('A2')).slip, 'accent'); assert.equal(judge('ècole', eco, at('A2')).slip, 'accent');
+  // Cédille, « ñ », « œ », tréma : le message peut nommer la lettre.
+  assert.equal(judge('garcon', one('garçon'), at('A1')).slip, 'ç'); assert.equal(judge('soeur', one('sœur'), at('A1')).slip, 'œ');
+  assert.equal(judge('ano', one('año'), at('A1', 'es')).slip, 'ñ'); assert.equal(judge('pinguino', one('pingüino'), at('B2', 'es')).slip, 'ü');
+  assert.equal(judge('noel', one('noël'), at('B1')).slip, 'ë'); assert.equal(judge('nino', one('niño'), at('A1', 'es'), true).ok, false);
+  assert.deepEqual(judge('sœur', one('sœur'), at('A1')), { ok: true }); assert.deepEqual(judge('sœur', one('soeur'), at('A1')), { ok: true }, 'paquet écrit sans ligature : la bonne graphie de l’étudiant est acceptée'); assert.deepEqual(judge('año', one('año'), at('A1', 'es')), { ok: true });
+  // Article oublié et accent oublié ensemble : c'est l'accent qui est signalé (il était pris pour un simple oubli d'article).
+  assert.deepEqual(judge('cafe', { type: 'type', answer: 'un café', accepted: ['un café'] }, at('A1')), { retry: true, accent: true, slip: 'accent' });
+  assert.equal(judge('café', { type: 'type', answer: 'un café', accepted: ['un café'] }, at('A1')).note, 'article');
+  // Une lettre d'écart sans l'article : second essai aussi (« chot » pour « un chat »). « à » n'est pas un article.
+  assert.deepEqual(judge('chot', one('un chat'), at('A1')), { retry: true, accent: false }); assert.deepEqual(judge('adition', { type: 'type', answer: "l'addition", accepted: ["l'addition"] }, at('B1')), { retry: true, accent: false });
+  assert.deepEqual(judge('côté', one('à côté'), at('A1')), { ok: false }); assert.deepEqual(judge('A côté', one('à côté'), at('A1')), { ok: true }); assert.equal(judge('chat', one('un chat'), at('A1')).note, 'article');
+  // « œ » tapé n'avale pas un accent attendu (« nœl » n'est pas « noël »), mais reste accepté quand le paquet écrit « oe ».
+  assert.equal(judge('nœl', one('noël'), at('A1')).slip, 'ë'); assert.equal(judge('pœte', one('poète'), at('A1')).slip, 'è'); assert.deepEqual(judge('cœur', one('coeur'), at('A1')), { ok: true });
+  // Espagnol : le signe qui ouvre la question n'est pas exigé (la ponctuation finale ne l'est pas non plus), mais il est rappelé.
+  const que = { type: 'type', answer: '¿Qué tal?', accepted: ['¿Qué tal?'] };
+  assert.deepEqual(judge('qué tal', que, at('A1', 'es')), { ok: true, note: 'open' }); assert.deepEqual(judge('¿Qué tal?', que, at('A1', 'es')), { ok: true });
+  assert.deepEqual(judge('que tal?', que, at('A1', 'es')), { retry: true, accent: true, slip: 'accent' });
+  // le rappel du signe ne vaut que pour la forme reconnue
+  assert.deepEqual(check('hola', ['hola', '¿qué tal?']), { ok: true }); assert.deepEqual(check('buenos días', ['buenos días', '¡buenos días!']), { ok: true }); assert.deepEqual(check('qué tal', ['hola', '¿qué tal?']), { ok: true, note: 'open' });
+  // Anglais : « café » et « cafe » sont deux graphies admises, sans second essai ; une lettre d'écart reste un second essai.
+  assert.deepEqual(judge('cafe', acc, at('A1', 'en')), { ok: true, note: 'variant' }); assert.deepEqual(judge('cafe', acc, at('C2', 'en-GB')), { ok: true, note: 'variant' });
+  assert.deepEqual(judge('café', acc, at('B1', 'en')), { ok: true }); assert.deepEqual(judge('terasse', act, at('B1', 'en')), { retry: true, accent: false });
+  // Fiche à deux formes : l'accent oublié sur la forme demandée donne le message de l'accent, pas celui de la forme.
+  const cher = { type: 'type', answer: 'chère', accepted: ['chère'], both: ['cher', 'chère'], ask: 'f' };
+  assert.deepEqual(judge('chere', cher, at('A1')), { retry: true, accent: true, slip: 'accent' }); assert.deepEqual(judge('chère', cher, at('A1')), { ok: true });
+  assert.deepEqual(judge('cher', cher, at('A1')), { retry: true, form: 'f' }); assert.deepEqual(judge('cher, chère', cher, at('A1')), { ok: true, note: 'both' });
+  assert.deepEqual(judge('cher, chere', cher, at('A1')), { retry: true, accent: true, slip: 'accent' });
+  assert.deepEqual(judge('chere', { ...cher, answer: 'cher', accepted: ['cher'], ask: 'm' }, at('A1')), { retry: true, form: 'm' }, 'l’autre forme, même sans son accent : message de la forme');
+  // La forme de base avec un accent oublié : second essai sur l'accent.
+  assert.deepEqual(judge('preferer', { type: 'cloze-type', answer: 'préfère', accepted: ['préfère'], lemmas: ['préférer'] }, at('B1')), { retry: true, accent: true, slip: 'accent' });
+  assert.equal(judge('préférer', { type: 'cloze-type', answer: 'préfère', accepted: ['préfère'], lemmas: ['préférer'] }, at('B1')).note, 'form');
+  for (const lv of ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']) assert.ok(SPEC[lv].near >= 4 && SPEC[lv].lenient === undefined);
   // La forme de base à la place de la forme de la phrase est acceptée et signalée, à tous les niveaux.
   assert.equal(judge('une terrasse', act, at('C1')).note, 'article'); assert.ok(judge('', act, at('B1')).empty);
   assert.equal(judge('bosser', { type: 'cloze-type', answer: 'bosse', accepted: ['bosse'], lemmas: ['bosser'] }, at('B1')).note, 'form');
@@ -589,7 +642,7 @@ if (real && fs.existsSync(real)) {
   for (const w of ['Un boulot', 'Bosser', 'Avoir du taf', 'Être viré(e)', 'Un emploi', 'Jusqu\'à']) console.log(show(w));
 }
 t('sécurité : progression forgée reconstruite, paquet démesuré refusé, texte à trous piégé lu vite', async () => {
-  const { cleanProgress, mergeProgress, countReplaced } = await import('../js/backup.js');
+  const { cleanProgress, mergeProgress, countReplaced, countAdded } = await import('../js/backup.js');
   const now = Date.UTC(2026, 10, 23), far = Date.UTC(2100, 0, 1);
   const forged = { abc: { seen: 1, box: 99, born: far, lastOk: 'oui', fsrs: { state: 2, stability: 30, difficulty: 4, due: far, last_review: far, note: '<img src=x>', reps: 3 } }, casse: { seen: true, box: 4, fsrs: { due: 1, last_review: 1, state: 99 } }, '<b>x</b>': st(2, now), _race: { best: '<meta http-equiv=refresh content=0;url=//evil>', runs: -5 }, _match: { best: 7.6 }, _autre: { x: 1 } };
   const c = cleanProgress(forged, now);
@@ -601,6 +654,20 @@ t('sécurité : progression forgée reconstruite, paquet démesuré refusé, tex
   // une sauvegarde datée du futur ne l'emporte pas sur un travail d'aujourd'hui fait après elle
   const mine = { abc: st(2, now) };
   assert.equal(mergeProgress(mine, forged, now).abc.box, 2); assert.equal(countReplaced(mine, forged, now), 0);
+  // ni sur un travail de la semaine dernière (version 15a : auparavant la date forgée, ramenée à maintenant, gagnait)
+  const old3 = { abc: st(3, now - 7 * 86400000) };
+  assert.equal(mergeProgress(old3, forged, now).abc.box, 3); assert.equal(countReplaced(old3, forged, now), 0);
+  // une heure d'avance (deux appareils mal réglés) n'est pas un état forgé : la sauvegarde plus récente l'emporte normalement
+  const skew = { abc: { ...st(4, now), fsrs: { ...st(4, now).fsrs, last_review: now + 3600000 } } };
+  assert.equal(mergeProgress(old3, skew, now).abc.box, 4); assert.equal(countReplaced(old3, skew, now), 1);
+  // contre-vérification : une dernière révision absente ou illisible (ramenée à maintenant par cleanState) ne gagne pas non plus
+  for (const lr of [undefined, null, 'abc', '', true, false, {}, [1, 2], -1e999, { valueOf: 9e15 }]) {
+    const f = { abc: { seen: true, box: 5, fsrs: { state: 2, stability: 39999, difficulty: 4, due: far, ...(lr === undefined ? {} : { last_review: lr }) } } };
+    assert.equal(mergeProgress(old3, f, now).abc.box, 3, 'last_review ' + JSON.stringify(lr)); assert.equal(countReplaced(old3, f, now), 0);
+  }
+  assert.equal(countAdded({}, { toString: st(2, now) }, now), 1); assert.equal(countReplaced({}, { toString: st(2, now) }, now), 0);
+  // une fiche sans progression reprend l'état de la sauvegarde, même daté du futur (rien n'est écrasé)
+  assert.equal(mergeProgress({}, forged, now).abc.box, 5);
   assert.equal(countReplaced({ abc: st(1, now - 5) }, { abc: st(3, now - 1) }, now), 1);
   // un état illisible ne bloque jamais une réponse : le calendrier repart d'une fiche neuve
   const { review } = await import('../js/scheduler.js');
@@ -941,6 +1008,31 @@ t('version 14a : en mode essai, la session ne retient aucun nouveau mot et ne s�
   assert.equal(free.today.length, 8); assert.equal(free.endAt - now, 600 * 60000);
 });
 
+t('version 15a, sécurité : ponctuation en masse lue vite, traductions plafonnées, nom de paquet coupé avant calcul', async () => {
+  const { norm } = await import('../js/match.js'), { deckFromJSON, DECK_LIMITS } = await import('../js/deck.js');
+  let t0 = Date.now(); assert.equal(norm('!?'.repeat(200000) + 'a!'), '!?'.repeat(200000) + 'a'); assert.ok(Date.now() - t0 < 1500, 'norm reste linéaire : ' + (Date.now() - t0) + ' ms');
+  assert.equal(norm(' Mot…  suite ?! '), 'mot suite ?!'); assert.equal(norm('Fin.;:,!?'), 'fin');
+  const long = '!?'.repeat(10000) + 'a', cards = Array.from({ length: 30 }, (_, i) => ({ word: 'mot' + i, translations: { fr: long, en: 'word ' + i }, examples: ['Un mot' + i + ' ici.'] }));
+  t0 = Date.now(); const d = deckFromJSON(JSON.stringify({ elefiches: 1, name: '!?'.repeat(40000) + ' (A1)', lang: 'es', cards })); const ms = Date.now() - t0;
+  assert.ok(ms < 3000, 'import d’un paquet à traductions démesurées : ' + ms + ' ms');
+  assert.ok(d.cards.every(c => c.translations.fr.length <= DECK_LIMITS.definition && c.translations.en.startsWith('word')) && d.name.length <= 120);
+  assert.equal(d.id, deckFromJSON(JSON.stringify({ elefiches: 1, name: d.name, lang: 'es', cards })).id, 'même nom coupé, même identifiant');
+  const big = deckFromJSON(JSON.stringify({ elefiches: 1, name: 'x', lang: 'fr', grid: '9'.repeat(20000) + 'x3', cards: cards.map(c => ({ ...c, sheet: 'P' + '1'.repeat(20000) + '-1' })) }));
+  assert.equal(big.grid, '3x3'); assert.ok(big.cards.every(c => c.sheet === undefined));
+  // la même borne par le champ « image » (JSON) : un repère démesuré n'est ni une planche ni une image
+  const viaImage = deckFromJSON(JSON.stringify({ elefiches: 1, name: 'y', lang: 'fr', cards: cards.map((c, i) => ({ ...c, image: i ? 'P' + '1'.repeat(9999) + '-' + '2'.repeat(9999) : 'p12-7' })) }));
+  assert.equal(viaImage.cards[0].sheet, 'P12-7'); assert.ok(viaImage.cards.slice(1).every(c => c.sheet === undefined && c.image === undefined)); assert.ok(JSON.stringify(viaImage.cards).length < 30 * 1200);
+});
+t('version 15a : l’orthographe exacte (accents, ç, ñ, œ) est demandée aux IA dans les trois prompts', () => {
+  for (const [lang, word] of [['fr', '« sœur »'], ['es', '« ñ »'], ['en', '« café » et « cafe »']]) {
+    const p = buildPrompts({ lang, level: 'A1', topic: 'x', count: 12 });
+    for (const k of ['file', 'cards', 'review']) assert.ok(p[k].includes(word), lang + ' ' + k);
+    for (const k of ['file', 'cards']) { assert.ok(p[k].includes('ORTHOGRAPHE EXACTE') && p[k].includes('\nG. Chaque mot') && p[k].includes('5 bis. Orthographe'), lang + ' ' + k); }
+    assert.ok(p.go.includes('l\'orthographe exacte de chaque mot'));
+    for (const k of Object.keys(p)) if (typeof p[k] === 'string') assert.ok(!p[k].includes('undefined') && !p[k].includes('${'), lang + ' ' + k);
+  }
+  assert.ok(buildPrompts({ lang: 'es', level: 'A1' }).file.includes('« ¿ » ou « ¡ »')); assert.ok(!buildPrompts({ lang: 'en', level: 'A1' }).file.includes('accents et signes compris'));
+});
 t('version 14c : une à cinq phrases d’exemple, nombre exact, dans les trois prompts', () => {
   for (const lang of ['fr', 'en', 'es']) {
     const words = ['', 'UNE', 'DEUX', 'TROIS', 'QUATRE', 'CINQ'];

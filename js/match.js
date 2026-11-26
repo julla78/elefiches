@@ -1,10 +1,17 @@
 // Éléfiches — comparaison des réponses et fabrication des phrases à trous.
 // Aucune dépendance : ce module est testé seul dans tests/engine.test.mjs.
 
+// Même nettoyage que norm, mais la casse est gardée : elle sert à reconnaître un accent absent d'une majuscule.
+// La ponctuation finale est retirée par une boucle, pas par une expression régulière : sur un très long texte plein
+// de ponctuation (paquet hostile), « [.!?;:,]+$ » coûtait un temps quadratique et figeait l'appli.
+function clean(s) {
+  const t = String(s ?? '').normalize('NFC').replace(/[’`´]/g, "'").replace(/…|\.\.\./g, ' ');
+  let n = t.length;
+  while (n && '.!?;:,'.includes(t[n - 1])) n--;
+  return t.slice(0, n).replace(/\s+/g, ' ').trim();
+}
 export function norm(s) {
-  return String(s ?? '').normalize('NFC').toLowerCase()
-    .replace(/[’`´]/g, "'").replace(/…|\.\.\./g, ' ')
-    .replace(/[.!?;:,]+$/g, '').replace(/\s+/g, ' ').trim();
+  return clean(s).toLowerCase();
 }
 
 export function noAcc(s) {
@@ -49,18 +56,74 @@ function lev1(a, b) {                       // vrai si la distance d'édition va
   return diff + (a.length - i) + (b.length - j) <= 1;
 }
 
+// Lettre par lettre : la lettre nue, la lettre telle qu'elle est écrite, si elle a été tapée en majuscule et si elle
+// commence un mot. « œ » et « æ » comptent pour deux lettres, afin de s'aligner sur « oe » et « ae ».
+function letters(s) {
+  const out = []; let first = true;
+  for (const ch of s) {
+    const low = ch.toLowerCase(), base = noAcc(low), up = ch !== low;
+    if (base.length === 1) out.push({ b: base, c: low, up, first });
+    else for (const b of base) out.push({ b, c: low, up, first, lig: true });
+    first = !/[\p{L}\p{M}\p{N}]/u.test(ch);
+  }
+  return out;
+}
+// Nature de l'écart quand les lettres nues sont les mêmes et que seule leur écriture diffère.
+//   ''       : rien à reprocher. Ne sont pas comptés : un accent, un tréma ou une cédille absents de la majuscule qui
+//              commence un mot (« Ecole », « Ca va », « A bientôt » : usage courant, touches rares), et « œ » tapé là
+//              où le paquet écrit « oe ». Tout écrire en majuscules ne dispense donc pas des accents (« ECOLE » ne
+//              passe que pour son É), et « ñ », lettre à part entière, est exigé même en majuscule ;
+//   'accent' : accent aigu, grave ou circonflexe manquant, en trop ou confondu ;
+//   sinon, la lettre attendue elle-même (« ç », « ñ », « œ », « ë »…), pour que le message puisse la nommer.
+// Les deux textes sont alignés par la fin : un article oublié au début ne décale rien.
+export function slip(typed, expected) {
+  const A = letters(clean(typed)), B = letters(norm(expected));
+  let kind = '';
+  for (let i = 1; i <= Math.min(A.length, B.length); i++) {
+    const a = A[A.length - i], b = B[B.length - i];
+    if (a.b !== b.b) break;
+    if (a.c === b.c || (a.lig && !b.lig && b.c === b.b)) continue;          // « sœur » tapé pour un paquet qui écrit « soeur » : l'étudiant n'a pas tort (mais « nœl » n'est pas « noël »)
+    const marks = (b.c + a.c).normalize('NFD').replace(/[a-z]/g, '');
+    if (a.up && a.first && a.c === a.b && !b.lig && !marks.includes('\u0303')) continue;   // majuscule initiale sans son accent
+    const plain = /^[\u0300-\u0302]*$/.test(marks) && !a.lig && !b.lig;
+    if (!plain) return b.c !== b.b ? b.c : a.c;
+    kind = 'accent';
+  }
+  return kind;
+}
+
+const OPENING = /[¿¡]/g, HAS_OPENING = /[¿¡]/;
+
 // Compare une réponse écrite aux formes acceptées.
-// ok:true + note 'accent' ou 'article' : accepté et signalé, comme décidé au cahier des charges.
+//   ok:true                 : la forme exacte (casse et ponctuation finale à part) ;
+//   ok:true, note 'article' : le bon mot, sans son article ou avec un autre ;
+//   ok:true, note 'open'    : il ne manque que le signe qui ouvre une question ou une exclamation en espagnol ;
+//   ok:true, note 'accent'  : les bonnes lettres, mais un accent ou un signe à revoir (slip dit lequel). C'est à
+//                             l'appelant de décider ce qu'il en fait : voir judge, dans session.js ;
+//   ok:false, near:true     : une lettre d'écart.
 export function check(input, accepted, minNear = 5) {
-  const a = norm(input);
+  const typed = clean(input).replace(OPENING, '').trim(), a = typed.toLowerCase();
   if (!a) return { ok: false, empty: true };
-  const acc = accepted.map(norm);
-  if (acc.includes(a)) return { ok: true };
+  const strip = v => norm(v).replace(OPENING, '').trim(), acc = accepted.map(strip);
+  // Le rappel du signe d'ouverture (« ¿ », « ¡ ») ne vaut que si la forme reconnue en porte un dans la fiche.
+  const signless = new Set(accepted.filter(v => !HAS_OPENING.test(String(v))).map(strip)), bare1 = !HAS_OPENING.test(String(input));
+  const fine = (forms, note) => (note ? { ok: true, note } : bare1 && forms.every(v => !signless.has(v)) ? { ok: true, note: 'open' } : { ok: true });
+  if (acc.includes(a)) return fine([a]);
   const a2 = noAcc(a);
-  if (acc.some(v => noAcc(v) === a2)) return { ok: true, note: 'accent' };
-  const a3 = noArt(a2);
-  if (acc.some(v => noArt(noAcc(v)) === a3)) return { ok: true, note: a2 === a ? 'article' : 'accent' };
-  if (acc.some(v => v.length >= minNear && lev1(noAcc(v), a2))) return { ok: false, near: true };
+  const same = acc.filter(v => noAcc(v) === a2);
+  if (same.length) {
+    const kinds = same.map(v => slip(typed, v));
+    return kinds.includes('') ? fine(same.filter((v, i) => kinds[i] === '')) : { ok: true, note: 'accent', slip: kinds[0] };
+  }
+  // L'article est retiré avant les accents : « à » n'est pas l'article anglais « a » (« côté » n'est pas « à côté »).
+  const bareOf = v => noAcc(noArt(v)), a3 = bareOf(a);
+  const bare = acc.filter(v => bareOf(v) === a3);
+  if (bare.length) {
+    const kinds = bare.map(v => slip(typed, v));
+    return kinds.includes('') ? fine(bare, 'article') : { ok: true, note: 'accent', slip: kinds[0] };
+  }
+  // Une lettre d'écart, avec ou sans l'article (« chot » pour « un chat »).
+  if (acc.some(v => (v.length >= minNear && lev1(noAcc(v), a2)) || (bareOf(v).length >= minNear && lev1(bareOf(v), a3)))) return { ok: false, near: true };
   return { ok: false };
 }
 

@@ -97,6 +97,8 @@ export function normRegister(v) {
   return v.trim();
 }
 const cut = (v, n) => (typeof v === 'string' && v.length > n ? v.slice(0, n) : v);
+// Nom d'un paquet : coupé à 120 caractères avant tout calcul (identifiant, niveau lu dans le nom).
+const nameOf = v => String(v || '').slice(0, 120);
 // Nettoie une fiche déjà enregistrée ou tout juste importée. Les positions du mot dans les exemples (marks) sont
 // oubliées si un exemple change de longueur : elles seront retrouvées d'après le mot.
 function tidyCard(c) {
@@ -117,8 +119,10 @@ function tidyCard(c) {
     if (c.marks && (c.examples.join('\n') !== before || n !== c.examples.length)) delete c.marks;
   }
   if (Array.isArray(c.distractors)) c.distractors = c.distractors.filter(x => typeof x === 'string').slice(0, DECK_LIMITS.traps).map(x => cut(fix(x), DECK_LIMITS.trap)); else delete c.distractors;
-  if (c.translations) for (const k of Object.keys(c.translations)) c.translations[k] = fix(c.translations[k]);
-  if (c.translation) c.translation = fix(c.translation);
+  // Traductions plafonnées comme la définition : c'était le seul champ de texte sans limite (un paquet hostile s'en servait pour figer l'appli).
+  if (c.translations) for (const k of Object.keys(c.translations).slice(0, 12)) c.translations[k] = cut(fix(cut(c.translations[k], DECK_LIMITS.definition * 4)), DECK_LIMITS.definition);
+  if (c.translations && Object.keys(c.translations).length > 12) c.translations = Object.fromEntries(Object.entries(c.translations).slice(0, 12));
+  if (c.translation) c.translation = cut(fix(cut(c.translation, DECK_LIMITS.definition * 4)), DECK_LIMITS.definition);
 }
 
 // Images et sons : seulement un contenu intégré au paquet (data:) ou un fichier rangé à côté de l'application.
@@ -130,7 +134,9 @@ export function safeUrl(u) {
 }
 
 // Champ « image » d'une fiche : une case de planche (« P1-3 ») ou une image sûre.
-const imgRef = v => (/^P\d+-\d+$/i.test(String(v ?? '').trim()) ? String(v).trim() : safeUrl(v));
+// Repère d'une case de planche d'images : « P2-5 ». Trois chiffres au plus de chaque côté, partout où il est lu.
+const SHEET = /^P\d{1,3}-\d{1,3}$/i;
+const imgRef = v => (typeof v === 'string' && v.length < 16 && SHEET.test(v.trim()) ? v.trim() : safeUrl(v));
 
 // Niveau du paquet (A1 à C2) : il décide de la langue des consignes et du feedback.
 export const LEVELS = ['A1', 'A2', 'B1', 'B2', 'C1', 'C2'];
@@ -161,7 +167,7 @@ export function deckFromRows(rows, name, lang = 'fr', level) {
       else if (col.startsWith('tr:')) c.translations[col.slice(3)] = v;
       else if (col === 'image' || col === 'audio') { const u = col === 'image' ? imgRef(v) : safeUrl(v); if (u) c[col] = u; }
       else if (col === 'distractors') c.distractors = v.split('|').map(x => x.trim()).filter(Boolean);
-      else if (col.startsWith('extra:')) c.extra[col.slice(6)] = v;
+      else if (col.startsWith('extra:')) { if (Object.keys(c.extra).length < 20) c.extra[col.slice(6, 86)] = cut(v, 300); }   // colonnes non reconnues : bornées (20 par fiche, 300 caractères)
       else c[col] = v;
     });
     if (c.category) {                       // « Monde du travail · Registre familier »
@@ -177,6 +183,7 @@ export function deckFromRows(rows, name, lang = 'fr', level) {
     cards.push(c);
   }
   if (cards.length < 3) throw new Error('too-few');
+  name = nameOf(name);
   return prepare({ id: 'd' + hash(norm(name)), name, lang, level: LEVELS.includes(level) ? level : '', cards, skipped, fields: [...new Set(cols)] });
 }
 
@@ -301,13 +308,14 @@ export function deckFromAnki(db, name, lang = 'fr', level) {
 export function mergeDecks(decks, name) {
   const seen = new Set(), cards = [];
   for (const d of decks) for (const c of d.cards) { if (seen.has(c.id)) continue; seen.add(c.id); cards.push(c); }
-  const nm = name || decks.map(d => d.name).join(' + '), first = decks[0];
+  const nm = nameOf(name || decks.map(d => d.name).join(' + ')), first = decks[0];
   const level = decks.every(d => d.level === first.level && !d.levelGuessed) ? first.level : '';
   return prepare({ id: 'd' + hash(norm(nm)), name: nm, lang: first.lang, level, grid: first.grid, cards, skipped: decks.reduce((a, d) => a + (d.skipped || 0), 0), fields: [] });
 }
 
 // Calcule ce qui se déduit des fiches : phrases à trous et fiches « voisines » (sens proche).
 export function prepare(deck) {
+  deck.name = nameOf(deck.name) || 'Paquet';
   // Niveau absent : on le lit dans le nom (« Logement (A2) ») ; sinon A2 par défaut, et l'import demande de le choisir.
   if (!LEVELS.includes(deck.level)) { deck.levelGuessed = !levelIn(deck.name); deck.level = guessLevel(deck.name); }
   // Ce qui sert d'attribut ou de clé ne vient jamais tel quel d'un fichier : code de langue et identifiants sont contrôlés.
@@ -345,7 +353,8 @@ export function prepare(deck) {
     if (c.examples.some(e => /\[[^\]]+\]/.test(e))) { const u = c.examples.map(unmark); c.examples = u.map(x => x[0]); c.marks = u.map(x => x[1]); }
     else if (c.marks && c.marks.length !== c.examples.length) delete c.marks;
     // « P1-3 » : le dessin de cette fiche est la case 3 de la planche 1, découpée à l'import des planches.
-    if (/^P\d+-\d+$/i.test(c.image || '')) { c.sheet = c.image.toUpperCase(); delete c.image; }
+    if (typeof c.image === 'string' && SHEET.test(c.image)) { c.sheet = c.image.toUpperCase(); delete c.image; }
+    if (c.sheet !== undefined && !(typeof c.sheet === 'string' && SHEET.test(c.sheet))) delete c.sheet;      // paquet déjà enregistré : même borne
     // « Au (siècle) » : la glose entre parenthèses aide l'enseignant, mais donnerait la réponse dans une question.
     c.bare = c.word.replace(/\s\([^)]*\)/g, '').trim() || c.word;
     c.key = noAcc(norm(c.bare));
@@ -379,7 +388,7 @@ export function prepare(deck) {
   for (const c of deck.cards) seen.set(c.key, (seen.get(c.key) || 0) + 1);
   deck.homographs = new Set([...seen].filter(([, n]) => n > 1).map(([k]) => k));   // deux fiches « En »
   deck.helpLangs = [...new Set(deck.cards.flatMap(c => Object.keys(c.translations)))];
-  if (!/^\d+x\d+$/.test(deck.grid || '')) deck.grid = '3x3';        // cases d'une planche d'images : colonnes x rangées
+  if (typeof deck.grid !== 'string' || !/^\d{1,2}x\d{1,2}$/.test(deck.grid)) deck.grid = '3x3';        // cases d'une planche d'images : colonnes x rangées
   // Table sans prototype : un identifiant forgé (« __proto__ », « constructor ») n'y trouve jamais rien.
   deck.byId = Object.assign(Object.create(null), Object.fromEntries(deck.cards.map(c => [c.id, c])));
   return deck;
@@ -468,11 +477,11 @@ export function deckFromJSON(text, name, level) {
     translations: Object.fromEntries(Object.entries(c.translations && typeof c.translations === 'object' ? c.translations : {}).filter(([k, v]) => safeKey(k) && str(v))),
     examples: (Array.isArray(c.examples) ? c.examples : []).filter(str), theme: str(c.theme) || undefined, register: str(c.register) || undefined,
     family: str(c.family) || undefined, ipa: str(c.ipa) || undefined, image: imgRef(c.image) || undefined, audio: safeUrl(c.audio) || undefined, extra: {},
-    sheet: /^P\d+-\d+$/i.test(str(c.sheet)) ? c.sheet : undefined, pos: str(c.pos) || undefined, gender: str(c.gender) || str(c.genre) || undefined, doubt: str(c.doubt) || str(c.doute) || undefined,
+    sheet: SHEET.test(str(c.sheet)) ? c.sheet : undefined, pos: str(c.pos) || undefined, gender: str(c.gender) || str(c.genre) || undefined, doubt: str(c.doubt) || str(c.doute) || undefined,
     marks: Array.isArray(c.marks) ? c.marks.map(m => (Array.isArray(m) && m.length === 2 ? [+m[0], +m[1]] : null)) : undefined, situation: str(c.situation) || undefined, distractors: (Array.isArray(c.distractors) ? c.distractors : []).filter(str),
   })).filter(c => c.definition || Object.keys(c.translations).length);
   if (cards.length < 3) throw new Error('too-few');
-  const nm = name || str(d.name) || 'Paquet';
+  const nm = nameOf(name || str(d.name) || 'Paquet');
   return prepare({ id: 'd' + hash(norm(nm)), name: nm, lang: str(d.lang) || 'fr', level: LEVELS.includes(level) ? level : str(d.level).toUpperCase(), grid: str(d.grid), cards, skipped: d.cards.length - cards.length, fields: d.fields || [] });
 }
 

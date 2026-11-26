@@ -263,7 +263,10 @@ async function load() {
   // Démonstration d'une ancienne version (aucune image, autre nombre de fiches) : remplacée par l'actuelle. Les mots
   // communs gardent leur progression ; un paquet de démonstration que l'enseignant a illustré, renommé ou modifié n'est pas touché.
   else {
-    const fresh = demoDeck(), i = S.decks.findIndex(d => d.demo === true && d.id === fresh.id && !d.cards.some(c => c.image) && d.cards.length !== fresh.cards.length);
+    // Garde-fou (relecture de sécurité, 15a) : toutes les anciennes démonstrations n'avaient que des mots de l'actuelle. Un paquet où
+    // un seul mot a été réécrit est donc un travail de l'enseignant, et il n'est jamais remplacé.
+    const fresh = demoDeck(), words = new Set(fresh.cards.map(c => c.word));
+    const i = S.decks.findIndex(d => d.demo === true && d.id === fresh.id && Array.isArray(d.cards) && !d.cards.some(c => c.image) && d.cards.length !== fresh.cards.length && d.cards.every(c => words.has(c?.word)));
     if (i >= 0) {
       // L'identifiant d'une fiche dépend de sa définition : la progression est reportée mot par mot, dans les deux rangements.
       const old = S.decks[i].cards, byWord = new Map(fresh.cards.map(c => [c.word, c.id]));
@@ -1219,6 +1222,7 @@ function activityView(step, lang) {
     // Phrase libre : l'étudiant compose sa phrase, puis la compare aux phrases modèles et se juge lui-même.
     body = !L.phase && !fb ? `<p class="question">${t('qSentence')}</p>${pic(card)}<h2 class="word" lang="${lang}">${esc(card.bare)} ${listenBtn(card)}</h2>${sense(card, lang)}
         <label class="mysentence">${t('mySentence')}<textarea name="mine" rows="2" lang="${lang}" autocomplete="off" autocapitalize="sentences" spellcheck="false" data-keep="mine">${esc(L.mine || '')}</textarea></label>
+        ${keyRow(S.session.deck, lang)}
         <div class="row"><button class="primary" data-action="reveal-self">${t('seeModel')}</button>${skip}</div>`
       : `<p class="question">${t('qSentenceCheck')}</p>${L.mine ? `<p class="mine"><span class="meta">${t('yours')}</span><span lang="${lang}">${esc(L.mine)}</span></p>` : ''}
         <ul class="models">${a.models.map((m, i) => `<li><button type="button" class="icon small" data-action="say-model" data-i="${i}" aria-label="${t('listen')}">${ICON.sound}</button> ${boldIn(m, a.modelClozes?.[i], lang)}</li>`).join('')}</ul>
@@ -1240,11 +1244,12 @@ function activityView(step, lang) {
       ${L.again ? `<p class="again" role="status">${t('orderAgain')}</p>` : ''}
       <div class="row"><button class="primary" data-action="check-order" ${picked.length === a.chunks.length ? '' : 'disabled'}>${t('validate')}</button>${skip}</div>`}`;
   } else {
-    // Réponse courte écrite : un mot ou une expression. L'aide et la tolérance d'orthographe dépendent du niveau du paquet.
+    // Réponse courte écrite : un mot ou une expression. L'aide dépend du niveau du paquet ; la forme exacte est exigée partout (voir judge).
     const typed = `<form class="typed" data-submit="typed">
       <label>${t('answerLabel')} <input name="answer" maxlength="200" lang="${lang}" ${a.type === 'number' ? 'inputmode="numeric"' : ''} autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" ${fb ? `disabled value="${esc(fb.typed ?? '')}"` : `autofocus value="${esc(L.value || '')}"`}></label>
+      ${fb || a.type === 'number' ? '' : keyRow(S.session.deck, lang)}
       ${a.hint && !fb ? `<p class="helpline"><span class="tag">${t('hintLabel')}</span> <span class="letters" lang="${lang}">${esc(a.hint)}</span></p>` : ''}
-      ${L.again && !fb ? `<p class="again" role="status">${t(L.form ? (L.form === 'm' || L.form === 'f' ? 'tryForm_' + L.form : 'tryForm') : L.accent ? 'tryAccent' : 'tryAgain')}</p>` : ''}
+      ${L.again && !fb ? `<p class="again" role="status">${L.form ? t(L.form === 'm' || L.form === 'f' ? 'tryForm_' + L.form : 'tryForm') : L.accent ? (L.slip && L.slip !== 'accent' ? t('tryChar', esc(L.slip)) : t('tryAccent')) : t('tryAgain')}</p>` : ''}
       ${fb ? '' : `<div class="row"><button class="primary">${t('validate')}</button>${skip}</div>`}</form>`;
     if (a.type === 'cloze-type') body = `<p class="question">${t('qClozeType')}</p>${sentence(a.cloze, lang, !!fb)}${hint}${typed}`;
     else if (a.type === 'listen-type') body = `<p class="question">${t('qListenType')}</p>${ear}${typed}${quiet}`;
@@ -1295,10 +1300,10 @@ function feedbackView(step, lang) {
   // Un retour qui explique : ce que voulait dire la réponse choisie, ou les lettres sur lesquelles on s'est trompé.
   const other = !fb.ok && fb.chosen && a.from?.[fb.chosen] ? s.deck.byId[a.from[fb.chosen]] : null;
   const explain = !other ? '' : a.type === 'qcm' || a.type === 'listen' ? t('exMeaning', other.bare) : a.type === 'situation' ? t('exSituation', other.bare) : t('exWord', fb.chosen, meaning(other, help));
-  const note = fb.note === 'accent' ? t('noteAccent', fb.shown) : fb.note === 'article' ? t('noteArticle', fb.shown) : fb.note === 'form' ? t('noteForm', fb.shown) : fb.note === 'near' ? t('noteNear', fb.shown) : '';
-  // Réponse écrite à une lettre près : on montre l'endroit de l'écart dans la bonne orthographe.
+  const note = ['article', 'form', 'variant', 'open'].includes(fb.note) ? t({ article: 'noteArticle', form: 'noteForm', variant: 'noteVariant', open: 'noteOpen' }[fb.note], fb.shown) : '';
+  // Réponse écrite à une lettre ou à un accent près, manquée au second essai : on montre l'endroit de l'écart dans la bonne orthographe.
   let sp = null;
-  if (a.cloze && fb.typed && (fb.note === 'near' || fb.near)) { const d = diffParts(a.answer.toLowerCase(), fb.typed.trim().toLowerCase()), i = d[0].length, j = i + d[1].length; sp = [a.answer.slice(0, i), a.answer.slice(i, j), a.answer.slice(j)]; }
+  if (a.cloze && fb.typed && fb.near) { const d = diffParts(a.answer.toLowerCase(), fb.typed.trim().toLowerCase()), i = d[0].length, j = i + d[1].length; sp = [a.answer.slice(0, i), a.answer.slice(i, j), a.answer.slice(j)]; }
   const ex = a.type === 'order' ? '' : a.type === 'speak' ? a.model : card.examples.find(e => !a.cloze || e.replace(/[’`´]/g, "'") !== a.cloze.text) || card.examples[0];
   const move = fb.retry ? '' : fb.boxAfter > fb.boxBefore ? t('boxUp', fb.boxAfter) : fb.boxAfter < fb.boxBefore ? t('boxDown', fb.boxAfter) : '';
   const when = s.challenge || fb.ask ? '' : fb.ok && !fb.retry ? t('nextIn', Math.max(1, fb.days)) : fb.ok ? '' : t('nextSoon');
@@ -1342,11 +1347,45 @@ function commit(result, extra = {}) {
 }
 const cheer = fb => sfx(!fb.ok ? 'steps' : fb.tamed || fb.joined ? 'trumpet' : 'pop');
 
-// Réponse courte écrite. Un écart d'une lettre donne droit à un second essai (ou est accepté et corrigé, aux niveaux A1 et A2).
+// Touches des lettres accentuées et des signes, sous le champ de réponse : puisque la forme exacte est exigée, tout
+// ce qu'il faut pour l'écrire est à portée de doigt, quel que soit le clavier. Les touches de la langue du paquet,
+// puis toute autre lettre latine spéciale présente dans ses mots et ses exemples (un paquet d'anglais qui contient « café »
+// reçoit la touche « é »). Rien pour un paquet sans lettre spéciale.
+// Le calcul est fait une fois par session (le paquet ne change pas pendant qu'on joue).
+const KEYS = { fr: 'éèàêçùâîôûëïüœ', es: 'áéíóúüñ¿¡' }, KEYS_MAX = 20, keyCache = new WeakMap();
+function accentKeys(deck) {
+  const owner = S.session || deck;
+  if (keyCache.has(owner)) return keyCache.get(owner);
+  const keys = [...(KEYS[String(deck.lang || '').slice(0, 2)] || '')];
+  for (const c of deck.cards || []) {
+    if (keys.length >= KEYS_MAX) break;
+    for (const ch of `${c.word} ${(c.examples || []).join(' ')}`.normalize('NFC').toLowerCase()) {
+      if (keys.length < KEYS_MAX && ch > '\u007f' && !keys.includes(ch) && (/^\p{Script=Latin}$/u.test(ch) || ch === '¿' || ch === '¡')) keys.push(ch);   // lettres latines seulement : un paquet en cyrillique ou en grec recevrait sinon vingt lettres ordinaires, qui souffleraient la réponse
+    }
+  }
+  keyCache.set(owner, keys);
+  return keys;
+}
+function keyRow(deck, lang) {
+  const keys = accentKeys(deck);
+  return keys.length ? `<div class="keys" role="group" aria-label="${t('keysLabel')}">${keys.map(ch => `<button type="button" class="key" data-action="key" data-ch="${esc(ch)}" lang="${lang}">${esc(ch)}</button>`).join('')}</div>` : '';
+}
+// Écrit la lettre d'une touche à l'endroit du curseur, sans redessiner l'écran : le texte déjà tapé et le curseur restent en place.
+function typeKey(b) {
+  const el = b.closest('.study')?.querySelector('input[name="answer"], textarea[name="mine"]'), ch = b.dataset.ch || '';
+  if (!el || el.disabled || [...ch].length !== 1) return;
+  const from = el.selectionStart ?? el.value.length, to = el.selectionEnd ?? from;
+  if (el.maxLength > 0 && el.value.length - (to - from) + ch.length > el.maxLength) return el.focus({ preventScroll: true });
+  el.setRangeText(ch, from, to, 'end');
+  el.focus({ preventScroll: true });
+}
+
+// Réponse courte écrite. Un écart d'une lettre, d'un accent ou d'un signe donne droit à un second essai, à tous les niveaux ;
+// la réussite au second essai compte comme aidée (assisted).
 function submitTyped(value) {
   const a = S.step.activity, L = S.local || {}, r = judge(value, a, S.session.deck, !!L.again);
   if (r.empty) return;
-  if (r.retry) { S.local = { again: true, accent: r.accent, form: r.form, value }; sfx('steps'); return render(); }
+  if (r.retry) { S.local = { again: true, accent: r.accent, slip: r.slip, form: r.form, value }; sfx('steps'); return render(); }
   const extra = { typed: value, shown: a.cloze ? a.answer : S.step.card.word };
   if (r.ok && !L.again) return ask({ ok: true, note: r.note }, extra);
   cheer(commit({ ok: !!r.ok, note: r.note, near: r.near }, { ...extra, assisted: !!L.again })); render();
@@ -1578,6 +1617,7 @@ app.addEventListener('click', e => {
     else if (fb.tamed || fb.joined) { sfx('trumpet'); render(); } else advance();
   }
   else if (action === 'tour') startTour(id);
+  else if (action === 'key') { if (S.view === 'session' && !S.feedback) typeKey(b); }
   else if (action === 'chunk' && !S.feedback && !S.dragged) {
     const L = S.local ??= { picked: [], lock: 0 }, k = +b.dataset.k, i = L.picked.indexOf(k);
     if (i < 0) L.picked.push(k); else if (i >= L.lock) L.picked.splice(i, 1);
@@ -1701,6 +1741,9 @@ document.addEventListener('keydown', e => {
   const i = ['1', '2', '3', '4'].indexOf(e.key);
   if (i >= 0) app.querySelector(`.option[data-i="${i}"]`)?.click();
 });
+
+// Appuyer sur une touche d'accent ne retire pas le curseur du champ : le clavier du téléphone reste ouvert.
+app.addEventListener('mousedown', e => { if (e.target.closest?.('.key')) e.preventDefault(); });
 
 // Glisser-déposer des morceaux de phrase (souris, doigt ou stylet). Toucher un morceau fait la même chose :
 // le glisser n'est jamais obligatoire, pour le clavier et les personnes qui ne peuvent pas maintenir un appui.

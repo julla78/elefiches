@@ -60,6 +60,11 @@ ${gendered ? `- "gender" : OBLIGATOIRE pour tout nom, jamais vide : "m", "f", ou
     : lang === 'es' ? '« El [perro] está jugando con mis amigos. » accepte aussi gato ou caballo), réécris-la avec un indice que seul ce mot permet (« El [perro] está ladrando al cartero. »'
       : '« Le [chien] joue avec mes amis. » accepte aussi chat ou cheval), réécris-la avec un indice que seul ce mot permet (« Le [chien] aboie quand le facteur arrive. »';
   const startCue = lang === 'en' ? 'le choix entre « a » et « an »' : lang === 'es' ? 'l\'article (« el », « la », « un », « una »)' : 'l\'article ou l\'élision (« l\' », « d\' », « j\' », « qu\' »)';
+  // Orthographe : l'appli exige la forme exacte dans les réponses écrites (accents, cédille, « ñ », « œ »). Une fiche mal
+  // accentuée ferait donc apprendre, puis exiger, une forme fausse. En anglais, l'appli accepte les deux graphies d'un emprunt.
+  const spelling = lang === 'en' ? `Écris chaque mot avec l'orthographe du dictionnaire. Pour un mot emprunté qui a deux graphies (« café » et « cafe », « naïve » et « naive »), choisis-en une seule, celle que le dictionnaire donne en premier, et garde-la dans toute la fiche : l'application accepte les deux de la part de l'étudiant.`
+    : lang === 'es' ? `L'application exige de l'étudiant la forme exacte du mot : un accent oublié dans une fiche lui ferait apprendre, puis exiger, une forme fausse. Écris donc chaque mot, chaque phrase et chaque mot piège avec ses accents écrits (á, é, í, ó, ú), le tréma (« pingüino ») et la lettre « ñ », jamais « n » à sa place. Une question ou une exclamation s'ouvre par « ¿ » ou « ¡ » (« ¿Qué tal? », « ¡Hola! »). Vérifie un par un les mots que seul l'accent distingue (« sí » et « si », « qué » et « que », « él » et « el », « tú » et « tu »).`
+      : `L'application exige de l'étudiant la forme exacte du mot : un accent oublié dans une fiche lui ferait apprendre, puis exiger, une forme fausse. Écris donc chaque mot, chaque phrase et chaque mot piège avec tous ses accents (é, è, ê, à, ù…), la cédille (ç), le tréma (ë, ï) et la ligature « œ » (« sœur », « cœur », « œuf », jamais « soeur »). Une majuscule garde son accent (« À bientôt », « État »). Vérifie un par un les mots que seul l'accent distingue (« a » et « à », « ou » et « où », « sur » et « sûr »).`;
   const rules = `RÈGLES DES PHRASES D'EXEMPLE
 1. Chaque phrase est celle qu'un locuteur natif dirait vraiment dans cette situation, avec le temps et le déterminant naturels.${natural} N'écris jamais une phrase artificielle pour respecter le format.
 2. Chaque phrase est grammaticalement irréprochable : relis-la à voix haute.
@@ -78,6 +83,9 @@ Ce sont des mots qui existent en ${target}, correctement orthographiés. Jamais 
 6. Le mot piège n'est pas plus rare ni plus difficile que le mot de la fiche, et sa longueur est comparable. Il n'est ni absurde ni drôle.
 7. Les trois mots pièges d'une fiche sont différents les uns des autres, et classés du plus trompeur au moins trompeur.
 
+ORTHOGRAPHE EXACTE
+${spelling}
+
 RÈGLES ÉLIMINATOIRES
 Une fiche qui enfreint une seule de ces règles ne doit pas être livrée : corrige-la d'abord.
 A. "pos" est rempli${gendered ? ', et "gender" aussi pour chaque nom' : ''}.
@@ -86,6 +94,7 @@ C. Dans la PREMIÈRE phrase d'exemple, aucun autre mot du paquet ni aucun mot pi
 D. Chaque mot piège a la même catégorie${gendered ? ', le même genre' : ''}, le même nombre, le même nombre de mots et le même début (voyelle ou consonne) que le mot entre crochets : rien ne s'élimine par la grammaire, l'orthographe, la majuscule ou la longueur.
 E. Chaque phrase est celle qu'une personne dirait vraiment.
 F. Tout doute est écrit dans "doubt".
+G. Chaque mot, chaque phrase et chaque mot piège est écrit avec son orthographe exacte${lang === 'en' ? '' : ', accents et signes compris'} (voir ORTHOGRAPHE EXACTE).
 
 MÉTHODE
 Travaille par lots de dix fiches au plus. Pour chaque lot : rédige les fiches, puis fais les contrôles ci-dessous sur chacune, corrige, et seulement alors passe au lot suivant. Ne saute aucun contrôle parce que le paquet est long : mieux vaut y passer plus de temps qu'abréger.
@@ -95,6 +104,7 @@ Contrôles, fiche par fiche :
 3. Substitution : dans la PREMIÈRE phrase, remplace le mot entre crochets par chacun des autres mots du paquet ; si la phrase reste possible avec l'un d'eux (${swap}).
 4. Mots pièges : place chacun dans la phrase à la place des crochets. La phrase doit rester grammaticalement correcte (règle D) et devenir fausse pour le sens (règle C). Demande-toi ensuite si un étudiant pourrait écarter ce mot sans connaître son sens ; si oui, change-le.
 5. Naturel : relis chaque phrase en te demandant « est-ce qu'une personne dirait cela, telle quelle, dans la vie ? » ; si elle ressemble à une phrase de manuel, réécris-la. Chaque fiche a exactement ${numEx} phrase${oneEx ? '' : 's'} d'exemple : vérifie-le fiche par fiche. Le mot figure entre crochets dans ${oneEx ? 'son exemple' : 'ses ' + numEx + ' exemples, sous des formes variées'}, au format du niveau ${level}.${every ? `
+5 bis. Orthographe : relis le mot, ses phrases et ses mots pièges lettre par lettre${lang === 'en' ? ' ; une seule graphie par mot dans toute la fiche' : lang === 'es' ? ' : accents écrits, « ñ », « ü », « ¿ » et « ¡ »' : ' : accents, cédille, tréma, « œ »'} (règle G).
 6. Image : chaque fiche a son image.` : ''}
 
 RAPPORT DE CONTRÔLE
@@ -161,7 +171,7 @@ Laisse blanches les cases qui n'ont pas de dessin.`,
     // À coller quand le tableau de l'étape 1 convient (après y avoir ajouté ses corrections, s'il y en a).
     go: `Mes corrections sur le tableau : (écris-les ici, ou « aucune »).
 Pour chaque doute que tu as signalé et que je n'ai pas tranché, garde-le dans le champ "doubt" de la fiche.
-Passe maintenant à l'ÉTAPE 2. Rappel des règles éliminatoires : "pos" rempli${gendered ? ', "gender" rempli pour chaque nom' : ''} ; une définition qui ne désigne qu'un mot ; une seule bonne réponse dans la première phrase ; des mots pièges de même catégorie${gendered ? ', de même genre' : ''}, de même nombre de mots et de même début que la réponse ; des phrases que l'on dit vraiment. Travaille par lots de dix fiches, écris le RAPPORT DE CONTRÔLE avant le paquet, et ne saute aucun contrôle.`,
+Passe maintenant à l'ÉTAPE 2. Rappel des règles éliminatoires : "pos" rempli${gendered ? ', "gender" rempli pour chaque nom' : ''} ; une définition qui ne désigne qu'un mot ; une seule bonne réponse dans la première phrase ; des mots pièges de même catégorie${gendered ? ', de même genre' : ''}, de même nombre de mots et de même début que la réponse ; des phrases que l'on dit vraiment ; l'orthographe exacte de chaque mot${lang === 'en' ? '' : ', accents et signes compris'}. Travaille par lots de dix fiches, écris le RAPPORT DE CONTRÔLE avant le paquet, et ne saute aucun contrôle.`,
     // À coller dans la même conversation quand le paquet reçu contient des erreurs.
     review: `Relis le paquet que tu viens de produire, fiche par fiche, comme un correcteur ${de}${target} langue étrangère, puis corrige-le.
 Pour chaque fiche, vérifie et corrige :
@@ -172,7 +182,8 @@ Pour chaque fiche, vérifie et corrige :
 3 bis. Chaque fiche a son "pos" (nom, verbe, adjectif, adverbe, préposition, déterminant, pronom, conjonction ou expression), et chaque catégorie présente compte au moins quatre fiches. Des mots grammaticaux que l'on choisit l'un contre l'autre (${slotEx}) ont la même catégorie.${gendered ? `
 3 ter. Chaque nom a son "gender" ("m", "f" ou "mf"), vérifié, y compris quand l'article ne le montre pas (« l' », « les », « des »).` : ''}
 4. Aucun des trois mots pièges ne conviendrait dans la première phrase. Chacun est de la même catégorie grammaticale${gendered ? ', du même genre' : ''} et du même thème que le mot, compte le même nombre de mots que lui et commence comme lui (voyelle ou consonne) : un étudiant ne doit pouvoir en écarter aucun par la grammaire, par l'orthographe ou par la longueur.
-4 bis. Tout doute qui reste (quasi-synonymes, genre, sens double) est écrit dans le champ "doubt" de la fiche, en français.${every ? `
+4 bis. Tout doute qui reste (quasi-synonymes, genre, sens double) est écrit dans le champ "doubt" de la fiche, en français.
+4 ter. ${spelling}${every ? `
 5. Chaque fiche a une image, qui montre le sens du mot sans ambiguïté.` : ''}
 Donne d'abord la liste des fiches corrigées, avec ce que tu as changé, en une ligne par fiche, et pour chacune le mot que tu as essayé à la place du mot entre crochets. Livre ensuite de nouveau le paquet COMPLET, sous la même forme que la première fois (le même fichier, ou le même bloc de code JSON).`,
   };

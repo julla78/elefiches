@@ -1,6 +1,6 @@
 # Test de bout en bout : python3 tests/browser_test.py <url de enseignant.html#accueil> <csv> <dossier de captures>
 # L'interface enseignant sert au parcours complet ; l'interface étudiant (index.html) est vérifiée à part.
-import sys, re
+import sys, re, unicodedata
 from playwright.sync_api import sync_playwright
 
 url, csv, out = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -57,6 +57,9 @@ def play(page, right=True, shots=None, near=False):
                 model = page.evaluate("window.__elefiches.step.activity.model")
                 assert page.inner_text('.saythis').strip() == model and len(model.split()) >= 2, ('oral : la phrase entière', model)
                 assert page.locator('.saythis b.target').count() == 1, 'oral : le mot étudié est en gras dans la phrase'
+            if kind == 'sentence' and page.locator('.study .keys').count() and 'keys-sentence' not in kinds:      # mêmes touches sous la phrase libre
+                kinds.add('keys-sentence'); key = page.locator('.study .keys .key').first; ch = key.inner_text(); key.click()
+                assert page.input_value('textarea[name=mine]') == ch, 'la touche écrit dans la phrase libre'
             if kind == 'sentence': page.fill('textarea[name=mine]', 'Ma phrase.')
             page.click('[data-action=reveal-self]'); shot(kind + '_check', True)
             if kind == 'speak':
@@ -127,10 +130,36 @@ def play(page, right=True, shots=None, near=False):
         elif kind in ('cloze-type', 'situation-type', 'type', 'number', 'listen-type'):
             ans = page.evaluate("(a => a.cloze || a.type === 'number' ? a.answer : a.accepted[0])(window.__elefiches.step.activity)")
             shot(kind)
-            if near and 'near' not in kinds and len(ans) >= 5:        # une lettre en trop : second essai (B1) ou acceptation corrigée (A1, A2)
+            if kind != 'number' and 'keys' not in kinds and page.locator('.typed .keys').count():
+                # touches d'accents : la lettre s'écrit à l'endroit du curseur, le champ garde le curseur, rien n'est envoyé
+                kinds.add('keys'); page.fill('input[name=answer]', 'ab'); page.evaluate("document.querySelector('input[name=answer]').setSelectionRange(1, 1)")
+                key = page.locator('.typed .keys .key').first; ch = key.inner_text(); key.click()
+                assert page.input_value('input[name=answer]') == 'a' + ch + 'b', page.input_value('input[name=answer]')
+                assert page.evaluate("document.activeElement && document.activeElement.name") == 'answer', 'le champ garde le curseur après une touche'
+                assert page.evaluate("document.querySelector('input[name=answer]').selectionStart") == 2
+                assert not page.locator('.feedback').count() and not page.locator('p.again').count(), 'une touche d’accent n’envoie pas la réponse'
+                for b in page.locator('.typed .keys .key').all(): bb = b.bounding_box(); assert bb['width'] >= 44 and bb['height'] >= 44, ('touche trop petite', bb)
+                shot('keys', True); page.fill('input[name=answer]', '')
+            bare = ''.join(c for c in unicodedata.normalize('NFD', ans.lower()) if unicodedata.category(c) != 'Mn')
+            lang2 = page.evaluate("window.__elefiches.state.session.deck.lang").split('-')[0]
+            if near and kind == 'type' and 'accent-try' not in kinds and bare == ans.lower() and lang2 != 'en':
+                # aucun mot accentué ne s'est présenté : le test en impose un à cette étape, pour que la règle soit toujours vérifiée à l'écran
+                page.evaluate("(a => { a.accepted = ['préavis']; a.answer = 'préavis'; delete a.both; delete a.lemmas; })(window.__elefiches.step.activity)")
+                ans, bare = 'préavis', 'preavis'
+            if near and kind != 'number' and 'accent-try' not in kinds and bare != ans.lower() and lang2 != 'en':
+                # accent oublié : jamais accepté au premier essai, à aucun niveau ; second essai avec un message sur l'accent ; réussite comptée comme aidée
+                kinds.add('accent-try'); page.fill('input[name=answer]', bare); page.press('input[name=answer]', 'Enter')
+                assert page.locator('p.again').count() == 1 and not page.locator('.feedback').count(), ('accent oublié : second essai, rien n’est noté', ans)
+                msg = page.inner_text('p.again'); assert any(w in msg for w in ('accent', 'lettre', 'tilde', 'letter', 'letra')), msg
+                assert page.input_value('input[name=answer]') == bare, 'la réponse tapée reste dans le champ'
+                shot('accent_try', True); page.fill('input[name=answer]', ans); page.press('input[name=answer]', 'Enter')
+                fb = page.evaluate("(f => ({ ok: f.ok, assisted: f.assisted, ask: !!f.ask }))(window.__elefiches.state.feedback)")
+                assert fb == {'ok': True, 'assisted': True, 'ask': False}, ('réussite au second essai : comptée comme aidée', fb)
+            elif near and 'near' not in kinds and len(ans) >= 5:        # une lettre en trop : second essai à tous les niveaux, jamais d'acceptation d'une forme fausse
                 kinds.add('near'); page.fill('input[name=answer]', ans + 'x'); page.press('input[name=answer]', 'Enter')
-                if page.locator('p.again').count(): kinds.add('second-try'); shot('second_try'); page.fill('input[name=answer]', ans); page.press('input[name=answer]', 'Enter')
-                else: assert 'Accepté' in page.inner_text('.feedback'), page.inner_text('.feedback'); kinds.add('accepted'); shot('accepted', True)
+                assert page.locator('p.again').count() == 1 and not page.locator('.feedback').count(), 'une lettre d’écart : second essai, à tous les niveaux'
+                kinds.add('second-try'); shot('second_try'); page.fill('input[name=answer]', ans); page.press('input[name=answer]', 'Enter')
+                assert page.evaluate("window.__elefiches.state.feedback.ok && window.__elefiches.state.feedback.assisted") is True
             else:
                 page.fill('input[name=answer]', ans if right else 'zzzz'); page.press('input[name=answer]', 'Enter')
         else:
@@ -340,7 +369,7 @@ with sync_playwright() as p:
     before = page.evaluate("JSON.stringify(window.__elefiches.state.progress)")
     page.locator('.decklist [data-action=tour]').first.click()
     kt = play(page, right=True, shots=shots, near=True); print('APERÇU A1:', sorted(kt))
-    assert {'qcm', 'cloze-choice', 'qcm-rev', 'gate', 'cloze-type', 'order', 'situation-type', 'type', 'match', 'bank', 'accepted'} <= kt and 'felt' not in kt, kt
+    assert {'qcm', 'cloze-choice', 'qcm-rev', 'gate', 'cloze-type', 'order', 'situation-type', 'type', 'match', 'bank', 'second-try', 'keys', 'accent-try'} <= kt and 'felt' not in kt, kt
     assert 'tous les exercices' in page.inner_text('.done'); page.screenshot(path=f'{out}/tour_done.png')
     assert page.evaluate("JSON.stringify(window.__elefiches.state.progress)") == before, 'l’aperçu ne doit rien enregistrer'
     page.click('.done [data-action=teacher]')

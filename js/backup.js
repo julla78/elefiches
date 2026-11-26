@@ -5,6 +5,11 @@
 const KEY = /^[A-Za-z0-9_-]{1,64}$/, BAD = ['__proto__', 'constructor', 'prototype'];
 const num = (v, min, max, def) => { const n = Number(v); return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : def; };
 const stamp = st => +(st?.fsrs?.last_review || 0) || (st?.seen ? 1 : 0);
+// Dans une sauvegarde, une dernière révision datée de plus d'un jour dans le futur est un état forgé (ou une horloge
+// déréglée) : ramenée à maintenant, elle l'emporterait sur tout travail réel. Un tel état n'en remplace donc jamais un
+// autre ; il n'est repris que pour une fiche sans progression. (La progression de l'appareil, elle, n'est jamais écartée.)
+// Une dernière révision illisible (absente, texte, booléen, objet) est traitée de même : cleanState la ramène à maintenant.
+const late = (raw, now) => { const f = raw?.fsrs; if (!f || typeof f !== 'object') return false; const v = f.last_review; return !(typeof v !== 'boolean' && v !== null && v !== '' && Number.isFinite(+v) && +v <= now + 86400000); };
 
 // Un état de fiche venu d'un fichier ou du stockage n'est jamais repris tel quel : chaque champ est reconstruit avec
 // son type et ses bornes. Du texte ou du HTML glissé dans une sauvegarde forgée ne peut donc pas atteindre l'écran,
@@ -54,17 +59,17 @@ export function mergeProgress(current = {}, saved = {}, now = Date.now()) {
   for (const [id, st] of Object.entries(add)) {
     if (id === '_stages') out._stages = { ...st, ...(out._stages || {}) };
     else if (id.startsWith('_')) { if (!out[id] || st.best > out[id].best) out[id] = st; }
-    else if (!out[id] || stamp(st) > stamp(out[id])) out[id] = st;
+    else if (!Object.hasOwn(out, id) || (!late(saved[id], now) && stamp(st) > stamp(out[id]))) out[id] = st;
   }
   return out;
 }
 // Combien de fiches de la progression présente seraient remplacées par la sauvegarde.
 export function countReplaced(current = {}, saved = {}, now = Date.now()) {
   const cur = cleanProgress(current, now), add = cleanProgress(saved, now);
-  return Object.keys(add).filter(id => !id.startsWith('_') && cur[id] && stamp(add[id]) > stamp(cur[id])).length;
+  return Object.keys(add).filter(id => !id.startsWith('_') && Object.hasOwn(cur, id) && !late(saved[id], now) && stamp(add[id]) > stamp(cur[id])).length;
 }
 // Combien de fiches la sauvegarde ajouterait à la progression présente.
 export function countAdded(current = {}, saved = {}, now = Date.now()) {
   const cur = cleanProgress(current, now), add = cleanProgress(saved, now);
-  return Object.keys(add).filter(id => !id.startsWith('_') && !cur[id]).length;
+  return Object.keys(add).filter(id => !id.startsWith('_') && !Object.hasOwn(cur, id)).length;
 }

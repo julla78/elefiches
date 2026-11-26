@@ -242,26 +242,38 @@ export function hintOf(answer, mode) {
   return answer.split(' ').map((w, i) => (i ? '_' : w[0]) + ' _'.repeat(Math.max(0, [...w].length - 1))).join('   ');
 }
 
-// Juge une réponse écrite selon le niveau du paquet (voir levels.js). second : c'est déjà le second essai.
-// Renvoie {ok, note} ; {retry:true} quand un écart d'une lettre donne droit à un second essai ; {empty:true} si rien n'est écrit.
+// Langues où l'accent d'un mot emprunté est facultatif : en anglais, « café » et « cafe » sont deux graphies admises.
+const ACCENT_FREE = ['en'];
+// Juge une réponse courte écrite (voir levels.js). second : c'est déjà le second essai.
+// La forme exacte est exigée à tous les niveaux, mais un écart d'une lettre, d'un accent ou d'un signe (ç, ñ, œ)
+// n'est jamais compté faux d'emblée : il donne un second essai, et la réussite compte alors comme aidée (voir
+// submitTyped dans app.js). Au second essai, le même écart est une erreur.
+// Renvoie {ok, note} ; {retry:true, accent, slip} pour un second essai (slip : 'accent' ou la lettre à revoir) ;
+// {retry:true, form} quand c'est l'autre forme du mot ; {empty:true} si rien n'est écrit.
 export function judge(value, a, deck, second = false) {
   if (a.type === 'number') { const c = v => String(v).replace(/[\s.,]/g, ''); return c(value) ? { ok: c(value) === c(a.answer) } : { empty: true }; }
-  const lenient = spec(deck).lenient;
-  let r = check(value, a.accepted, lenient === 2 ? 4 : 5);
+  const free = ACCENT_FREE.includes(String(deck.lang || '').slice(0, 2));
+  // Un accent à revoir : accepté comme autre graphie en anglais, écart à corriger ailleurs.
+  const strict = r => (r.ok && r.note === 'accent' ? (free ? { ok: true, note: 'variant' } : { ok: false, near: true, accent: true, slip: r.slip || 'accent' }) : r);
+  const exact = (x, list) => strict(check(x, list)).ok;
+  let r = strict(check(value, a.accepted, spec(deck).near));
   if (r.empty) return r;
-  if (!r.ok && a.both) {
+  if (!r.ok && !r.accent && a.both) {
     // Fiche à deux formes. Les deux formes écrites ensemble (« un serveur, une serveuse ») : c'est juste. L'autre forme
     // seule : le bon mot, mais pas la forme demandée ; l'étudiant a droit à un second essai.
     const parts = String(value).replace(/\s+/g, ' ').trim().slice(0, 400).split(/\s*[\/,;]\s*|\s+(?:et|ou|and|or|y|o)\s+/i).map(x => x.trim()).filter(Boolean);
-    if (parts.length > 1 && parts.length <= 3 && parts.every(x => check(x, a.both).ok) && parts.some(x => check(x, a.accepted).ok)) return { ok: true, note: 'both' };
-    if (check(value, a.both).ok) return second ? { ok: false, near: true } : { retry: true, form: a.ask || 'other' };
+    if (parts.length > 1 && parts.length <= 3 && parts.every(x => check(x, a.both).ok) && parts.some(x => check(x, a.accepted).ok)) {
+      if (parts.every(x => exact(x, a.both))) return { ok: true, note: 'both' };
+      r = { ok: false, near: true, accent: true, slip: 'accent' };            // les deux formes, mais un accent à revoir
+    }
+    else if (check(value, a.both).ok) return second ? { ok: false, near: true } : { retry: true, form: a.ask || 'other' };
   }
-  if (!r.ok && a.lemmas && check(value, a.lemmas).ok) return { ok: true, note: 'form' };   // forme de base au lieu de la forme de la phrase
-  if (r.ok && r.note === 'accent' && lenient === 0) r = { ok: false, near: true, accent: true };
-  if (!r.ok && r.near) {
-    if (lenient === 2) return { ok: true, note: 'near' };
-    return second ? { ok: false, near: true } : { retry: true, accent: !!r.accent };
+  if (!r.ok && !r.accent && a.lemmas) {                                       // forme de base au lieu de la forme de la phrase
+    const l = strict(check(value, a.lemmas));
+    if (l.ok) return { ok: true, note: 'form' };
+    if (l.accent) r = l;
   }
+  if (!r.ok && r.near) return second ? { ok: false, near: true } : r.accent ? { retry: true, accent: true, slip: r.slip } : { retry: true, accent: false };
   return r;
 }
 
