@@ -76,13 +76,41 @@ function mascot(size = 72, cls = '', age = 2) {
     </g>
   </svg>`;
 }
-// Tête de profil : la même que celle de l'éléphanteau de l'en-tête (âge 2). La barre de progression est sa trompe, qui
-// s'allonge vers la touffe d'herbe.
-const head = (cls = '') => `<svg class="head ${cls}" width="42" height="44" viewBox="52 12 56 58" aria-hidden="true"><circle cx="84" cy="42" r="20" fill="#c8bdae"/><path d="M78 23l-1-5M83 21v-6M88 23l2-5" stroke="#9a7b6b" stroke-width="1.6" stroke-linecap="round"/><path d="M92 55q3 3 6 0" fill="none" stroke="#7d6a61" stroke-width="1.4" stroke-linecap="round"/><circle cx="96" cy="48" r="3" fill="#f0a08c" opacity=".4"/><g class="e-eye"><circle cx="91" cy="38" r="2.8" fill="#2b2a33"/><circle cx="92" cy="37" r="1" fill="#fff"/></g><g class="e-ear"><path d="M80 22C62 14 50 32 55 48C59 62 75 64 82 50C85 42 85 30 80 22Z" fill="#d9cec1" stroke="#b0a596" stroke-width="1.2" transform="translate(81 38) scale(.88) translate(-81 -38)"/></g></svg>`;
+// L'éléphanteau de la barre de séance : le même dessin que celui de l'en-tête (âge 2), recadré, la trompe baissée jusqu'au sol. Sa trompe
+// est la barre de progression : elle sort du dessin par la droite et se prolonge dans la piste (voir trunkBar et mealBar).
+const calf = (cls = '') => { const A = AGES[2], T = 'translate(-3.6 4.8) translate(78 50) scale(1.06) translate(-78 -50)';
+  return `<svg class="mascot calf ${cls}" width="73" height="52" viewBox="12 15.4 118 84" aria-hidden="true">
+    <ellipse cx="58" cy="92" rx="31.7" ry="4" fill="#000" opacity=".08"/>
+    <g transform="translate(52 90) scale(.88) translate(-52 -90)">
+      <rect x="39" y="62" width="12" height="26" rx="5" fill="${A.shade}"/><rect x="71" y="62" width="12" height="26" rx="5" fill="${A.shade}"/>
+      <path class="e-tail" d="M20 44C12 48 12 58 15 64" fill="none" stroke="${A.shade}" stroke-width="3" stroke-linecap="round"/>
+      <ellipse cx="52" cy="52" rx="34" ry="24" fill="${A.skin}"/>
+      <rect x="29" y="64" width="13" height="27" rx="6" fill="${A.skin}"/><rect x="61" y="64" width="13" height="27" rx="6" fill="${A.skin}"/>
+      <path d="M31.500 89.500h2.500M36 89.500h2.500M63.500 89.500h2.500M68 89.500h2.500" stroke="#f6efe6" stroke-width="2" stroke-linecap="round"/>
+      <path d="M40 30l-1-4M47 29v-4" stroke="#9a7b6b" stroke-width="1.5" stroke-linecap="round"/>
+    </g>
+    <g transform="${T}"><circle cx="84" cy="42" r="20" fill="${A.skin}"/><path d="M78 23l-1-5M83 21v-6M88 23l2-5" stroke="#9a7b6b" stroke-width="1.6" stroke-linecap="round"/></g>
+    <path d="M95.600 50.600C106 53 108 64 111 72C113 78 119 80 128 80H130" fill="none" stroke="${A.skin}" stroke-width="9.700" stroke-linecap="round" stroke-linejoin="round"/>
+    <path class="under" d="M126 82.450H131V84.850H126Z"/>
+    <g transform="${T}"><path d="M92 55q3 3 6 0" fill="none" stroke="#7d6a61" stroke-width="1.4" stroke-linecap="round"/>
+      <circle cx="96" cy="48" r="3" fill="#f0a08c" opacity=".4"/>
+      <g class="e-eye"><circle cx="91" cy="38" r="2.8" fill="#2b2a33"/><circle cx="92" cy="37" r="1" fill="#fff"/></g>
+      <g class="e-ear"><path d="M80 22C62 14 50 32 55 48C59 62 75 64 82 50C85 42 85 30 80 22Z" fill="${A.ear}" stroke="${A.shade}" stroke-width="1.2" transform="translate(81 38) scale(${A.earS}) translate(-81 -38)"/></g></g>
+  </svg>`; };
+// Sur l'accueil, l'éléphanteau entier est déjà dans l'en-tête : les cartes ne montrent donc que sa tête, la même, d'où sort la trompe.
+const head = (cls = '') => { const A = AGES[2];
+  return `<svg class="mascot face ${cls}" width="50" height="44" viewBox="54 13.330 66 58.670" aria-hidden="true"><circle cx="84" cy="42" r="20" fill="${A.skin}"/><path d="M78 23l-1-5M83 21v-6M88 23l2-5" stroke="#9a7b6b" stroke-width="1.6" stroke-linecap="round"/>
+    <path d="M97 42C103 42.800 110 43.900 118 44H121V52H118C110 52.300 103 52.800 96 52.600Z" fill="${A.skin}"/><path class="under" d="M103 52.600C108 52.500 113 52.200 118 52H121V50H118C113 50.300 108 50.600 103 50.800Z"/>
+    <path d="M92 55q3 3 6 0" fill="none" stroke="#7d6a61" stroke-width="1.4" stroke-linecap="round"/><circle cx="96" cy="48" r="3" fill="#f0a08c" opacity=".4"/>
+    <g class="e-eye"><circle cx="91" cy="38" r="2.8" fill="#2b2a33"/><circle cx="92" cy="37" r="1" fill="#fff"/></g>
+    <g class="e-ear"><path d="M80 22C62 14 50 32 55 48C59 62 75 64 82 50C85 42 85 30 80 22Z" fill="${A.ear}" stroke="${A.shade}" stroke-width="1.2" transform="translate(81 38) scale(${A.earS}) translate(-81 -38)"/></g></svg>`; };
+// Le bout de la trompe : deux « doigts », celui du haut plus long, comme chez l'éléphant d'Afrique, et trois plis juste avant.
+const TIP = '<svg class="tip" width="25" height="10" viewBox="-17 -8 33 13.500" aria-hidden="true"><path d="M0 -4C4 -4 7 -4.600 10 -6.200C12.500 -7.600 15.800 -6.600 15.200 -4.200C14.700 -2.200 12 -1 9.200 -.300C11 .400 12.600 1.600 12.300 3.200C12 4.800 9.800 4.900 7.500 4.600C5 4.300 2.500 4 0 4Z" fill="#c8bdae"/><path class="under" d="M0 4C2.500 4 5 4.300 7.500 4.600C9.800 4.900 12 4.800 12.300 3.200C11.400 3.600 9.600 3.400 7.500 3C5 2.500 2.500 2.200 0 2.200Z"/><path d="M9.200 -.300C11 -.800 13 -1.700 14.300 -3C13.500 -1 12.200 .100 11 .500Z" fill="#b0a596" opacity=".7"/><path d="M-3 -3.200q1.300 3.200 0 6.400M-8.500 -3.200q1.300 3.200 0 6.400M-15.500 -3.200q1.300 3.200 0 6.400" fill="none" stroke="#b0a596" stroke-width="1" stroke-linecap="round" opacity=".85"/></svg>';
 
-// La friandise au bout de la trompe : une touffe d'herbe tendre, dans les verts de la savane de l'en-tête.
-const GRASS = '<svg class="grass" width="22" height="22" viewBox="0 0 28 28" aria-hidden="true"><path d="M12 27C10 21 7 17 2 15c2 5 5 9 7 12z" fill="#8fb872"/><path d="M14 27C13 17 11 10 7 4c1 8 2 15 3 23z" fill="#6f9e55"/><path d="M13 27c0-9 2-18 6-25 1 9-1 17-2 25z" fill="#8fb872"/><path d="M16 27c2-7 5-12 10-15-2 6-5 11-7 15z" fill="#6f9e55"/></svg>';
-const BLADE = '<svg class="blade" width="10" height="20" viewBox="5 2 10 26" aria-hidden="true"><path d="M14 27C13 17 11 10 7 4c1 8 2 15 3 23z" fill="#6f9e55"/></svg>';
+// La friandise au bout de la trompe : une touffe d'herbe tendre, dessinée avec les brins et le vert de la savane de l'en-tête,
+// posée sur un petit monticule de la couleur de son sol. Le brin du milieu, plus foncé, garde la touffe repérable (contraste 3,2).
+const GRASS = '<svg class="grass" width="29" height="21" viewBox="-17 -22 34 25" aria-hidden="true"><ellipse class="mound" cx="0" cy="0" rx="14" ry="2.400"/><path d="M-3 0q-6-10-13-12q4 8 9 12zM3 0q6-10 13-12q-4 8-9 12zM-1 0q-1-13-7-18q0 10 3 18zM1 0q1-13 7-18q0 10-3 18z" fill="#aebb8c"/><path d="M-2 0q0-14 2-21q2 7 2 21z" fill="#7f9152"/></svg>';
+const BLADE = '<svg class="blade" width="8" height="18" viewBox="-1 -19 9 20" aria-hidden="true"><path d="M0 0q1-13 7-18q0 10-3 18z" fill="#7f9152"/></svg>';
 // Bouton des règles du jeu : la trompe en point d'interrogation, fuselée et plissée (contour calculé, voir les planches).
 const TROMPE = '<svg width="25" height="26" viewBox="0 0 32 34" aria-hidden="true"><path d="M11.06 12.03L11.02 12.19L10.98 12.27L10.94 12.34L10.9 12.4L10.87 12.44L10.83 12.47L10.8 12.48L10.78 12.49L10.76 12.49L10.75 12.49L10.75 12.48L10.76 12.47L10.77 12.46L10.8 12.45L10.83 12.44L10.88 12.44L10.92 12.45L10.96 12.46L11 12.48L11.03 12.49L11.05 12.5L11.06 12.5L11.06 12.48L11.05 12.44L11.05 12.37L11.04 12.28L11.04 12.15L11.04 12L11.07 11.6L11.12 11.21L11.19 10.84L11.27 10.49L11.37 10.15L11.48 9.82L11.6 9.52L11.74 9.22L11.89 8.95L12.05 8.68L12.22 8.44L12.4 8.21L12.59 7.99L12.79 7.79L12.99 7.6L13.21 7.43L13.43 7.27L13.66 7.13L13.9 7L14.14 6.88L14.39 6.78L14.64 6.7L14.9 6.63L15.17 6.57L15.44 6.53L15.72 6.51L16.01 6.5L16.3 6.5L16.61 6.53L16.91 6.57L17.2 6.62L17.48 6.68L17.76 6.76L18.02 6.86L18.27 6.96L18.51 7.07L18.74 7.2L18.96 7.33L19.16 7.48L19.36 7.63L19.54 7.79L19.72 7.96L19.88 8.13L20.03 8.32L20.16 8.5L20.29 8.7L20.4 8.9L20.5 9.1L20.58 9.31L20.66 9.52L20.72 9.74L20.77 9.96L20.8 10.19L20.83 10.42L20.83 10.66L20.83 10.91L20.81 11.12L20.79 11.31L20.76 11.5L20.72 11.67L20.67 11.83L20.62 11.98L20.56 12.12L20.5 12.26L20.43 12.39L20.36 12.52L20.28 12.64L20.19 12.76L20.1 12.89L20 13.01L19.89 13.13L19.77 13.25L19.65 13.38L19.51 13.5L19.37 13.63L19.22 13.76L19.07 13.88L18.9 14.01L18.73 14.15L18.56 14.28L18.37 14.41L18.19 14.55L17.99 14.69L17.8 14.84L17.6 14.98L17.39 15.13L17.19 15.3L16.98 15.46L16.78 15.64L16.57 15.81L16.37 16L16.18 16.2L15.98 16.4L15.79 16.61L15.61 16.84L15.43 17.07L15.26 17.31L15.09 17.56L14.93 17.83L14.79 18.1L14.65 18.38L14.52 18.67L14.41 18.97L14.31 19.27L14.22 19.58L14.14 19.9L14.07 20.22L14.01 20.55L13.97 20.88L13.94 21.21L13.91 21.55L13.9 21.86L14.1 22.93L14.69 23.85L15.59 24.47L16.66 24.7L17.73 24.5L18.65 23.91L19.27 23.01L19.5 21.94L19.49 21.72L19.49 21.55L19.5 21.4L19.51 21.26L19.52 21.13L19.53 21.02L19.55 20.91L19.57 20.81L19.59 20.72L19.61 20.64L19.64 20.56L19.67 20.48L19.7 20.41L19.74 20.34L19.77 20.26L19.82 20.18L19.87 20.11L19.93 20.02L19.99 19.94L20.07 19.85L20.15 19.75L20.24 19.66L20.34 19.55L20.45 19.45L20.57 19.34L20.7 19.22L20.84 19.1L21 18.96L21.19 18.81L21.39 18.64L21.59 18.47L21.8 18.3L22.01 18.12L22.22 17.93L22.44 17.73L22.66 17.52L22.88 17.31L23.1 17.08L23.32 16.85L23.53 16.6L23.75 16.34L23.95 16.07L24.16 15.78L24.35 15.48L24.54 15.17L24.71 14.84L24.87 14.5L25.02 14.14L25.16 13.77L25.27 13.39L25.37 13L25.45 12.6L25.51 12.19L25.55 11.77L25.57 11.34L25.57 10.89L25.54 10.38L25.48 9.86L25.4 9.36L25.28 8.86L25.13 8.38L24.96 7.91L24.76 7.45L24.53 7.01L24.28 6.59L24.01 6.18L23.71 5.79L23.4 5.42L23.06 5.07L22.71 4.74L22.34 4.43L21.95 4.14L21.54 3.87L21.12 3.63L20.69 3.4L20.24 3.2L19.78 3.03L19.31 2.88L18.83 2.75L18.34 2.65L17.84 2.57L17.33 2.52L16.82 2.49L16.3 2.5L15.78 2.53L15.27 2.58L14.77 2.67L14.28 2.79L13.8 2.93L13.34 3.1L12.88 3.29L12.44 3.51L12.02 3.76L11.61 4.03L11.22 4.32L10.85 4.64L10.49 4.98L10.16 5.34L9.85 5.71L9.56 6.11L9.29 6.53L9.05 6.96L8.82 7.4L8.63 7.87L8.45 8.34L8.3 8.83L8.18 9.33L8.08 9.85L8.01 10.37L7.97 10.91L7.95 11.45L7.96 12L7.98 12.38L8.04 12.75L8.12 13.1L8.23 13.44L8.38 13.76L8.56 14.07L8.77 14.35L9.01 14.6L9.28 14.81L9.57 14.99L9.88 15.13L10.2 15.22L10.53 15.27L10.85 15.28L11.17 15.24L11.47 15.17L11.76 15.07L12.04 14.93L12.3 14.77L12.54 14.57L12.75 14.36L12.95 14.12L13.12 13.86L13.26 13.58L13.38 13.28L13.47 12.97L13.52 12.65L13.54 12.37L13.51 11.89L13.3 11.45L12.93 11.12L12.47 10.96L11.99 10.99L11.55 11.2L11.22 11.57z" fill="currentColor"/><path d="M19.36 7.63 L20.98 5.45M20.83 10.66 L23.78 10.48M19.22 13.76 L21.37 16.11" fill="none" class="plis" stroke-width=".9" stroke-linecap="round"/><circle cx="16.7" cy="29.6" r="2.6" fill="currentColor"/></svg>';
 // Empreinte d'éléphant : elle ne sert qu'aux jours du plan et aux trois pas.
@@ -140,15 +168,15 @@ const allure = pace => `<svg class="allure" width="30" height="22" viewBox="0 0 
 // plan : l'icône montre la vraie différence entre les pas (le nombre de jours), jamais une taille ni un rang.
 // done : jours déjà passés, dessinés en plein ; au-delà de douze empreintes, le reste est écrit en chiffres.
 const trail = (days, done = -1) => `<span class="trail" aria-hidden="true">${Array.from({ length: Math.min(days, 12) }, (_, i) => `<svg class="paw${done >= 0 && i >= done ? ' todo' : ''}" width="16" height="16" viewBox="0 0 26 26">${PRINT}</svg>`).join('')}${days > 12 ? `<span class="trailmore">+${days - 12}</span>` : ''}</span>`;
-// Barre de progression : la trompe s'allonge de la tête vers la touffe d'herbe. L'herbe frémit quand la trompe approche
+// Barre de progression : la trompe de l'éléphanteau s'allonge vers la touffe d'herbe. L'herbe frémit quand la trompe approche
 // (classe near) et n'est plus là quand tout est fait (classe eaten).
-const trunkBar = (pct, cls, label) => `<div class="trunk${pct >= 100 ? ' eaten' : pct >= 70 ? ' near' : ''}" role="progressbar" aria-label="${esc(label)}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">${head(cls)}<div class="track"><span style="width:${pct}%"></span></div>${GRASS}</div>`;
+const trunkBar = (pct, cls, label) => `<div class="trunk${pct >= 100 ? ' eaten' : pct >= 70 ? ' near' : ''}" role="progressbar" aria-label="${esc(label)}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">${head(cls)}<div class="track"><span style="width:calc((100% - 12px) * ${pct / 100})">${TIP}</span></div>${GRASS}</div>`;
 // Barre de séance : pas de zone claire. Le chemin qui reste est planté de touffes d'herbe (autant que de mots nouveaux du jour,
 // une seule pour une séance de révisions, douze au plus), que la trompe avale en avançant ; la dernière est mangée à la fin.
 const mealBar = (pct, cls, label, n) => {
   const k = Math.max(1, Math.min(n || 0, 12));
   const plants = Array.from({ length: k }, (_, i) => pct >= (i + 1 === k ? 100 : (i + 0.7) / k * 100) ? '' : GRASS.replace('class="grass"', `class="grass" style="left:${((i + 1) / k * 100).toFixed(1)}%"`)).join('');
-  return `<div class="trunk meal${k > 8 ? ' many' : k > 5 ? ' some' : ''}" role="progressbar" aria-label="${esc(label)}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">${head(cls)}<div class="track"><span style="width:${pct}%"></span>${plants}</div></div>`;
+  return `<div class="trunk meal${k > 8 ? ' many' : k > 5 ? ' some' : ''}" role="progressbar" aria-label="${esc(label)}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">${calf(cls)}<div class="track"><span style="width:calc((100% - 12px) * ${pct / 100})">${TIP}</span>${plants}</div></div>`;
 };
 
 // ---------- Sons ----------
@@ -316,7 +344,7 @@ async function load() {
       const deck = deckFromJSON(JSON.stringify(await res.json()));      // JSON strict : un fichier qui serait aussi lisible comme un script est refusé
       S.progress[deck.id] ??= cleanProgress(await store.get(pkey(deck.id)));      // la progression d'abord : un redessin entre les deux ne doit jamais trouver un paquet sans elle
       keepDoubts(deck);
-      S.decks = [...S.decks.filter(d => d.id !== deck.id && !(pristineDemo(d) && !S.sandbox && !Object.keys(S.progress[d.id] || {}).length)), deck];
+      S.decks = [...S.decks.filter(d => d.id !== deck.id && !(pristineDemo(d) && !S.sandbox && !Object.keys(S.progress[d.id] || {}).filter(k => !k.startsWith('_')).length)), deck];
       await saveDecks(); S.notice = { text: t('opened', deck.name) };
     } catch { S.notice = { bad: true, text: t('errLink') }; }
   }
@@ -471,8 +499,12 @@ function pendingStage(d, P) {
 
 // ---------- Plan personnel ----------
 // Premier temps (version 15b) : le plan vaut pour les paquets auxquels l'enseignant a conseillé un nombre de jours.
-// Les autres paquets gardent « Appétit du jour » et le frein, jusqu'à l'extension du plan à toutes les listes.
+// Les autres paquets gardent le frein, et les trois pattes y règlent le nombre de mots nouveaux par séance (3, 5 ou 8),
+// jusqu'à l'extension du plan à toutes les listes. Ce réglage est rangé par paquet, sous « _new » dans sa progression :
+// un pas posé sur une carte ne vaut que pour elle. L'ancien réglage commun (« Appétit du jour ») sert de valeur de départ.
 const planned = d => !!d?.days;
+const NEW_BY_PACE = { slow: 3, mid: 5, fast: 8 };
+const newFor = id => { const n = Object.hasOwn(S.progress, id) ? S.progress[id]?._new?.n : 0; return [3, 5, 8].includes(n) ? n : [3, 5, 8].includes(S.maxNew) ? S.maxNew : 3; };
 // Étapes d'un mot nouveau : 3 avec l'écran de découverte ; 1 quand les mots ont été vus en classe ; 2 au niveau A1, où
 // l'étudiant choisit le mot avant de l'écrire.
 const perNew = d => (d.seen === true ? (d.level === 'A1' ? 2 : 1) : 3);
@@ -632,15 +664,20 @@ const MOMENTS = [['08:00', 'plMomAM'], ['12:30', 'plMomNoon'], ['19:00', 'plMomP
 // Sur la carte (design du 27 novembre) : les trois pas restent visibles, chacun avec son pictogramme d'allure et son nom.
 // Dessous, une seule piste d'empreintes, une par jour du plan : jours faits en plein, jour en cours plus gros, jours à
 // venir en contour. Toucher un pas le choisit ; toucher la piste ouvre « Ton plan ». Aucune minute ici.
+const paceTwo = pace => t('paceBoldFirst') ? `<b>${t('paceB_' + pace)}</b><span>${t('paceS')}</span>` : `<span>${t('paceS')}</span><b>${t('paceB_' + pace)}</b>`;
+// Sur une carte sans jours conseillés : les trois mêmes pas, sans piste (il n'y a pas de jours à compter). Une ligne dit ce que le
+// pas choisi règle, parce que le dessin ne le montre pas.
+const newRow = d => { const n = newFor(d.id);
+  return `<div class="pacegroup" role="group" aria-label="${esc(t('paceGroup'))}">${PACES.map(pace => `<button type="button" class="pacepick" data-action="pace-new" data-id="${d.id}" data-pace="${pace}" aria-pressed="${NEW_BY_PACE[pace] === n}">${allure(pace)}${paceTwo(pace)}</button>`).join('')}</div>
+    <p class="planline"><span class="meta planday">${t('newPerSession', n)}</span>${S.paceSaid === d.id ? `<span class="vh" role="status">${t('paceChanged', t('pace_' + PACES.find(p => NEW_BY_PACE[p] === n)))} ${t('newPerSession', n)}</span>` : ''}</p>`; };
 function paceRow(d, P, T) {
   const plan = P._plan, today = T.over ? plan.days : T.d, n = Math.min(plan.days, 12);
   const where = T.over ? t('plOverTag') : t('plDayCap', T.d + 1, plan.days), note = t('paceNote_' + (PACES.includes(plan.pace) ? plan.pace : 'own'));
-  const two = pace => t('paceBoldFirst') ? `<b>${t('paceB_' + pace)}</b><span>${t('paceS')}</span>` : `<span>${t('paceS')}</span><b>${t('paceB_' + pace)}</b>`;
   // Au-delà de douze jours, la fenêtre de douze empreintes suit le jour en cours ; le reste est écrit en chiffres, avant et après.
   const first = Math.max(0, Math.min(today - 6, plan.days - n)), rest = plan.days - first - n, more = k => k > 0 ? `<span class="trailmore">+${k}</span>` : '';
   const path = `<span class="path${n > 9 ? ' many' : ''}${S.paceAnim === d.id ? ' fresh' : ''}" aria-hidden="true">${more(first)}${Array.from({ length: n }, (_, i) => `<svg class="paw${first + i < today ? '' : first + i === today ? ' now' : ' todo'}" viewBox="0 0 26 26">${PRINT}</svg>`).join('')}${more(rest)}</span>`;
   const undo = S.paceUndo?.id === d.id ? `<span class="vh" role="status">${t('paceChanged', t(PACES.includes(plan.pace) ? 'pace_' + plan.pace : 'pace_own'))}</span><button type="button" class="link paceundo" data-action="pace-undo" data-id="${d.id}">${t('paceUndo')}</button>` : '';
-  return `<div class="pacegroup" role="group" aria-label="${esc(t('paceGroup'))}">${PACES.map(pace => `<button type="button" class="pacepick" data-action="pace" data-id="${d.id}" data-pace="${pace}" aria-pressed="${plan.pace === pace}">${allure(pace)}${two(pace)}</button>`).join('')}</div>
+  return `<div class="pacegroup" role="group" aria-label="${esc(t('paceGroup'))}">${PACES.map(pace => `<button type="button" class="pacepick" data-action="pace" data-id="${d.id}" data-pace="${pace}" aria-pressed="${plan.pace === pace}">${allure(pace)}${paceTwo(pace)}</button>`).join('')}</div>
     <div class="planline"><button type="button" class="pathbtn" data-action="plan" data-id="${d.id}" aria-label="${esc(t('plPathAria', where, note))}">${path}</button><span class="meta planday">${T.over ? where.charAt(0).toUpperCase() + where.slice(1) : `${where} · ${note}`}</span>${undo}${!T.over && (plan.offer || plan.small) ? `<button class="link" data-action="small" data-id="${d.id}" data-v="${plan.small ? 'off' : 'on'}">${t(plan.small ? 'plSmallOff' : 'plSmallOn')}</button>` : ''}</div>`;
 }
 // Sur la carte du paquet : une seule barre, la trompe, qui mesure le programme du jour ; les nombres du jour sont écrits
@@ -675,10 +712,10 @@ function planStatus(d, P) {
 
 function deckCard(d) {
   if (!S.progress[d.id]) return '';      // paquet dont la progression n'est pas encore chargée : il s'affichera au prochain dessin
-  const P = S.progress[d.id], s = summary(d, P), plan = planned(d), T = plan ? ensureDay(d) : null, canStart = plan ? !T?.complete : s.due + pickNew(d, P, S.maxNew).length > 0;
+  const P = S.progress[d.id], s = summary(d, P), plan = planned(d), T = plan ? ensureDay(d) : null, canStart = plan ? !T?.complete : s.due + pickNew(d, P, newFor(d.id)).length > 0;
   const nextDays = Math.min(...d.cards.map(c => dueInDays(P[c.id])).filter(n => n > 0), 999);
-  const pct = Math.round(100 * s.stage.seen / s.stage.size);
-  const held = !plan && pickNew(d, P, S.maxNew).length > roomFor(s.due, S.maxNew);
+  const pct = s.stage.size ? Math.round(100 * s.stage.seen / s.stage.size) : 0;
+  const held = !plan && pickNew(d, P, newFor(d.id)).length > roomFor(s.due, newFor(d.id));
   const mute = voices.length && !voiceFor(d.lang) && d.cards.some(c => !c.audio);
   const lang = esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang);
   const foot = `${plan && P._plan ? planStatus(d, P) : ''}${challengeLine(d, P, 'lock')}`;
@@ -686,7 +723,7 @@ function deckCard(d) {
   return `<article class="deck card" style="--th:${hue(d.cards[0].theme || d.name)}">
     <div class="deckhead"><h2 lang="${d.lang}">${esc(d.name)}</h2><p class="meta"><i class="dot" aria-hidden="true"></i>${lang} · ${d.level}${d.demo ? ' · ' + t('demo') : ''}</p></div>
     ${prairie(d, s, [], !canStart, true)}
-    ${plan ? planBlock(d, P, T, nextDays) : `<div class="stagebar"><span>${t('stageN', s.stage.index)}</span>${trunkBar(pct, 'idle', t('stageAria', s.stage.index, s.stage.count, s.stage.seen, s.stage.size))}</div>
+    ${plan ? planBlock(d, P, T, nextDays) : `${newRow(d)}<div class="stagebar"><span>${t('stageN', s.stage.index)}</span>${trunkBar(pct, 'idle', t('stageAria', s.stage.index, s.stage.count, s.stage.seen, s.stage.size))}</div>
     ${canStart ? `<button class="primary" data-action="start" data-id="${d.id}">${S.sandbox ? t('sbGo') : t('start', S.minutes)}</button>` : `<p class="rest">${t('nothing', nextDays)}</p>`}`}
     ${held ? `<p class="heldline">${t('heldHome')} <button class="link" data-action="start-force" data-id="${d.id}">${t('heldForce')}</button></p>` : ''}
     ${mute ? `<p class="banner warn">${t('noVoiceDeck', lang)}</p>` : ''}
@@ -757,7 +794,6 @@ function home() {
       ${begun ? '' : `<p class="tagline">${t('tagline')}</p>`}
       <button class="rulesbtn" data-action="rules" aria-label="${esc(t('rules'))}" title="${esc(t('rules'))}">${TROMPE}</button>${SAVANNA}</header>
     ${S.sandbox ? sandboxBar(true) : ''}${banners()}
-    ${S.decks.some(d => !planned(d)) ? `<div class="appetite"><span class="aplabel">${GRASS}${t('appetite')}</span>${seg('maxNew', S.maxNew, [[3, t('ap1')], [5, t('ap2')], [8, t('ap3')]])}</div>` : ''}
     <section class="decks">${S.decks.map(deckCard).join('')}</section>
     <section class="tools" aria-label="${t('toolsLabel')}">
     <details class="card settings"><summary>${ICON.gear} ${t('settings')}</summary>
@@ -1263,7 +1299,7 @@ async function applyBackup() {
       cards += Object.keys(S.progress[d.id]).filter(k => !k.startsWith('_')).length;
       await store.set('progress:' + d.id, S.progress[d.id]);
     }
-    S.decks = S.decks.filter(d => !(pristineDemo(d) && !Object.keys(S.progress[d.id] || {}).length && S.decks.length > 1));
+    S.decks = S.decks.filter(d => !(pristineDemo(d) && !Object.keys(S.progress[d.id] || {}).filter(k => !k.startsWith('_')).length && S.decks.length > 1));
     await saveDecks();
   } finally { sbBusy = false; } S.notice = { text: t('bkRestored', cards) }; render();
 }
@@ -1377,7 +1413,7 @@ function startSession(id, force = false, mode = '') {
   }
   S.stageBefore = summary(deck, S.progress[id]).stage;
   // Mode essai : ni frein sur les nouveaux mots, ni fin de session à l'heure (l'enseignant examine chaque écran à son rythme).
-  S.session = new Session(deck, S.progress[id], { minutes: S.sandbox ? 600 : S.minutes, maxNew: S.maxNew, force: force || S.sandbox, audio: canListen(deck), plan });
+  S.session = new Session(deck, S.progress[id], { minutes: S.sandbox ? 600 : S.minutes, maxNew: newFor(id), force: force || S.sandbox, audio: canListen(deck), plan });
   S.view = 'session'; S.notice = null; S.stepAt = 0;
   advance();
   store.keep();                            // demande au navigateur de ne pas effacer la progression s'il manque de place
@@ -1734,7 +1770,7 @@ function sessionView() {
       <button class="icon" data-action="quit" aria-label="${t('quit')}" title="${t('quit')}">✕</button>
       ${mealBar(pct, S.feedback ? (S.feedback.ok ? 'joy' : 'oops') : 'idle', t('sessionBar'), s.today.length)}
     </div>
-    <p class="where"><span class="chip box">${s.placement ? t('plcChip') : s.tour ? (s.box ? t('tourN', s.box) : t('tourAll')) : s.friendly ? t('fmChip') : s.challenge ? t('challengeN', S.chStage) : step.intro ? t('newCard') : step.activity.multi ? t('recap') : t('box', +box || 1)}</span></p>
+    ${(tag => tag ? `<p class="where"><span class="chip box">${tag}</span></p>` : '')(s.placement ? t('plcChip') : s.tour ? (s.box ? t('tourN', s.box) : t('tourAll')) : s.friendly ? t('fmChip') : s.challenge ? t('challengeN', S.chStage) : step.intro ? '' : step.activity.multi ? t('recap') : t('box', +box || 1))}
     ${step.intro ? introView(step.card, lang) : activityView(step, lang)}`;
 }
 
@@ -1777,7 +1813,7 @@ function doneView() {
   const { stats, deck, tamed, today } = S.session, P = S.progress[deck.id];
   const words = ids => [...new Set(ids)].map(id => `<span class="chip" lang="${deck.lang}">${esc(deck.byId[id].word)}</span>`).join(' ');
   const T = S.session.planned ? ensureDay(deck) : null;
-  const s = summary(deck, P), more = T ? !T.complete : s.due + pickNew(deck, P, S.maxNew).length > 0, other = more ? null : nextList(deck.id);
+  const s = summary(deck, P), more = T ? !T.complete : s.due + pickNew(deck, P, newFor(deck.id)).length > 0, other = more ? null : nextList(deck.id);
   const stageDone = s.stage.count > 1 && (s.stage.index > S.stageBefore.index || (s.stage.allSeen && !S.stageBefore.allSeen));
   const line = (label, ids) => (ids.length ? `<p><span class="label">${t(label)}</span><br>${words(ids)}</p>` : '');
   return `<div class="card done">
@@ -1883,6 +1919,12 @@ app.addEventListener('click', e => {
       const now = S.progress[id]?._plan; if (!now || (now.pace === keep.plan.pace && now.days === keep.plan.days)) { S.paceUndo = null; render(); }
       app.querySelector(`.pacepick[data-id="${CSS.escape(id || '')}"][aria-pressed=true]`)?.focus();
     }
+  }
+  else if (action === 'pace-new') {      // paquet sans jours conseillés : le pas règle les mots nouveaux par séance, pour ce paquet seulement
+    const P = Object.hasOwn(S.progress, id) ? S.progress[id] : null, n = Object.hasOwn(NEW_BY_PACE, b.dataset.pace) ? NEW_BY_PACE[b.dataset.pace] : 0;
+    if ((S.view || 'home') !== 'home' || !P || !n || !S.decks.some(x => x.id === id && !planned(x)) || newFor(id) === n) return;
+    P._new = { n }; saveProgress(id); S.paceSaid = id; render(); S.paceSaid = null;
+    app.querySelector(`.pacepick[data-id="${CSS.escape(id || '')}"][aria-pressed=true]`)?.focus();
   }
   else if (action === 'pace-undo') {
     const u = S.paceUndo, P = S.progress[id]; S.paceUndo = null;
@@ -2066,9 +2108,9 @@ app.addEventListener('submit', e => {
   else if (kind === 'typed' && !S.feedback) submitTyped(e.target.answer.value);
 });
 function applySetting(k, v) {
-  if (!['lang', 'help', 'minutes', 'maxNew', 'sound', 'voice', 'remindDays'].includes(k)) return;          // seuls les réglages connus se modifient
+  if (!['lang', 'help', 'minutes', 'sound', 'voice', 'remindDays'].includes(k)) return;          // seuls les réglages connus se modifient
   if (k === 'remindDays') S.remind = { ...S.remind, days: v };
-  else S[k] = k === 'minutes' || k === 'maxNew' ? +v : k === 'sound' || k === 'voice' ? v === '1' : v;
+  else S[k] = k === 'minutes' ? +v : k === 'sound' || k === 'voice' ? v === '1' : v;
   saveSettings(); render();
   if (k === 'sound' && S.sound) sfx('pop');
 }

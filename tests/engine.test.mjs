@@ -661,6 +661,9 @@ t('sécurité : progression forgée reconstruite, paquet démesuré refusé, tex
   assert.ok(c.abc.fsrs.due <= now + 5 * 366 * 86400000); assert.equal(c.abc.fsrs.note, undefined); assert.equal(c.abc.fsrs.reps, 3); assert.strictEqual(c.abc.lastOk, true);
   assert.deepEqual([c.casse.box, c.casse.fsrs], [1, undefined], 'état de mémoire invalide : la fiche redevient tout juste découverte');
   assert.deepEqual(cleanProgress({ neuve: { seen: true, box: 1, born: now - 5 } }, now).neuve, { seen: true, box: 1, lastOk: false, born: now - 5 }, 'fiche découverte, pas encore révisée : gardée');
+  // Pas choisi sur un paquet sans jours conseillés : seules les valeurs 3, 5 et 8 passent, et le réglage de l'appareil l'emporte sur celui d'une sauvegarde.
+  assert.deepEqual(cleanProgress({ _new: { n: 8, autre: 1 } }, now)._new, { n: 8 }); assert.equal(cleanProgress({ _new: { n: 4 } }, now)._new, undefined); assert.equal(cleanProgress({ _new: { n: '<img>' } }, now)._new, undefined);
+  assert.equal(mergeProgress({ _new: { n: 5 } }, { _new: { n: 8 } }, now)._new.n, 5); assert.equal(mergeProgress({}, { _new: { n: 8 } }, now)._new.n, 8);
   assert.deepEqual(c._race, { best: 0, runs: 0 }); assert.deepEqual(c._match, { best: 8, runs: 0 }); assert.ok(!JSON.stringify(c).includes('<'));
   // une sauvegarde datée du futur ne l'emporte pas sur un travail d'aujourd'hui fait après elle
   const mine = { abc: st(2, now) };

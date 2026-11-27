@@ -64,7 +64,6 @@ select, input:not([type=file]) { background: var(--card); border: 2px solid var(
 
 .bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .trunk { flex: 1; display: flex; align-items: center; min-width: 0; }
-.trunk .head { flex: none; margin-right: -12px; position: relative; z-index: 1; }
 .trunk .track { flex: 1; height: 16px; background: var(--line); border-radius: 99px; overflow: hidden; }
 .trunk .track span { display: block; height: 100%; min-width: 14px; background: #a4aab4; border-radius: 99px; transition: width .5s cubic-bezier(.3, 1.4, .5, 1); }
 .where { margin-bottom: 10px; }
@@ -184,14 +183,12 @@ legend { font-weight: 700; padding: 0 6px; font-size: .92rem; }
 .stage { font-size: .95rem; } .stage b { margin-right: 6px; }
 .sethint { padding: 0 22px 12px; font-size: .82rem; color: var(--muted); }
 
-.appetite { display: flex; align-items: center; justify-content: space-between; gap: 8px 14px; flex-wrap: wrap; margin-bottom: 14px; font-weight: 700; font-size: .95rem; }
-.appetite .seg { background: var(--card); box-shadow: var(--shadow); }
 .ages { display: flex; align-items: flex-end; gap: 3px; flex-wrap: wrap; font-size: .8rem; }
 .ages span:last-child { margin-left: 6px; }
 .quip { font-style: italic; color: var(--muted); }
 
 /* Éléphants animés. Les origines sont exprimées dans le repère du dessin (viewBox). */
-.mascot, .head { overflow: visible; }
+.mascot { overflow: visible; }
 .e-ear { transform-origin: 82px 38px; } .e-trunk { transform-origin: 97px 45px; } .e-tail { transform-origin: 20px 44px; } .e-eye { transform-origin: 91px 38px; }
 .e-zz { display: none; }
 .idle .e-ear { animation: flap 6s ease-in-out infinite; } .idle .e-tail { animation: wag 5s ease-in-out infinite; } .idle .e-eye { animation: blink 4.6s linear infinite; }
@@ -217,12 +214,11 @@ legend { font-weight: 700; padding: 0 6px; font-size: .92rem; }
 .rain { position: absolute !important; inset: 0; pointer-events: none; }
 .rain i { position: absolute; top: -40px; font-style: normal; animation: fall 2.1s cubic-bezier(.4, 0, .9, .6) forwards; }
 @keyframes fall { 0% { transform: translateY(0) rotate(0); opacity: 1; } 80% { opacity: 1; } 100% { transform: translateY(640px) rotate(320deg); opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .mascot, .head, .mascot *, .head *, .rain i { animation: none !important; } .rain { display: none; } }
+@media (prefers-reduced-motion: reduce) { .mascot, .mascot *, .rain i { animation: none !important; } .rain { display: none; } }
 
 /* ----- Accueil simplifié ----- */
 .top { flex-wrap: nowrap; align-items: center; }
 .rulesbtn { margin-left: auto; display: inline-flex; flex-direction: column; align-items: center; gap: 2px; background: none; border: 0; color: var(--brand); font-weight: 700; font-size: .95rem; padding: 6px 8px; border-radius: 12px; min-width: 48px; min-height: 48px; }
-.aplabel { display: inline-flex; align-items: center; gap: 8px; }
 .prairie { justify-content: center; gap: 6px 10px; min-height: 104px; padding: 16px 10px 10px; background: linear-gradient(#eef7ff 0 64%, #dcefc9 64%); }
 .hintline { align-self: center; color: #4a4857; font-size: .95rem; text-align: center; }
 .stagebar { display: flex; align-items: center; gap: 12px; font-weight: 700; }
@@ -404,7 +400,6 @@ details.settings .stack, .privacy .stack { display: flex; flex-direction: column
 .privacy .stack { padding: 14px 0 0; }
 .stack > .primary, .stack > .secondary, .stack > .filebtn { width: 100%; margin: 0; display: flex; align-items: center; justify-content: center; gap: 8px; text-align: center; }
 .remind input[type=time] { width: 100%; min-height: 48px; font-size: 1.05rem; }
-.appetite .seg { display: flex; width: 100%; } .appetite .seg button { flex: 1 1 0; min-width: 0; padding: 7px 6px; line-height: 1.2; }
 .privacy dl { margin: 0; } .privacy dt { font-weight: 700; margin-top: 14px; } .privacy dt:first-child { margin-top: 0; } .privacy dd { margin: 4px 0 0; color: var(--ink); }
 .privacylink { align-self: center; margin-top: 8px; }
 .privacy .sethint { padding: 0; margin: 14px 0 0; }
@@ -437,9 +432,6 @@ summary .tag.ok { background: var(--good-soft); color: var(--good); } summary .t
 .aulines { margin: 6px 0 2px; padding-left: 18px; font-size: .95rem; color: var(--ink); }
 .aulines li { margin: 2px 0; }
 .slot:disabled { opacity: 1; border-style: solid; background: var(--good-soft); color: var(--ink); }
-/* Appétit du jour : trois choix de même largeur sur une ligne, chacun sur une ligne de texte quand la place le permet */
-.appetite .seg { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; }
-.appetite .seg button { padding: 7px 4px; font-size: .94rem; line-height: 1.2; }
 
 /* Classer les mots : catégorie grammaticale et genre, par lot */
 .sortgroup { border: 1px solid var(--brand-line); border-radius: 14px; margin: 14px 0 0; padding: 10px 14px 14px; min-width: 0; }
@@ -553,23 +545,31 @@ fieldset.rhythm .sethint { padding: 0; margin: 0; }
 .placego { display: grid; gap: 8px; position: sticky; bottom: 0; padding: 10px 0 8px; background: var(--bg); }
 
 /* ---------- Design décidé le 27 novembre, lot 1 : accueil et carte du paquet ---------- */
-:root { --trunk: #c8bdae; --trunk-line: #8c7f6d; --track: #efe9df; --pace-ink: #5a5670; --todo: #7d75bf; }
-@media (prefers-color-scheme: dark) { :root { --track: #34323f; --pace-ink: #c2bed0; --todo: #a49dea; } }
+:root { --trunk: #c8bdae; --trunk-shade: #b9ad9d; --mound: #dfe3bd; --track: #efe9df; --pace-ink: #5a5670; --todo: #7d75bf; }
+@media (prefers-color-scheme: dark) { :root { --mound: #4b5138; --track: #34323f; --pace-ink: #c2bed0; --todo: #a49dea; } }
 /* En-tête : grand à la première visite, court dès que le troupeau a commencé. Bouton rond des règles, en haut à droite. */
 .top .rulesbtn { position: absolute; top: 12px; right: 12px; width: 44px; height: 44px; min-width: 0; min-height: 0; margin: 0; padding: 0; display: grid; place-items: center; border: 2px solid var(--brand-line); border-radius: 50%; background: var(--card); color: var(--brand-text); }
 .top .rulesbtn svg { width: 25px; height: 26px; } .rulesbtn .plis { fill: none; stroke: var(--card); stroke-width: .9; stroke-linecap: round; }
 .top.short { gap: 2px; padding: 12px 16px 34px; border-radius: 24px; }
 .top.short .mascot { width: 108px; } .top.short h1 { font-size: 1.875rem; } .top.short .savanna { height: 26px; }
-/* Barre : la tête de l'éléphanteau, sa trompe beige cernée, la touffe d'herbe au bout. */
-.trunk .head { margin-right: -9px; margin-top: -10px; }
-.trunk .track { height: 12px; margin: 0; border: 0; background: var(--track); border-radius: 8px; overflow: hidden; }
-.trunk .track span { min-width: 12px; background: var(--trunk); border-radius: 8px; box-shadow: inset 0 0 0 2px var(--trunk-line); }
-.trunk .grass { flex: none; margin-left: 3px; margin-top: -12px; transform: rotate(8deg); transform-origin: 50% 100%; }
+/* Barre : la tête de l'éléphanteau de l'en-tête (cartes) ou l'éléphanteau entier, trompe baissée (séance). La trompe, de la
+   couleur de la peau et sans liseré, se prolonge dans la piste ; son bout a deux doigts ; une ombre plate dessous donne le volume. */
+.trunk { align-items: flex-end; }
+.trunk .face, .trunk .calf { position: relative; z-index: 1; margin-right: -1px; filter: drop-shadow(0 2px 3px rgba(60, 40, 20, .12)); }
+.trunk .face { margin-top: -10px; }
+.trunk .calf.joy { animation: none; } .trunk .calf.joy .e-tail { animation: wag 1.2s ease-in-out 2; }
+.trunk .under { fill: var(--trunk-shade); }
+.trunk .track { position: relative; height: 34px; margin: 0; border: 0; background: none; border-radius: 0; overflow: visible; }
+.trunk .track::before { content: ""; position: absolute; left: 0; right: 0; top: 13px; height: 6px; background: var(--track); border-radius: 0 3px 3px 0; }
+.trunk .track span { position: absolute; z-index: 1; left: 0; top: 13px; height: 6px; min-width: 12px; background: var(--trunk); border-radius: 0; box-shadow: inset 0 -1.5px 0 var(--trunk-shade); filter: drop-shadow(0 2px 3px rgba(60, 40, 20, .12)); }
+.trunk .tip { position: absolute; left: calc(100% - 12.75px); top: -3px; }
+.grass .mound { fill: var(--mound); }
+.trunk > .grass { flex: none; margin: 0 0 8px 2px; transform: rotate(6deg); transform-origin: 50% 88%; }
 /* Les animations s'arrêtent d'elles-mêmes en moins de cinq secondes (WCAG 2.2, critère 2.2.2). */
 .trunk.near .grass { animation: quiver .9s ease-in-out 4; }
 .trunk.eaten .grass { visibility: hidden; }
-@keyframes quiver { 0%, 100% { transform: rotate(8deg); } 30% { transform: rotate(1deg); } 70% { transform: rotate(14deg); } }
-.aplabel .grass { width: 20px; height: 20px; } .track .finish .grass { width: 26px; height: 26px; }
+@keyframes quiver { 0%, 100% { transform: rotate(6deg); } 30% { transform: rotate(-1deg); } 70% { transform: rotate(12deg); } }
+.track .finish .grass { width: 26px; height: 26px; }
 /* Carte du paquet. */
 .deck { border-top: 0; gap: 14px; }
 .deckhead { align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
@@ -605,8 +605,20 @@ section.card > .trunk { margin-top: 14px; }
 .deckfoot { border-top: 1px solid var(--line); padding-top: 12px; }
 .deckfoot .chlock { margin-left: auto; font-size: .9rem; gap: 6px; }
 @media (prefers-reduced-motion: reduce) { .path .paw, .path .paw.now, .path.fresh .paw, .trunk .grass { animation: none !important; } }
-/* Barre de séance : la trompe avale les touffes d'herbe plantées sur le chemin qui reste. */
-.trunk.meal .track { position: relative; height: 26px; background: none; overflow: visible; }
-.trunk.meal .track span { position: absolute; left: 0; top: 7px; height: 12px; max-width: 100%; }
-.trunk.meal .track .grass { position: absolute; bottom: 7px; width: 22px; height: 22px; margin: 0 0 0 -22px; transform: rotate(6deg); }
-.trunk.meal.some .track .grass { width: 17px; height: 17px; margin-left: -17px; } .trunk.meal.many .track .grass { width: 14px; height: 14px; margin-left: -14px; }
+/* Barre de séance : la trompe avale les touffes d'herbe plantées sur le chemin qui reste. Pas de piste claire ici. */
+.trunk.meal .track { height: 52px; } .trunk.meal .track span { top: 37px; }
+.trunk.meal .track::before { display: none; }
+.trunk.meal .track .grass { position: absolute; bottom: 2px; width: 29px; height: 21px; margin: 0 0 0 -29px; }
+.trunk.meal.some .track .grass { width: 21px; height: 15.5px; margin-left: -21px; } .trunk.meal.many .track .grass { width: 17px; height: 12.5px; margin-left: -17px; }
+/* Alignement (règle de Julie, 27 novembre) : sur chaque page, tout le texte commence sur le même bord gauche, qu'il soit dans un
+   encart ou en dehors, et tous les encarts ont les mêmes bords extérieurs. Le texte hors encart prend donc le retrait intérieur
+   des encarts ; un petit élément encadré (étiquette, onglet, bouton) pose son bord sur ce même repère. Contrôle : outils/alignement.py. */
+:root { --inset: 22px; }
+#app > :is(h1, h2, h3, p, nav, ul, ol):not(.banner, .sandbox, .card) { padding-inline: var(--inset); }
+#app > .link { margin-inline-start: var(--inset); padding-inline: 0; }
+#app > .banner { padding-inline: var(--inset); } #app > .sandbox { padding-inline: calc(var(--inset) - 2px); }
+#app > :is(button, a):not(.link), #app > details:not(.card) { margin-inline-start: var(--inset); }
+#app > details:not(.card) { margin-inline-end: var(--inset); }
+.feedback { padding-left: calc(var(--inset) - 8px); }
+.footlinks { padding: 0 var(--inset); }
+.thead .studenturl { margin-inline: calc(-1 * var(--inset)); padding-inline: var(--inset); }

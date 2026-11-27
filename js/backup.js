@@ -43,6 +43,7 @@ export function cleanProgress(P, now = Date.now()) {
     if (BAD.includes(id) || !st || typeof st !== 'object') continue;
     if (id === '_stages') out._stages = Object.fromEntries(Object.entries(st).filter(([k, v]) => /^\d{1,3}$/.test(k) && Number.isFinite(+v)).map(([k, v]) => [k, Math.min(+v, now)]));
     else if (id === '_plan') { const p = cleanPlan(st, now); if (p) out._plan = p; }      // plan personnel : reconstruit champ par champ, comme le reste
+    else if (id === '_new') { const n = Math.round(num(st.n, 0, 99, 0)); if ([3, 5, 8].includes(n)) out._new = { n }; }      // pas choisi sur un paquet sans jours conseillés
     else if (id === '_race' || id === '_match') out[id] = { best: Math.round(num(st.best, 0, 999, 0)), runs: Math.round(num(st.runs, 0, 1e6, 0)) };
     else if (!id.startsWith('_') && KEY.test(id)) { const c = cleanState(st, now); if (c) out[id] = c; }
   }
@@ -67,6 +68,7 @@ export function mergeProgress(current = {}, saved = {}, now = Date.now()) {
   for (const [id, st] of Object.entries(add)) {
     if (id === '_stages') out._stages = { ...st, ...(out._stages || {}) };
     else if (id === '_plan') { if (!out._plan) out._plan = st; }      // le plan en cours n'est jamais remplacé par celui d'une sauvegarde
+    else if (id === '_new') { if (!out._new) out._new = st; }      // le pas réglé sur cet appareil n'est pas remplacé par celui d'une sauvegarde
     else if (id.startsWith('_')) { if (!out[id] || st.best > out[id].best) out[id] = st; }
     else if (!Object.hasOwn(out, id)) out[id] = st;
     // Fiche déjà travaillée sur cet appareil : l'état le plus récent l'emporte, mais le drapeau « déjà su » d'un fichier

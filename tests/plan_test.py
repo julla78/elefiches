@@ -56,8 +56,15 @@ with sync_playwright() as p:
     txt = lambda sel: page.inner_text(sel).replace('\u00a0', ' ')      # les textes français portent des espaces insécables avant « : »
     narrow = lambda: page.evaluate("document.scrollingElement.scrollWidth <= window.innerWidth + 1")
 
-    # 0. Sans jours conseillés : rien ne change (« Appétit du jour », bouton de séance minuté).
-    assert page.locator('.appetite').count() == 1 and page.locator('.deck [data-action=start]').count() == 1 and not page.locator('.planline').count()
+    # 0. Sans jours conseillés : pas de plan, bouton de séance minuté, et les trois pattes règlent les mots nouveaux par séance,
+    #    pour ce paquet seulement (« les pattes partout » : la bande « Appétit du jour » n'existe plus).
+    assert not page.locator('.appetite').count() and page.locator('.deck [data-action=start]').count() == 1 and not page.locator('.pathbtn').count()
+    assert page.locator('.deck .pacepick[data-action=pace-new]').count() == 3 and page.get_attribute('.deck .pacepick[data-pace=slow]', 'aria-pressed') == 'true' and '3' in txt('.deck .planday')
+    page.click('.deck .pacepick[data-pace=fast]'); page.wait_for_timeout(150)
+    assert page.get_attribute('.deck .pacepick[data-pace=fast]', 'aria-pressed') == 'true' and '8' in txt('.deck .planday') and narrow()
+    assert page.evaluate("document.activeElement?.dataset.pace") == 'fast' and page.locator('.deck [role=status]').count() == 1 and '8' in page.inner_text('.deck [role=status]')      # annonce pour les lecteurs d'écran, sur la carte qui vient de changer
+    page.click('.deck .pacepick[data-pace=slow]'); page.wait_for_timeout(150)
+    assert page.get_attribute('.deck .pacepick[data-pace=slow]', 'aria-pressed') == 'true'
 
     # 1. L'enseignant règle le rythme dans l'éditeur du paquet. Une valeur refusée dit quoi écrire et n'est pas enregistrée.
     page.click('[data-action=teacher]'); page.click('.tdeck [data-action=edit]'); page.wait_for_selector('form[data-submit=rename] input[name=days]')
@@ -230,10 +237,10 @@ with sync_playwright() as p:
     assert page.locator('.deck .pacepick').count() == 3, 'les trois pas restent proposés quand l’étudiant a choisi ses jours'
     page.click('[data-action=sb-off]'); page.wait_for_selector('.sbcard')
 
-    # 8. Un second paquet, sans jours conseillés : il garde « Appétit du jour » et sa séance minutée, à côté du paquet à plan.
+    # 8. Un second paquet, sans jours conseillés : il a ses trois pattes (mots nouveaux par séance) et sa séance minutée, à côté du paquet à plan.
     page.click('summary:has-text("Faire le paquet à la main")'); page.click('[data-action=try][data-model=fr]'); page.wait_for_selector('.deck')
-    assert page.locator('.appetite').count() == 1 and page.locator('.deck').count() == 2
-    cards = page.locator('.deck'); plain = [i for i in range(2) if not cards.nth(i).locator('.planline').count()]
+    assert not page.locator('.appetite').count() and page.locator('.deck').count() == 2 and page.locator('.pacepick[data-action=pace-new]').count() == 3 and page.locator('.pacepick[data-action=pace]').count() == 3
+    cards = page.locator('.deck'); plain = [i for i in range(2) if not cards.nth(i).locator('.pathbtn').count()]
     assert len(plain) == 1 and 'min' in cards.nth(plain[0]).locator('[data-action=start]').inner_text() and not cards.nth(plain[0]).locator('.status').count()
     assert 'Défi dans' in cards.nth(plain[0]).locator('.chlock').inner_text(), 'ligne du défi raccourcie pour tous les paquets'
     cards.nth(plain[0]).locator('[data-action=start]').click(); page.wait_for_selector('.intro'); page.click('[data-action=quit]')
