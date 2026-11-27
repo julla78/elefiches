@@ -67,10 +67,6 @@ select, input:not([type=file]) { background: var(--card); border: 2px solid var(
 .trunk .head { flex: none; margin-right: -12px; position: relative; z-index: 1; }
 .trunk .track { flex: 1; height: 16px; background: var(--line); border-radius: 99px; overflow: hidden; }
 .trunk .track span { display: block; height: 100%; min-width: 14px; background: #a4aab4; border-radius: 99px; transition: width .5s cubic-bezier(.3, 1.4, .5, 1); }
-.dots { flex: none; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 2px; max-width: 46%; margin-top: -8px; }
-.dots .grass { flex: none; width: 22px; height: 22px; }
-.dots.some .grass { width: 15px; height: 15px; } .dots.many .grass { width: 13px; height: 13px; }
-.dots .grass.eaten { visibility: hidden; }
 .where { margin-bottom: 10px; }
 .chip { display: inline-block; background: var(--brand-soft); border-radius: 99px; padding: 3px 11px; font-size: .82rem; font-weight: 600; }
 .chip.theme { background: hsl(var(--th) 70% 90%); color: hsl(var(--th) 45% 28%); }
@@ -609,3 +605,8 @@ section.card > .trunk { margin-top: 14px; }
 .deckfoot { border-top: 1px solid var(--line); padding-top: 12px; }
 .deckfoot .chlock { margin-left: auto; font-size: .9rem; gap: 6px; }
 @media (prefers-reduced-motion: reduce) { .path .paw, .path .paw.now, .path.fresh .paw, .trunk .grass { animation: none !important; } }
+/* Barre de séance : la trompe avale les touffes d'herbe plantées sur le chemin qui reste. */
+.trunk.meal .track { position: relative; height: 26px; background: none; overflow: visible; }
+.trunk.meal .track span { position: absolute; left: 0; top: 7px; height: 12px; max-width: 100%; }
+.trunk.meal .track .grass { position: absolute; bottom: 7px; width: 22px; height: 22px; margin: 0 0 0 -22px; transform: rotate(6deg); }
+.trunk.meal.some .track .grass { width: 17px; height: 17px; margin-left: -17px; } .trunk.meal.many .track .grass { width: 14px; height: 14px; margin-left: -14px; }

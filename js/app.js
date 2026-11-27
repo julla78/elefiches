@@ -142,7 +142,14 @@ const allure = pace => `<svg class="allure" width="30" height="22" viewBox="0 0 
 const trail = (days, done = -1) => `<span class="trail" aria-hidden="true">${Array.from({ length: Math.min(days, 12) }, (_, i) => `<svg class="paw${done >= 0 && i >= done ? ' todo' : ''}" width="16" height="16" viewBox="0 0 26 26">${PRINT}</svg>`).join('')}${days > 12 ? `<span class="trailmore">+${days - 12}</span>` : ''}</span>`;
 // Barre de progression : la trompe s'allonge de la tête vers la touffe d'herbe. L'herbe frémit quand la trompe approche
 // (classe near) et n'est plus là quand tout est fait (classe eaten).
-const trunkBar = (pct, cls, label, end = GRASS) => `<div class="trunk${pct >= 100 ? ' eaten' : pct >= 70 ? ' near' : ''}" role="progressbar" aria-label="${esc(label)}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">${head(cls)}<div class="track"><span style="width:${pct}%"></span></div>${end}</div>`;
+const trunkBar = (pct, cls, label) => `<div class="trunk${pct >= 100 ? ' eaten' : pct >= 70 ? ' near' : ''}" role="progressbar" aria-label="${esc(label)}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">${head(cls)}<div class="track"><span style="width:${pct}%"></span></div>${GRASS}</div>`;
+// Barre de séance : pas de zone claire. Le chemin qui reste est planté de touffes d'herbe (autant que de mots nouveaux du jour,
+// une seule pour une séance de révisions, douze au plus), que la trompe avale en avançant ; la dernière est mangée à la fin.
+const mealBar = (pct, cls, label, n) => {
+  const k = Math.max(1, Math.min(n || 0, 12));
+  const plants = Array.from({ length: k }, (_, i) => pct >= (i + 1 === k ? 100 : (i + 0.7) / k * 100) ? '' : GRASS.replace('class="grass"', `class="grass" style="left:${((i + 1) / k * 100).toFixed(1)}%"`)).join('');
+  return `<div class="trunk meal${k > 8 ? ' many' : k > 5 ? ' some' : ''}" role="progressbar" aria-label="${esc(label)}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">${head(cls)}<div class="track"><span style="width:${pct}%"></span>${plants}</div></div>`;
+};
 
 // ---------- Sons ----------
 
@@ -1723,14 +1730,9 @@ function sessionView() {
   const done = s.served - (S.feedback || step.intro ? 0 : 1) - (step.intro ? 1 : 0);
   const pct = Math.min(100, Math.round(100 * Math.max(0, done) / Math.max(1, s.served + s.remaining)));
   const box = S.feedback ? S.feedback.boxBefore : boxOf(s.progress[step.card.id]);
-  // Au bout de la trompe : une touffe d'herbe par mot nouveau du jour. L'éléphanteau en mange une (la plus proche) chaque fois
-  // qu'un mot est apprivoisé. Sans mot nouveau (révisions seules), une seule touffe marque la fin de la séance.
-  const eaten = s.today.filter(id => s.tamed.includes(id)).length, nTuft = s.today.length;
-  const dots = nTuft ? `<span class="dots${nTuft > 8 ? ' many' : nTuft > 5 ? ' some' : ''}" role="img" aria-label="${esc(t('wordsToday', s.tamed.length, nTuft))}">${Array.from({ length: nTuft }, (_, i) => i < eaten ? GRASS.replace('class="grass"', 'class="grass eaten"') : GRASS).join('')}</span>` : '';
   return `<div class="bar">
       <button class="icon" data-action="quit" aria-label="${t('quit')}" title="${t('quit')}">✕</button>
-      ${trunkBar(pct, S.feedback ? (S.feedback.ok ? 'joy' : 'oops') : 'idle', t('sessionBar'), nTuft ? '' : GRASS)}
-      ${dots}
+      ${mealBar(pct, S.feedback ? (S.feedback.ok ? 'joy' : 'oops') : 'idle', t('sessionBar'), s.today.length)}
     </div>
     <p class="where"><span class="chip box">${s.placement ? t('plcChip') : s.tour ? (s.box ? t('tourN', s.box) : t('tourAll')) : s.friendly ? t('fmChip') : s.challenge ? t('challengeN', S.chStage) : step.intro ? t('newCard') : step.activity.multi ? t('recap') : t('box', +box || 1)}</span></p>
     ${step.intro ? introView(step.card, lang) : activityView(step, lang)}`;
