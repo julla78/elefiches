@@ -587,8 +587,8 @@ const placeGo = n => `${n ? `<button class="primary" data-action="place-go">${t(
 function placeView() {
   const d = S.decks.find(x => x.id === S.placeId), P = S.progress[d.id], fresh = d.cards.filter(c => isNew(P[c.id])), pick = S.placePick || new Set();
   return `<button class="link" data-action="home">← ${t('back')}</button>
-    <div class="titlerow hasinfo"><h1>${t('plcTitle')}</h1>${infoNote(t('plcWhy'), t('plcTitle'))}</div><p class="lead" lang="${d.lang}">${esc(d.name)}</p>
-    <p class="planlead">${t('plcLead')}</p>
+    <h1>${t('plcTitle')}</h1><p class="lead" lang="${d.lang}">${esc(d.name)}</p>
+    <p class="banner say">${t('plcLead')}</p>
     <ul class="placelist" aria-label="${esc(t('plcListAria', fresh.length))}">${fresh.map(c => `<li><button type="button" class="pick" data-action="place-pick" data-card="${esc(c.id)}" aria-pressed="${pick.has(c.id)}" lang="${d.lang}">${esc(c.word)}</button></li>`).join('')}</ul>
     <div class="stack placego" aria-live="polite">${placeGo(pick.size)}</div>`;
 }

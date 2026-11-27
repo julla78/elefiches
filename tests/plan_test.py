@@ -107,11 +107,9 @@ with sync_playwright() as p:
     assert page.locator('.pick[aria-pressed=true]').count() == 3 and 'Prouver ma sélection · 3' in txt('.placego') and narrow()
     page.locator('.placelist .pick').nth(2).click(); page.locator('.placelist .pick').nth(2).click()      # décocher puis recocher : l'écran ne bouge pas
     page.screenshot(path=out + '/plan-1a-deja-su.png', full_page=True)
-    # Lot 2b : le titre garde son espace insécable ; le point (i) du titre s'ouvre, reste ouvert quand on coche un mot (l'écran n'est pas redessiné), puis se referme.
-    assert '\u00a0?' in page.evaluate("document.querySelector('.titlerow h1').textContent") and not page.is_visible('.titlerow .infobox')
-    page.click('.titlerow .infonote summary'); assert page.is_visible('.titlerow .infobox')
-    page.locator('.placelist .pick').nth(2).click(); page.locator('.placelist .pick').nth(2).click(); assert page.is_visible('.titlerow .infobox') and page.locator('.pick[aria-pressed=true]').count() == 3
-    page.screenshot(path=out + '/plan-1c-info.png', full_page=True); page.click('.titlerow .infonote summary'); assert not page.is_visible('.titlerow .infobox')
+    # Lot 2b : le titre garde son espace insécable ; une seule consigne, dans un encart de couleur, sans point (i).
+    assert '\u00a0?' in page.evaluate("document.querySelector('h1').textContent")
+    assert txt('.banner.say') == 'Touche les mots que tu connais, et ton plan sera calculé en fonction.' and page.locator('.infonote').count() == 0
     page.click('[data-action=place-go]'); page.wait_for_selector('.study')
     q = page.evaluate(STEP); assert q['type'] == 'type' and q['hint'] == '', q
     assert 'Déjà su' in txt('.where') and not page.locator('.hintline, .typed .hint').count()

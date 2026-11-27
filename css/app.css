@@ -23,6 +23,7 @@
 body { margin: 0; background: var(--bg); color: var(--ink); font-size: 17px; line-height: 1.5; }
 #app { max-width: 760px; margin: 0 auto; padding: 20px 16px 64px; }
 h1, h2, h3, p { margin: 0; }
+h1, h2, h3 { line-height: 1.2; }      /* un titre sur deux lignes reste un seul bloc ; l'interligne de 1,5 ne vaut que pour le texte courant */
 h1 { font-size: 2rem; letter-spacing: -.02em; }
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
@@ -627,9 +628,11 @@ section.card > .trunk { margin-top: 14px; }
 .hasinfo { position: relative; } .hasinfo > :is(h1, h2) { padding-inline-end: 48px; }
 .infonote > summary { position: absolute; top: 14px; inset-inline-end: 12px; width: 44px; height: 44px; display: grid; place-items: center; list-style: none; cursor: pointer; border-radius: 50%; }
 .infonote > summary::-webkit-details-marker { display: none; }
-.titlerow.hasinfo > .infonote > summary { top: 2px; inset-inline-end: -8px; }
 .infonote[open] > summary .info { background: var(--brand); color: var(--brand-ink); }
 .infobox { margin: 6px 0 14px; padding: 12px 16px; border-radius: 14px; background: var(--brand-soft); color: var(--ink); font-size: .92rem; }
+
+/* Consigne unique d'un écran, dans un encart de couleur. */
+#app > .banner.say { font-size: 1rem; color: var(--ink); padding-block: 14px; margin-bottom: 14px; }
 
 /* Bandeau du troupeau encore vide : la phrase tient entièrement dans le ciel, au-dessus de la ligne d'horizon. */
 .deck .prairie .hintline { align-self: flex-start; font-size: .9rem; line-height: 1.25; }
