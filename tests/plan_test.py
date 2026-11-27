@@ -213,8 +213,8 @@ with sync_playwright() as p:
     last = txt('.gosub'); assert 'reprise générale' in last, last
     assert state(f"progress['{did}']._plan.recap") == 5; page.screenshot(path=out + '/plan-6-reprise.png', full_page=True)
     # Changement de pas depuis la carte (un toucher, sans annonce de minutes ; le focus reste sur le pas choisi) : la durée s'allonge, la reprise générale repart à la nouvelle fin du plan.
-    before = state(f"progress['{did}']._plan"); page.click('.pacepick[data-pace=fast]'); page.wait_for_selector('.paceundo [data-action=pace-undo]')
-    assert 'Patte pressée' in txt('.paceundo') and state(f"progress['{did}']._plan.pace") == 'fast'
+    before = state(f"progress['{did}']._plan"); page.click('.pacepick[data-pace=fast]'); page.wait_for_selector('.paceundo[data-action=pace-undo]')
+    assert txt('.paceundo') == 'Annuler' and 'Patte pressée' in page.inner_text('.planline [role=status]') and state(f"progress['{did}']._plan.pace") == 'fast'
     assert narrow(); page.screenshot(path=out + '/plan-6a-annuler.png', full_page=True)
     page.click('[data-action=pace-undo]'); page.wait_for_selector('.paceundo', state='detached'); assert state(f"progress['{did}']._plan") == before, 'Annuler rend le plan tel qu’il était'
     page.click('.pacepick[data-pace=slow]'); page.wait_for_selector('.pacepick[data-pace=slow][aria-pressed=true]'); assert page.locator('[data-action=pace-undo]').count() == 1

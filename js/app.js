@@ -632,9 +632,9 @@ function paceRow(d, P, T) {
   // Au-delà de douze jours, la fenêtre de douze empreintes suit le jour en cours ; le reste est écrit en chiffres, avant et après.
   const first = Math.max(0, Math.min(today - 6, plan.days - n)), rest = plan.days - first - n, more = k => k > 0 ? `<span class="trailmore">+${k}</span>` : '';
   const path = `<span class="path${n > 9 ? ' many' : ''}${S.paceAnim === d.id ? ' fresh' : ''}" aria-hidden="true">${more(first)}${Array.from({ length: n }, (_, i) => `<svg class="paw${first + i < today ? '' : first + i === today ? ' now' : ' todo'}" viewBox="0 0 26 26">${PRINT}</svg>`).join('')}${more(rest)}</span>`;
-  const undo = S.paceUndo?.id === d.id ? `<span class="paceundo" role="status">${t('paceChanged', t(PACES.includes(plan.pace) ? 'pace_' + plan.pace : 'pace_own'))} <button type="button" class="link" data-action="pace-undo" data-id="${d.id}">${t('paceUndo')}</button></span>` : '';
+  const undo = S.paceUndo?.id === d.id ? `<span class="vh" role="status">${t('paceChanged', t(PACES.includes(plan.pace) ? 'pace_' + plan.pace : 'pace_own'))}</span><button type="button" class="link paceundo" data-action="pace-undo" data-id="${d.id}">${t('paceUndo')}</button>` : '';
   return `<div class="pacegroup" role="group" aria-label="${esc(t('paceGroup'))}">${PACES.map(pace => `<button type="button" class="pacepick" data-action="pace" data-id="${d.id}" data-pace="${pace}" aria-pressed="${plan.pace === pace}">${allure(pace)}${two(pace)}</button>`).join('')}</div>
-    <div class="planline"><button type="button" class="pathbtn" data-action="plan" data-id="${d.id}" aria-label="${esc(t('plPathAria', where, note))}">${path}</button><span class="meta planday">${T.over ? where.charAt(0).toUpperCase() + where.slice(1) : `${where} · ${note}`}</span>${undo}${plan.offer || plan.small ? `<button class="link" data-action="small" data-id="${d.id}" data-v="${plan.small ? 'off' : 'on'}">${t(plan.small ? 'plSmallOff' : 'plSmallOn')}</button>` : ''}</div>`;
+    <div class="planline"><button type="button" class="pathbtn" data-action="plan" data-id="${d.id}" aria-label="${esc(t('plPathAria', where, note))}">${path}</button><span class="meta planday">${T.over ? where.charAt(0).toUpperCase() + where.slice(1) : `${where} · ${note}`}</span>${undo}${!T.over && (plan.offer || plan.small) ? `<button class="link" data-action="small" data-id="${d.id}" data-v="${plan.small ? 'off' : 'on'}">${t(plan.small ? 'plSmallOff' : 'plSmallOn')}</button>` : ''}</div>`;
 }
 // Sur la carte du paquet : une seule barre, la trompe, qui mesure le programme du jour ; les nombres du jour sont écrits
 // dans le bouton (« + 3 nouveaux · 5 à revoir »). Aucune minute ici. Une fois la journée faite, l'herbe est mangée et la
@@ -1723,7 +1723,7 @@ function sessionView() {
   const done = s.served - (S.feedback || step.intro ? 0 : 1) - (step.intro ? 1 : 0);
   const pct = Math.min(100, Math.round(100 * Math.max(0, done) / Math.max(1, s.served + s.remaining)));
   const box = S.feedback ? S.feedback.boxBefore : boxOf(s.progress[step.card.id]);
-  const dots = s.today.length ? `<span class="dots" role="img" aria-label="${esc(t('wordsToday', s.tamed.length, s.today.length))}">${s.today.map(id => `<i class="${s.tamed.includes(id) ? 'on' : ''}"></i>`).join('')}</span>` : '';
+  const dots = s.today.length ? `<span class="dots" role="img" aria-label="${esc(t('wordsToday', s.tamed.length, s.today.length))}">${s.today.map(id => `<svg class="leaf${s.tamed.includes(id) ? ' on' : ''}" viewBox="0 0 14 16" aria-hidden="true"><path d="M7 15C2 11 2 5 7 1c5 4 5 10 0 14z"/></svg>`).join('')}</span>` : '';
   return `<div class="bar">
       <button class="icon" data-action="quit" aria-label="${t('quit')}" title="${t('quit')}">✕</button>
       ${trunkBar(pct, S.feedback ? (S.feedback.ok ? 'joy' : 'oops') : 'idle', t('sessionBar'))}
