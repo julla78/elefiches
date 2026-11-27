@@ -540,9 +540,10 @@ export const DEMO_IMAGES = {
   'Avoir chaud': svg('<rect width="200" height="140" rx="16" fill="#fff0d9"/><circle cx="62" cy="58" r="26" fill="#f2b632"/><g stroke="#f2b632" stroke-width="7" stroke-linecap="round"><path d="M62 14v10M62 92v10M18 58h10M96 58h10M31 27l7 7M86 82l7 7M31 89l7-7M86 34l7-7"/></g><rect x="132" y="16" width="22" height="84" rx="11" fill="#fff" stroke="#8d8a9a" stroke-width="4"/><circle cx="143" cy="108" r="18" fill="#fff" stroke="#8d8a9a" stroke-width="4"/><circle cx="143" cy="108" r="11" fill="#e0483a"/><rect x="138" y="32" width="10" height="72" rx="5" fill="#e0483a"/><path d="M160 34h10M160 50h10M160 66h10" stroke="#8d8a9a" stroke-width="4" stroke-linecap="round"/><path d="M104 96c4 7 6 10 6 13a6 6 0 0 1-12 0c0-3 2-6 6-13z" fill="#8fd0f0"/>'),
 };
 
+export const DEMO_DAYS = 6;      // jours conseillés de la démonstration (décision du 27 novembre 2026)
 export function demoDeck() {
   const d = deckFromCSV(DEMO_CSV, 'Au café (A1)', 'fr');
-  d.demo = true;
+  d.demo = true; d.days = DEMO_DAYS;
   for (const c of d.cards) if (DEMO_IMAGES[c.word]) c.image = DEMO_IMAGES[c.word];
   return d;
 }

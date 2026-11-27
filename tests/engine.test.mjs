@@ -12,6 +12,9 @@ import { kindOf, suggestKind, genderOf, needsGender, formsOf, startOf, cluster, 
 const sorted = d => { for (const c of d.cards) if (!c.pos) { const k = suggestKind(c, d.lang); if (k !== 'autre') c.pos = k; } return prepare(d); };
 import { diffParts, spoken, slug } from '../js/match.js';
 import { SPEC, WRITING } from '../js/levels.js';
+import { DEMO_DAYS } from '../js/deck.js';
+import { addWrite } from '../js/plan.js';
+import { RETRY_GAP } from '../js/session.js';
 import { unzip } from '../js/zip.js';
 import { buildPrompts } from '../js/prompts.js';
 import { levelIn, looksJSON, deckFromAnki } from '../js/deck.js';
@@ -1262,7 +1265,7 @@ t('15b : jours conseillés et « mots déjà vus en classe », deux champs facul
   assert.equal(raw.days, 6); assert.equal(raw.seen, true, 'les deux champs partent dans le fichier donné aux étudiants');
   const back = deckFromJSON(out); assert.equal(back.days, 6); assert.equal(back.seen, true); assert.equal(back.id, d.id);
   assert.equal(serialize(d).days, 6); assert.equal(serialize(d).seen, true, 'et sont enregistrés dans le navigateur');
-  const plain = demoDeck(), rawPlain = JSON.parse(deckToJSON(plain));
+  const plain = demoDeck(); delete plain.days; const rawPlain = JSON.parse(deckToJSON(plain));      // la démonstration porte désormais six jours conseillés (E1) : on les retire pour tester un paquet sans réglage
   assert.ok(!('days' in rawPlain) && !('seen' in rawPlain) && plain.days === undefined && plain.seen === undefined, 'paquet sans réglage : aucun champ, rien ne change');
   const forged = k => deckFromJSON(JSON.stringify({ ...rawPlain, ...k }));
   assert.equal(forged({ days: 3 }).days, undefined, 'moins de quatre jours : pas de plan'); assert.equal(forged({ days: '<img>' }).days, undefined); assert.equal(forged({ days: 9999 }).days, undefined);
@@ -1305,14 +1308,14 @@ t('15b : le calendrier joué à blanc donne des durées stables et plausibles', 
 });
 
 t('15b : mesure locale de la vitesse et de la réussite', () => {
-  const m = emptyMeasure(); assert.deepEqual(rates(m), { sec: 15, ok: 0.9, timed: false, measured: false });
+  const m = emptyMeasure(); assert.deepEqual(rates(m), { sec: 15, ok: 0.9, timed: false, measured: false, wsec: 0, wn: 0 });
   addTime(m, 500); addTime(m, 91000); addTime(m, NaN); assert.equal(m.t.length, 0, 'ni double appui, ni téléphone posé');
   for (let i = 0; i < 9; i++) addTime(m, 20000); assert.equal(rates(m).sec, 15, 'neuf mesures : pas encore'); addTime(m, 20000); assert.equal(rates(m).sec, 20);
   for (let i = 0; i < 80; i++) addTime(m, 8000); assert.equal(m.t.length, 60); assert.equal(rates(m).sec, 8, 'les soixante dernières : la médiane suit l’étudiant');
   for (let i = 0; i < 19; i++) addTry(m, i % 2 === 0); assert.equal(rates(m).ok, 0.9); addTry(m, true); assert.equal(rates(m).ok, 0.55); assert.equal(rates(m).measured, true);
   for (let i = 0; i < 400; i++) addTry(m, true); assert.ok(m.tries <= 200 && m.ok <= m.tries && rates(m).ok === 0.98, 'taux borné, anciennes réponses allégées');
   for (let i = 0; i < 400; i++) addTry(m, false); assert.equal(rates(m).ok, 0.5);
-  assert.deepEqual(cleanMeasure({ t: [5, '9', -1, 500, null, 12.345], tries: 10, ok: 99 }), { t: [5, 12.3], tries: 10, ok: 10 });
+  assert.deepEqual(cleanMeasure({ t: [5, '9', -1, 500, null, 12.345], tries: 10, ok: 99 }), { t: [5, 12.3], w: [], tries: 10, ok: 10 });
   assert.deepEqual(cleanMeasure('<script>'), emptyMeasure()); assert.deepEqual(cleanMeasure({ t: '<img>', tries: '<b>', ok: {} }), emptyMeasure());
 });
 
@@ -1345,13 +1348,13 @@ t('15b : programme du jour, en une ou deux fois, arrêté le matin', () => {
   assert.equal(R.done, perDay); assert.ok(R.total >= R.done && R.fresh >= perDay, 'le total ne passe jamais sous ce qui est fait');
 });
 
-t('15b : première question écrite, et fiche ratée redemandée avec l’aide maximale', () => {
+t('15b : première question écrite ; E1 : fiche ratée redemandée de tête, sans aide ajoutée', () => {
   const d = planDeck(), P = {}; P._plan = startPlan('mid', 6, T0);
   const s = new Session(d, P, { now: T0, rnd: () => 0.5, plan: { fresh: 3, dueBy: dayEnd(T0) } });
   const step = s.next(T0); assert.equal(step.intro, undefined); assert.equal(step.activity.type, 'type');
   s.answer(step, false, T0 + 5000);
   assert.equal(P[step.card.id].box, 1); assert.equal(P[step.card.id].lastOk, false); assert.ok(P[step.card.id].born >= T0);
-  const retry = s.queue.find(i => i.retry && i.id === step.card.id); assert.ok(retry && retry.force === 'type' && retry.help === true, 'rattrapage sous la même forme, avec première lettre et longueur');
+  const retry = s.queue.find(i => i.retry && i.id === step.card.id); assert.ok(retry && retry.force === 'type' && retry.help === undefined && retry.gate === true, 'rattrapage sous la même forme, de tête : la bonne réponse vient d’être montrée, aucune lettre n’est ajoutée (E1)');
   assert.ok(!isDue(P[step.card.id], dayEnd(T0)), 'un mot raté n’est pas dû une seconde fois le même jour : seul le rattrapage de la séance le redemande');
   // Paquet à jours conseillés dont les mots n'ont PAS été vus en classe : l'écran de découverte reste, avec ses deux questions.
   const e = planDeck({ seen: undefined }), Pe = {}; assert.equal(e.seen, undefined);
@@ -1640,6 +1643,67 @@ t('une fiche écrite avec des espaces insécables se comporte comme la même fic
     assert.deepEqual(clozes({ word: 'un café', examples: [nb('Tu veux un café ?')], clozes: [] }).map(c => c.answer), ['café']);
     assert.equal(check('un' + sp + 'café', ['un café']).ok, true); assert.equal(check('s\'il vous plaît', ['s\'il' + sp + 'vous plaît']).ok, true);
   }
+});
+
+t('E1 : démonstration à six jours conseillés', () => {
+  const d = demoDeck(); assert.equal(DEMO_DAYS, 6); assert.equal(d.days, 6); assert.equal(adviseDays(d.days), 6, 'valeur acceptée par le contrôle des jours conseillés');
+  assert.equal(JSON.parse(deckToJSON(d)).days, 6); assert.equal(serialize(d).days, 6);
+  const old = demoDeck(); delete old.days;      // démonstration d'avant E1 : mêmes fiches, même identifiant, donc reconnue et complétée au chargement
+  assert.equal(old.id, d.id); assert.equal(JSON.stringify(serialize(old).cards), JSON.stringify(serialize(d).cards));
+});
+
+t('E1 : un mot raté est redemandé de tête, quelques mots plus tard', () => {
+  for (const level of ['A1', 'A2', 'B1']) {
+    const d = planDeck({ level }), P = {}; P._plan = startPlan('mid', 6, T0);
+    const s = new Session(d, P, { now: T0, rnd: () => 0.5, plan: { fresh: 6, dueBy: dayEnd(T0) } }); let step, typed = null;
+    while ((step = s.next(T0))) { if (!step.intro && !step.activity.multi && step.activity.type === 'type' && (!step.item.retry || step.item.bonus)) { typed = step; break; } s.answer(step, true, T0, {}); }
+    assert.ok(typed, level + ' : une question écrite existe');
+    const before = s.queue.length; s.answer(typed, false, T0, {});
+    const at = s.queue.findIndex(i => i.id === typed.card.id && i.retry);
+    assert.equal(RETRY_GAP, 5); assert.equal(at, Math.min(before, RETRY_GAP), 'cinq mots plus loin, ou à la fin de la file quand elle est plus courte');
+    const item = s.queue[at]; assert.equal(item.help, undefined, 'aucune aide ajoutée au rattrapage'); assert.equal(item.gate, true); assert.equal(item.force, typed.activity.type, 'même forme');
+    const again = buildActivity(d, typed.card, 3, () => 0.5, { force: item.force, help: item.help, gate: item.gate });
+    assert.equal(again.hint.toLowerCase(), hintOf(again.answer, SPEC[level].hint).toLowerCase(), level + ' : l’aide du niveau, pas davantage');
+    if (level === 'B1') assert.equal(again.hint, '', 'B1 : écrit de tête, sans aucune lettre');
+    // Raté une seconde fois : le second rattrapage part en fin de séance ; raté une troisième fois, on n'insiste plus aujourd'hui.
+    while ((step = s.next(T0))) { if (step.card?.id === typed.card.id && step.item.retry && step.item.tries === 1) break; if (!step.intro && !step.activity.multi) s.answer(step, true, T0, {}); }
+    assert.ok(step, level + ' : le mot revient'); s.answer(step, false, T0, {});
+    assert.equal(s.queue.at(-1).id, typed.card.id); assert.equal(s.queue.at(-1).tries, 2, 'second rattrapage : en fin de séance');
+    const n2 = s.queue.filter(i => i.id === typed.card.id).length; let last; while ((step = s.next(T0))) { last = step; if (!step.intro && !step.activity.multi) s.answer(step, step.card.id !== typed.card.id, T0, {}); }
+    assert.equal(n2, 1); assert.ok(!s.queue.length && last, 'troisième échec : plus de rattrapage, la séance se termine');
+  }
+  // Question à choix ratée : au rattrapage, l'étudiant cherche d'abord le mot ; les deux choix (le bon, et celui qu'il avait pris) n'arrivent qu'ensuite.
+  const d = sorted(demoDeck()), c = d.cards.find(x => x.word === 'Un café'), other = d.cards.find(x => x.word === 'Un thé');
+  const rev = buildActivity(d, c, 2, () => 0.5, { force: 'qcm-rev', contrast: { text: other.bare, id: other.id }, gate: true });
+  if (rev.type === 'qcm-rev') assert.equal(rev.gated, true, 'rattrapage d’un choix : rappel de tête d’abord');
+  const plain = buildActivity(d, c, 2, () => 0.5, { force: 'qcm-rev', contrast: { text: other.bare, id: other.id } });
+  if (plain.type === 'qcm-rev') assert.equal(plain.gated, false, 'sans la consigne du rattrapage, rien ne change');
+  const q = buildActivity(d, c, 1, () => 0.5, { force: 'qcm', gate: true }); assert.equal(q.gated, false, 'reconnaître le sens d’un mot affiché : rien à chercher de tête');
+});
+
+t('E1 : chronomètre du premier essai écrit, à part des autres étapes', () => {
+  const m = emptyMeasure(); assert.deepEqual(m.w, []);
+  addWrite(m, 500); addWrite(m, 95000); addWrite(m, NaN); assert.equal(m.w.length, 0, 'moins d’une seconde ou plus de quatre-vingt-dix : pas une mesure');
+  for (const ms of [8000, 12000, 10000]) addWrite(m, ms); assert.deepEqual(m.w, [8, 12, 10]); assert.equal(m.t.length, 0, 'la médiane des étapes n’est pas touchée');
+  const r = rates(m); assert.equal(r.wsec, 10); assert.equal(r.wn, 3); assert.equal(r.timed, false);
+  for (let i = 0; i < 100; i++) addWrite(m, 5000); assert.equal(m.w.length, 60, 'soixante mesures au plus');
+  const old = cleanMeasure({ t: [5, 6], tries: 3, ok: 2 }); assert.deepEqual(old.w, [], 'mesure d’avant E1 : acceptée'); assert.equal(rates(old).wn, 0); assert.equal(rates(old).wsec, 0);
+  assert.deepEqual(cleanMeasure({ t: [], w: [3, 'x', -1, 1e9, 4.26, null, {}], tries: 0, ok: 0 }).w, [3, 4.3], 'valeurs forgées écartées');
+  assert.deepEqual(cleanMeasure({ w: '<img>' }).w, []);
+});
+
+const { STR: STRINGS } = await import('../js/i18n.js');
+t('E1 : règles du jeu exactes, plus de phrase d’humour après une erreur', () => {
+  for (const lang of ['fr', 'en', 'es']) {
+    const R = STRINGS[lang].rulesText; assert.equal(R.length, 9);
+    assert.ok(!/dix mots\b|ten words|diez palabras/i.test(JSON.stringify(R).replace(/dizaine de mots|about ten words|unas diez palabras/gi, '')), lang + ' : une étape ne fait pas toujours dix mots');
+    assert.equal(STRINGS[lang].puns, undefined); assert.ok(STRINGS[lang].no && STRINGS[lang].resetOf.includes('{0}') && STRINGS[lang].wMeasure.includes('{1}'));
+    assert.ok(!STRINGS[lang].remEvent.includes('{0}'), 'le rendez-vous ne cite plus de minutes');
+  }
+  assert.ok(!/session/i.test(JSON.stringify(Object.values(STRINGS.fr))), 'un seul mot en français : séance');
+  // Une étape : une dizaine de mots. Le reste de 1 à 4 mots rejoint la dernière étape ; de 5 à 9, il en forme une plus courte.
+  const sizes = n => { const d = { cards: Array.from({ length: n }, (_, i) => ({ id: 'c' + i })) }; return stageOf(d, {}).bounds.map(([a, b]) => b - a); };
+  assert.deepEqual(sizes(15), [10, 5]); assert.deepEqual(sizes(12), [12]); assert.deepEqual(sizes(63).slice(-1), [13]); assert.deepEqual(sizes(85).slice(-1), [5]); assert.equal(sizes(85).length, 9);
 });
 
 await Promise.all(pending);

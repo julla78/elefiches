@@ -3,3 +3,4 @@ ETAT.md
 elefiches-cahier-des-charges.md
 elefiches-verification-scientifique.md
 paquets/_*.json
+__pycache__/

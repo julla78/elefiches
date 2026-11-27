@@ -12,7 +12,7 @@
 //
 // Pour définir ou changer le code : espace enseignant → « Code d'accès » → créer la ligne, puis la coller ci-dessous
 // entre les apostrophes. Changer la ligne retire l'accès à tous les appareils qui avaient l'ancien code.
-export const ACCESS = 'pbkdf2$600000$aa5dc4e8e04f063bacd4316d8061904c$cd7f93ed51fa5af792181c6f6dce103e1b7300ed46c829d6af3fa6b77e8827b8';
+export const ACCESS = 'pbkdf2$600000$821c153584e6c25e8403b17b1e7885f9$1436457013ab98fc839db40e04801a0da3eded395e15b0433802d2e317ec7608';
 
 const FORMAT = /^pbkdf2\$(\d{4,7})\$([0-9a-f]{32})\$([0-9a-f]{64})$/;
 export const MIN_CODE = 12, ITERATIONS = 600000, MIN_ITER = 1000, MAX_ITER = 2000000;

@@ -275,6 +275,7 @@ const ARTICLE_DUE = GENDERED_LANGS;
 // oublié (« café » pour « un café », « addition » pour « l'addition ») ou qui ne va pas avec le mot (« une café »),
 // il donne un second essai. Un autre article qui convient au mot (« le café ») est accepté sans remarque. Seul ce
 // que la forme attendue contient est exigé : dans une phrase à trou, l'article écrit hors du trou n'est pas demandé.
+export const RETRY_GAP = 5;      // mots intercalés avant le premier rattrapage d'un mot raté
 // Renvoie {ok, note} ; {retry:true, accent, slip, cap, article} pour un second essai (slip : 'accent' ou la lettre à
 // revoir ; cap : sur une majuscule ; article : 'missing' ou 'wrong', seul ou en plus d'un autre écart) ;
 // {retry:true, form} quand c'est l'autre forme du mot ; {empty:true} si rien n'est écrit.
@@ -439,7 +440,7 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
     const a = type && make[type]?.();
     if (!a) continue;
     // gated : l'étudiant cherche d'abord la réponse de tête, les choix n'apparaissent qu'ensuite.
-    const gated = !!a.options && type !== 'qcm' && type !== 'situation' && type !== 'listen' && !contrast && (gate || (box >= 2 && !force));
+    const gated = !!a.options && type !== 'qcm' && type !== 'situation' && type !== 'listen' && (gate || (!contrast && box >= 2 && !force));
     return { type, cardId: card.id, gated, ...a };
   }
   // Aucune forme de l'échelle n'est possible en respectant la règle des catégories (fiche seule de sa catégorie) :
@@ -550,7 +551,7 @@ export class Session {
     }
     // Si l'étudiant a dit qu'il ne pouvait pas écouter, une forme d'écoute imposée (rattrapage) redevient une forme écrite.
     const force = !this.audio && ['listen', 'listen-type', 'speak'].includes(item.force) ? null : item.force;
-    return { item, card, activity: buildActivity(this.deck, card, boxOf(this.progress[card.id]) || 1, this.rnd, { force, prefer: this.today, contrast: item.contrast, help: item.help, audio: this.audio, vary: true, turn: this.progress[card.id]?.fsrs?.reps || 0 }) };
+    return { item, card, activity: buildActivity(this.deck, card, boxOf(this.progress[card.id]) || 1, this.rnd, { force, prefer: this.today, contrast: item.contrast, help: item.help, gate: item.gate, audio: this.audio, vary: true, turn: this.progress[card.id]?.fsrs?.reps || 0 }) };
   }
 
   // Enregistre une réponse. Seule la première réponse du jour compte pour FSRS ; les rattrapages non.
@@ -589,12 +590,14 @@ export class Session {
       else if (!this.waiting.has(card.id) && P[card.id].lastOk) { this.tamed.push(card.id); tamedNow = true; }
     }
     this.lastTamed = tamedNow;
-    // Une fiche ratée revient un peu plus loin, sous la même forme, deux fois au plus par session pour ne pas s'acharner.
+    // Une fiche ratée revient plus loin, sous la même forme, deux fois au plus par séance pour ne pas s'acharner.
     // Si l'étudiant a choisi une mauvaise réponse, le rattrapage l'oppose à la bonne : il travaille sa confusion précise.
     const tries = (item.tries || 0) + 1;
     if (!ok && tries <= 2) {
       const contrast = info.chosen ? { text: info.chosen, id: activity.from?.[info.chosen] } : item.contrast;
-      this.queue.splice(Math.min(this.queue.length, 3), 0, { id: card.id, kind: 'quiz', retry: true, tries, bonus: item.bonus, force: item.force || activity.type, contrast, help: !activity.options });
+      // Premier rattrapage RETRY_GAP mots plus loin, second en fin de séance : un rappel un peu éloigné demande plus d'effort et tient mieux
+      // (Karpicke et Roediger 2007, exp. 3 ; Pyc et Rawson 2009 : études hors rattrapage d'erreur, transposées).
+      this.queue.splice(tries === 1 ? Math.min(this.queue.length, RETRY_GAP) : this.queue.length, 0, { id: card.id, kind: 'quiz', retry: true, tries, bonus: item.bonus, force: item.force || activity.type, contrast, gate: true });      // de tête : aucune aide ajoutée ; les choix n'arrivent qu'après la recherche
     }
     return P[card.id];
   }

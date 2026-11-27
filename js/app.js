@@ -11,7 +11,7 @@ import { buildICS } from './remind.js';
 import { makeBackup, readBackup, mergeProgress, cleanProgress, countReplaced, countAdded, countLate } from './backup.js';
 import { ACCESS, MIN_CODE, validAccess, makeAccess, checkAccess } from './acces.js';
 import { STR, LANG_NAMES } from './i18n.js';
-import { PACES, DAY, EXTRA_MIN, paceDays, simulate, today as planToday, outlook, startPlan, cleanMeasure, emptyMeasure, addTime, addTry, rates, minutes, missedNow, markWorked, stepsLeft, milestone, dayEnd, dayIndex, OWN, SMALL, OFFER, staleIds, weakIds } from './plan.js';
+import { PACES, DAY, EXTRA_MIN, paceDays, simulate, today as planToday, outlook, startPlan, cleanMeasure, emptyMeasure, addTime, addTry, addWrite, rates, minutes, missedNow, markWorked, stepsLeft, milestone, dayEnd, dayIndex, OWN, SMALL, OFFER, staleIds, weakIds } from './plan.js';
 
 const app = document.getElementById('app');
 // En ligne, l'application ne s'affiche pas à l'intérieur de la page d'un autre site (protection contre le détournement de clics).
@@ -333,6 +333,9 @@ async function load() {
       S.decks[i] = fresh; await saveDecks();
     }
   }
+  // Sous-lot E1 : la démonstration porte six jours conseillés, pour que tout visiteur voie le positionnement et « Ton plan ». Celle
+  // d'un appareil qui l'avait déjà les reçoit si ses fiches sont intactes ; une démonstration modifiée par l'enseignant n'est pas touchée.
+  { const fresh = demoDeck(), old = S.decks.find(d => d.demo === true && d.id === fresh.id && !d.days && pristineDemo(d)); if (old) { old.days = fresh.days; await saveDecks(); } }
   for (const d of S.decks) S.progress[d.id] = cleanProgress(await store.get(pkey(d.id)));     // état reconstruit champ par champ : rien de forgé n'atteint l'écran
   // Lien de partage : « …/?paquet=logement-a2 » ouvre le fichier paquets/logement-a2.json rangé à côté de l'application
   // L'étudiant n'a rien d'autre à faire que d'ouvrir le lien. Seul le dossier paquets/ du site est lu, en JSON strict.
@@ -505,6 +508,11 @@ function pendingStage(d, P) {
 // jusqu'à l'extension du plan à toutes les listes. Ce réglage est rangé par paquet, sous « _new » dans sa progression :
 // un pas posé sur une carte ne vaut que pour elle. L'ancien réglage commun (« Appétit du jour ») sert de valeur de départ.
 const planned = d => !!d?.days;
+// Une liste est commencée dès qu'une fiche a été vue ou qu'un plan existe : c'est alors seulement qu'il y a quelque chose à effacer.
+const started = id => { const P = S.progress[id] || {}; return !!P._plan || Object.keys(P).some(k => !k.startsWith('_')); };
+const resetLink = (d, label) => (S.confirmReset === d.id
+  ? `<button class="link danger" data-action="reset-yes" data-id="${d.id}">${t('resetSure')}</button>`
+  : `<button class="link" data-action="reset" data-id="${d.id}">${label}</button>`);
 const NEW_BY_PACE = { slow: 3, mid: 5, fast: 8 };
 const newFor = id => { const n = Object.hasOwn(S.progress, id) ? S.progress[id]?._new?.n : 0; return [3, 5, 8].includes(n) ? n : [3, 5, 8].includes(S.maxNew) ? S.maxNew : 3; };
 // Étapes d'un mot nouveau : 3 avec l'écran de découverte ; 1 quand les mots ont été vus en classe ; 2 au niveau A1, où
@@ -659,6 +667,7 @@ function planView() {
     ${moment}
     <section class="paces">${(S.planOpts?.id === d.id ? S.planOpts.list : planOptions(d, P, now)).map(card).join('')}</section>
     ${own}
+    ${started(d.id) ? `<p class="ownlink">${resetLink(d, t('reset'))}</p>` : ''}
     <p class="pacenote">${t('plFoot')}</p>
     ${others ? `<p class="pacenote">${t('plOthers', others)}</p>` : ''}`;
 }
@@ -798,17 +807,18 @@ function home() {
     ${S.sandbox ? sandboxBar(true) : ''}${banners()}
     <section class="decks">${S.decks.map(deckCard).join('')}</section>
     <section class="tools" aria-label="${t('toolsLabel')}">
-    <details class="card settings"><summary>${ICON.gear} ${t('settings')}</summary>
+    <details class="card settings" data-k="set"><summary>${ICON.gear} ${t('settings')}</summary>
       ${setrow('appLang', seg('lang', S.lang, [['auto', t('auto')], ...Object.entries(LANG_NAMES)]))}
       <p class="sethint">${t('autoHint')}</p>
       ${setrow('help', seg('help', S.help, [['none', t('helpNone')], ...Object.entries(LANG_NAMES)]))}
-      ${setrow('duration', seg('minutes', S.minutes, [3, 5, 10, 15].map(m => [m, t('min', m)])))}
+      ${S.decks.some(d => !planned(d)) ? setrow('duration', seg('minutes', S.minutes, [3, 5, 10, 15].map(m => [m, t('min', m)]))) : ''}
       ${setrow('sound', seg('sound', S.sound ? '1' : '0', [['1', t('on')], ['0', t('off')]]))}
       ${setrow('voiceAuto', seg('voice', S.voice ? '1' : '0', [['1', t('onF')], ['0', t('offF')]]))}
       <p class="sethint">${t('voiceHint')}</p>
+      ${S.decks.filter(d => !planned(d) && started(d.id)).map(d => `<p class="resetrow">${resetLink(d, esc(t('resetOf', d.name)))}</p>`).join('')}
     </details>
     ${backupView()}
-    <details class="card settings remind"><summary>${ICON.bell} ${t('remTitle')}</summary>
+    <details class="card settings remind" data-k="rem"><summary>${ICON.bell} ${t('remTitle')}</summary>
       <p class="sethint">${t('remIntro')}</p>
       <div class="setrow"><label for="remtime">${t('remTime')}</label><input id="remtime" type="time" data-remind="time" value="${esc(S.remind.time)}"></div>
       ${setrow('remDays', seg('remindDays', S.remind.days, [['daily', t('remDaily')], ['weekdays', t('remWeek')], ['three', t('remThree')]]))}
@@ -1308,7 +1318,7 @@ async function applyBackup() {
 function backupView() {
   if (S.sandbox) return `<p class="toolrow sethint">${ICON.save} ${t('sbNoBackup')}</p>`;
   const days = S.savedAt ? Math.floor((Date.now() - S.savedAt) / 86400000) : -1, late = hasProgress() && (days < 0 || days >= 14);
-  return `<details class="card settings backup"${late || iosSafari() || S.pendingBackup ? ' open' : ''}><summary>${ICON.save} ${t('bkTitle')}</summary>
+  return `<details class="card settings backup" data-k="bk"${late || iosSafari() || S.pendingBackup ? ' open' : ''}><summary>${ICON.save} ${t('bkTitle')}</summary>
       <p class="sethint">${t('bkIntro')}</p>
       ${iosSafari() ? `<p class="banner warn">${t('bkIos')}</p>` : ''}
       ${late ? `<p class="banner warn">${days < 0 ? t('bkNever') : t('bkLate', days)}</p>` : days >= 0 ? `<p class="sethint">${t('bkWhen', days)}</p>` : ''}
@@ -1613,6 +1623,18 @@ function bankView(step, lang) {
     <div class="row"><button class="primary" data-action="check-bank" ${fill.includes(null) ? 'disabled' : ''}>${t('validate')}</button></div>`}</div>${fb ? feedbackView(step, lang) : ''}`;
 }
 
+// Après une erreur, la bonne réponse reste à l'écran jusqu'au toucher de « Continuer », qui ne répond qu'au bout de trois secondes
+// (décision du 27 novembre 2026 ; Pashler et al. 2005 affichaient la bonne réponse cinq secondes, aucune étude lue ne compare des durées).
+const HOLD_MS = 3000;
+const holdLeft = () => { const l = (S.feedback?.holdUntil || 0) - Date.now(); return l > 0 && l <= HOLD_MS ? l : 0; };      // borné : une horloge qui recule ne bloque rien
+const held = () => holdLeft() > 0;
+let holdTimer = 0;
+function holdRelease() {
+  clearTimeout(holdTimer);
+  const left = holdLeft();
+  if (left > 0 && S.view === 'session') holdTimer = setTimeout(() => { const b = app.querySelector('.hold[aria-disabled]'); if (b) { b.removeAttribute('aria-disabled'); b.removeAttribute('style'); b.classList.remove('hold'); } }, left + 30);
+}
+const nextBtn = () => { const left = holdLeft(); return `<button class="primary${left > 0 ? ' hold' : ''}" data-action="next"${left > 0 ? ` aria-disabled="true" style="--hold:${HOLD_MS}ms;--held:${left - HOLD_MS}ms"` : ''} autofocus>${t('next')}</button>`; };
 function feedbackView(step, lang) {
   const { card, activity: a } = step, fb = S.feedback, s = S.session, help = s.deck.help;
   const plc = !!s.placement, title = plc ? t(fb.ok ? 'plcYes' : 'plcNo') : fb.ok ? t(['ok1', 'ok2', 'ok3'][fb.n % 3]) : a.multi ? t('almost') : t('no');
@@ -1628,16 +1650,26 @@ function feedbackView(step, lang) {
   const note = ['article', 'form', 'variant', 'open'].includes(fb.note) ? t({ article: 'noteArticle', form: 'noteForm', variant: 'noteVariant', open: 'noteOpen' }[fb.note], fb.shown) : '';
   // Réponse écrite à une lettre ou à un accent près, manquée au second essai : on montre l'endroit de l'écart dans la bonne orthographe.
   let sp = null;
-  if (a.cloze && fb.typed && fb.near) { const d = diffParts(a.answer.toLowerCase(), fb.typed.trim().toLowerCase()), i = d[0].length, j = i + d[1].length; sp = [a.answer.slice(0, i), a.answer.slice(i, j), a.answer.slice(j)]; }
+  if (typeof a.answer === 'string' && fb.typed && fb.near) { const d = diffParts(a.answer.toLowerCase(), fb.typed.trim().toLowerCase()), i = d[0].length, j = i + d[1].length; sp = [a.answer.slice(0, i), a.answer.slice(i, j), a.answer.slice(j)]; }
   const ex = a.type === 'order' ? '' : a.type === 'speak' ? a.model : card.examples.find(e => !a.cloze || e.replace(/[’`´]/g, "'") !== a.cloze.text) || card.examples[0];
   const move = fb.retry || plc ? '' : fb.boxAfter > fb.boxBefore ? t('boxUp', fb.boxAfter) : fb.boxAfter < fb.boxBefore ? t('boxDown', fb.boxAfter) : '';
   const when = s.challenge || plc || fb.ask ? '' : fb.ok && !fb.retry ? t('nextIn', Math.max(1, fb.days)) : '';
   const wins = plc ? (fb.ok ? [t('plcJoined')] : []) : [fb.joined ? t('joined') : '', fb.tamed ? t('tamed', card.word, s.tamed.length, s.today.length) : '',
     fb.ok && [3, 5, 10].includes(s.stats.streak) ? t('streak', s.stats.streak) : ''].filter(Boolean);
+  // Trois blocs après une erreur : le verdict (avec ce qui a été confondu, ou la lettre qui diffère), le mot avec son image et sa
+  // voix, « Continuer ». Ni phrase d'humour, ni recopie, ni second éléphanteau : celui de la barre réagit déjà.
+  const same = sp && a.answer.toLowerCase() === String(card.word).toLowerCase(), marked = sp ? `${esc(sp[0])}<mark>${esc(sp[1])}</mark>${esc(sp[2])}` : '';
+  if (!fb.ok && !plc) return `<div class="card feedback soft miss" role="status" aria-live="polite">
+    <div class="verdict"><h3>${title}</h3>
+      ${explain ? `<p class="explain">${esc(explain)}</p>` : ''}${note ? `<p class="explain">${esc(note)}</p>` : ''}
+      ${sp && !same ? `<p class="spelling" lang="${lang}">${marked}</p>` : ''}</div>
+    <p class="recap${same ? ' spelling' : ''}">${card.image ? `<img class="recapimg" src="${esc(card.image)}" alt="">` : ''}<b lang="${lang}">${same ? marked : esc(card.word)}</b> ${listenBtn(card)}</p>
+    ${nextBtn()}
+  </div>`;
   return `<div class="card feedback ${fb.ok ? 'good' : 'soft'}" role="status" aria-live="polite">
     <h3>${title}</h3>
     ${wins.length ? `<p class="win">${mascot(44, 'joy', Math.max(1, fb.boxAfter))}<span>${wins.map(esc).join('<br>')}</span></p>` : ''}
-    ${fb.ok ? '' : plc ? `<p class="explain">${t('plcLater')}</p>` : `<p class="oopsrow">${mascot(46, 'oops', Math.max(1, fb.boxAfter))}<span>${fb.pun && !['A1', 'A2'].includes(s.deck.level) ? esc(t('puns')[fb.n % t('puns').length]) : ''}</span></p>`}
+    ${fb.ok || !plc ? '' : `<p class="explain">${t('plcLater')}</p>`}
     ${explain ? `<p class="explain">${esc(explain)}</p>` : ''}
     ${note ? `<p class="explain">${esc(note)}</p>` : ''}
     ${sp ? `<p class="spelling" lang="${lang}">${esc(sp[0])}<mark>${esc(sp[1])}</mark>${esc(sp[2])}</p>` : ''}
@@ -1669,7 +1701,7 @@ function commit(result, extra = {}) {
   if (s.planned && s.progress._plan && !step.activity.multi) markWorked(s.progress._plan);      // la journée est travaillée ; les jours manqués sont constatés
   const after = boxOf(st), retry = !!s.challenge || (!!step.item.retry && after === before);
   S.feedback = { ...result, ...extra, retry, boxBefore: before, boxAfter: after, days: dueInDays(st), n: s.served,
-    tamed: s.lastTamed, joined: before < HERD_BOX && after >= HERD_BOX, pun: !result.ok && !s.placement && !step.activity.multi && (S.errors = (S.errors || 0) + 1) % 3 === 1 };
+    tamed: s.lastTamed, joined: before < HERD_BOX && after >= HERD_BOX, ...(!result.ok && !s.placement && !step.activity.multi ? { holdUntil: Date.now() + HOLD_MS } : {}) };
   saveProgress(s.deck.id); autoSpeak();
   return S.feedback;
 }
@@ -1738,6 +1770,8 @@ function againText(L) {
 function submitTyped(value) {
   const a = S.step.activity, L = S.local || {}, r = judge(value, a, S.session.deck, !!L.again);
   if (r.empty) return;
+  // Mesure locale : secondes entre l'affichage d'une question écrite et sa première validation (vraie séance, hors nombres).
+  if (!L.again && S.stepAt && !S.session.challenge && !S.session.placement && a.type !== 'number') addWrite(S.measure, Date.now() - S.stepAt);
   if (r.retry) { S.local = { again: true, accent: r.accent, slip: r.slip, cap: r.cap, article: r.article, form: r.form, value }; sfx('steps'); return render(); }
   const extra = { typed: value, shown: a.cloze ? a.answer : S.step.card.word };
   if (r.ok && !L.again) return ask({ ok: true, note: r.note }, extra);
@@ -1837,6 +1871,7 @@ function doneView() {
     ${T?.complete && T.weak ? `<p class="pacenote">${t('plSecondWhy', T.weak)}</p>` : ''}
     ${S.session.held ? `<p class="heldline">${t('heldDone')} <button class="link" data-action="start-force" data-id="${deck.id}">${t('heldForce')}</button></p>` : ''}
     <div class="row">${more ? `<button class="secondary" data-action="start" data-id="${deck.id}">${t(T ? 'plResume' : 'again')}</button>` : ''}${T?.complete && T.weak ? `<button class="secondary" data-action="second" data-id="${deck.id}">${AGAIN} ${t('plSecond', T.weak)}</button>` : ''}${other ? `<button class="secondary" data-action="start" data-id="${other.deck.id}">${t('nextList', esc(other.deck.name), other.n)}</button>` : ''}<button class="primary" data-action="home" autofocus>${t('home')}</button></div>
+    ${TEACHER && rates(S.measure).wn ? `<p class="meta measure">${t('wMeasure', rates(S.measure).wsec.toLocaleString(uiLang(), { maximumFractionDigits: 1 }), rates(S.measure).wn)}</p>` : ''}
     <button class="link" data-action="share">${t('share')}</button>
     <button class="link" data-action="remind">${ICON.bell} ${t('remDone')}</button>
   </div>`;
@@ -1893,9 +1928,10 @@ async function makeGate(code, again) {
 function paint() {
   if (S.locked) { document.documentElement.lang = 'fr'; app.innerHTML = gateView(); app.querySelector('[autofocus]')?.focus({ preventScroll: true }); return; }
   document.documentElement.lang = uiLang();
-  const open = app.querySelector('details.settings')?.open;
+  const open = [...app.querySelectorAll('details[data-k]')].filter(d => d.open).map(d => d.dataset.k);      // volets ouverts de l'accueil : ils le restent quand la page se redessine
   app.innerHTML = (S.sandbox && !['home', 'teacher'].includes(S.view || 'home') ? sandboxBar(false) : '') + (S.view === 'session' ? sessionView() : S.view === 'done' ? doneView() : S.view === 'teacher' ? teacherView() : S.view === 'rules' ? rulesView() : S.view === 'herd' ? herdView() : S.view === 'images' ? imagesView() : S.view === 'edit' ? editView() : S.view === 'sort' && TEACHER && S.decks.some(d => d.id === S.sortId) ? sortView() : S.view === 'card' ? cardView() : S.view === 'race' ? raceView() : S.view === 'privacy' ? privacyView() : S.view === 'plan' && S.decks.some(d => d.id === S.planId && planned(d)) && S.progress[S.planId] ? planView() : S.view === 'place' && S.decks.some(d => d.id === S.placeId && planned(d)) && S.progress[S.placeId] && !S.progress[S.placeId]._plan ? placeView() : home());
-  if (open && app.querySelector('details.settings')) app.querySelector('details.settings').open = true;
+  for (const d of app.querySelectorAll('details[data-k]')) if (open.includes(d.dataset.k)) d.open = true;
+  holdRelease();
   if (S.view === 'session' || S.view === 'done') {
     app.querySelector('[autofocus]')?.focus({ preventScroll: true });
     app.querySelector('.feedback')?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
@@ -1957,7 +1993,7 @@ app.addEventListener('click', e => {
   else if (action === 'offer') { if ((S.view || 'home') === 'home') setSmall(id, b.dataset.v === 'yes', true); }
   else if (action === 'small') { const pl = S.progress[id]?._plan; if ((S.view || 'home') === 'home' && pl && (pl.offer || pl.small) && S.decks.some(x => x.id === id && planned(x))) setSmall(id, b.dataset.v === 'on'); }
   else if (action === 'plan-keep') keepPlan(id, b.dataset.v, +b.dataset.k);
-  else if (action === 'next') advance();
+  else if (action === 'next') { if (held()) return; advance(); }      // après une erreur, la bonne réponse reste au moins trois secondes
   else if (action === 'home' || action === 'quit') { stopRace(); dropRecording(); if (S.session) { saveProgress(S.session.deck.id); if (!S.session.challenge) saveMeasure(); } S.stepAt = 0; S.view = 'home'; S.session = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'teacher') { if (!TEACHER) return; if (S.session) S.session = null; S.view = 'teacher'; S.notice = null; S.confirmDel = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'set') applySetting(b.dataset.key, b.dataset.value);
@@ -1992,7 +2028,7 @@ app.addEventListener('click', e => {
   }
   else if (action === 'skip' && !S.feedback) { commit({ ok: false }, { typed: '', chosen: null }); sfx('steps'); render(); }
   else if (action === 'reveal') { S.gate = true; render(); }
-  else if (action === 'remind') { download('elefiches-rappel.ics', buildICS({ ...S.remind, url: siteBase(), title: plainSp(t('remEvent', S.minutes)), note: plainSp(t('remNote')) }), false); toast(t('remOk')); }
+  else if (action === 'remind') { download('elefiches-rappel.ics', buildICS({ ...S.remind, url: siteBase(), title: plainSp(t('remEvent')), note: plainSp(t('remNote')) }), false); toast(t('remOk')); }
   else if (action === 'race') startRace(id);
   else if (action === 'friendly') startFriendly(id);
   else if (action === 'backup') saveBackup();
@@ -2087,7 +2123,7 @@ app.addEventListener('click', e => {
   else if (action === 'assign-image' && S.loose.length) { const d = S.decks.find(x => x.id === S.imgId); if (!TEACHER || !d || !d.byId[id]) return; const img = safeUrl(S.loose.shift()); if (!img) return render(); d.byId[id].image = img; saveDecks(); render(); }
   else if (action === 'skip-image') { S.loose.shift(); render(); }
   else if (action === 'reset') { S.confirmReset = id; S.armedAt = Date.now(); render(); }
-  else if (action === 'reset-yes') { if (S.confirmReset !== id || !armed()) return; S.progress[id] = {}; S.confirmReset = null; saveProgress(id); render(); }
+  else if (action === 'reset-yes') { if (S.confirmReset !== id || !armed()) return; S.progress[id] = {}; S.confirmReset = null; saveProgress(id); if (S.view === 'plan') { S.view = 'home'; S.planId = null; S.planOpts = null; window.scrollTo?.(0, 0); } render(); }
   else if (action === 'dl') download(MODELS[model].file, MODELS[model].csv);
   else if (action === 'copy') navigator.clipboard?.writeText(MODELS[model].csv).then(() => toast(t('copied')), () => toast(t('downloadFail')));
   else if (action === 'try') addDeck(MODELS[model].csv, MODELS[model].name, MODELS[model].lang, false, MODELS[model].level || 'A2');
@@ -2118,6 +2154,7 @@ function applySetting(k, v) {
   if (k === 'remindDays') S.remind = { ...S.remind, days: v };
   else S[k] = k === 'minutes' ? +v : k === 'sound' || k === 'voice' ? v === '1' : v;
   saveSettings(); render();
+  app.querySelector(`[data-action=set][data-key="${k}"][data-value="${CSS.escape(String(v))}"]`)?.focus({ preventScroll: true });      // le réglage touché garde la touche active
   if (k === 'sound' && S.sound) sfx('pop');
 }
 // Une image qui ne peut pas s'afficher ne laisse jamais un exercice sans contenu : dans un choix parmi des images,

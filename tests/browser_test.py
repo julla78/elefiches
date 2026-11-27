@@ -2,6 +2,7 @@
 # L'interface enseignant sert au parcours complet ; l'interface étudiant (index.html) est vérifiée à part.
 import sys, re, unicodedata
 from playwright.sync_api import sync_playwright
+import _outils      # démonstration sans jours conseillés pour ce parcours, attente de trois secondes levée (voir tests/_outils.py)
 # Depuis le lot 2b, les textes français de l'interface portent des espaces insécables. Les textes lus dans la page sont ramenés à des
 # espaces simples avant d'être comparés ; un contrôle à part (essai_test.py) vérifie que les insécables sont bien à l'écran.
 from playwright.sync_api import Page as _P, ElementHandle as _E, Locator as _L

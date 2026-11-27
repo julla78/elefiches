@@ -6,6 +6,7 @@
 # pattes qui sert de menu, aucune minute), seconde séance, « Tout revoir », séances courtes proposées, reprise générale.
 import sys, json
 from playwright.sync_api import sync_playwright
+import _outils      # démonstration sans jours conseillés pour ce parcours, attente de trois secondes levée (voir tests/_outils.py)
 # Depuis le lot 2b, les textes français de l'interface portent des espaces insécables. Les textes lus dans la page sont ramenés à des
 # espaces simples avant d'être comparés ; un contrôle à part (essai_test.py) vérifie que les insécables sont bien à l'écran.
 from playwright.sync_api import Page as _P, ElementHandle as _E, Locator as _L
@@ -130,7 +131,7 @@ with sync_playwright() as p:
     names = page.locator('.pace h2').all_inner_texts(); assert names == ['Patte de velours', 'Patte trotteuse', 'Patte pressée'], names
     prints = [page.locator('.pace').nth(i).locator('.trail .paw').count() for i in range(3)]; assert prints == [9, 6, 4], prints
     assert page.locator('.pace').nth(1).locator('.tag.ok').inner_text() == 'Conseillé par ton cours' and page.locator('.pace .primary').count() == 1
-    assert all('environ' in x and 'min par jour' in x for x in page.locator('.pace .big').all_inner_texts())
+    assert all(x.startswith('Environ') and 'min par jour' in x for x in page.locator('.pace .big').all_inner_texts()), 'chaque ligne affichée commence par une majuscule'
     assert 'Au bout des 6 jours conseillés' in page.locator('.pace').nth(0).inner_text().replace(' ', ' '), 'le pas lent dit ce qui sera prêt au bout des jours conseillés'
     assert 'sans lui, les mots ne seront pas sus' in txt('.banner.say') and not page.is_visible('.planlead.why')
     page.click('details.why summary'); assert 'tu auras vu tous les mots au moins une fois' in txt('.planlead.why'); page.click('details.why summary')

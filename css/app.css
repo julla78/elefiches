@@ -611,7 +611,7 @@ section.card > .trunk { margin-top: 14px; }
 .trunk.meal .track::before { display: none; }
 .trunk.meal .track .grass { position: absolute; bottom: 2px; width: 29px; height: 21px; margin: 0 0 0 -29px; }
 .trunk.meal.some .track .grass { width: 21px; height: 15.5px; margin-left: -21px; } .trunk.meal.many .track .grass { width: 17px; height: 12.5px; margin-left: -17px; }
-/* Alignement (règle B de Julie, 27 novembre) : deux bords seulement sur chaque page. Le bord de la page porte les titres, le texte
+/* Alignement (règle B, 27 novembre 2026) : deux bords seulement sur chaque page. Le bord de la page porte les titres, le texte
    hors encart et les bords extérieurs des encarts ; le bord intérieur des encarts (--inset) porte le texte qu'ils contiennent.
    Contrôle : outils/alignement.py. */
 :root { --inset: 22px; }
@@ -641,3 +641,39 @@ section.card > .trunk { margin-top: 14px; }
 
 /* Bandeau du troupeau encore vide : la phrase tient entièrement dans le ciel, au-dessus de la ligne d'horizon. */
 .deck .prairie .hintline { align-self: flex-start; font-size: .9rem; line-height: 1.25; }
+
+/* Sous-lot E1. Retour après une erreur : trois blocs (verdict, mot, « Continuer »). Le bouton attend trois secondes : pâle, une
+   ligne se remplit à son pied, puis il reprend sa couleur. Sans animation si l'appareil demande moins de mouvement. */
+.feedback.miss { gap: 14px; }
+.feedback.miss .verdict { display: grid; gap: 8px; }
+.feedback.miss .recap { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 1.25rem; }
+.feedback.miss .recap .recapimg { margin-right: 0; }
+.feedback.miss .recap.spelling { font-size: 1.5rem; }
+.primary.hold[aria-disabled="true"] { position: relative; overflow: hidden; background: var(--brand-soft); color: var(--brand-text); box-shadow: none; cursor: progress; }
+.primary.hold[aria-disabled="true"]::after { content: ""; position: absolute; left: 0; bottom: 0; height: 8px; width: 100%; background: var(--brand); transform-origin: left; animation: hold var(--hold, 3s) linear var(--held, 0s) both; }
+@keyframes hold { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@media (prefers-reduced-motion: reduce) { .primary.hold[aria-disabled="true"]::after { display: none; } }      /* le changement de couleur du bouton suffit à dire qu'il est prêt */
+/* Un titre ne touche jamais l'encart qui le suit : même écart qu'entre deux encarts. */
+#app > h1 + :is(section, article, details, form, div, ul, ol, .card, .banner) { margin-top: 16px; }
+.resetrow { margin: 10px 0 0; }
+.measure { margin-top: 6px; }
+/* Liens posés hors encart (« J'ai moins de jours », « Recommencer à zéro ») : leur texte part du bord de la page. */
+.ownlink .link { padding-inline: 0; }
+/* Sous un titre, les onglets et tout autre bloc sans fond gardent 12 pixels d'air. */
+#app > h1 + nav { margin-top: 12px; }
+
+/* Suite du sous-lot E1 : relectures des experts, recontrôlées par mesure.
+   Bords des champs et anneau de focus : 3 de contraste au moins, thème sombre compris. */
+:root { --field: #85808f; }
+@media (prefers-color-scheme: dark) { :root { --field: #8f8aa0; } }
+select, input:not([type=file]), textarea, .mysentence textarea, .remind input[type=time], .gate-card input, details.more input[type=password] { border-color: var(--field); }
+:focus-visible { outline-color: var(--brand-text); }      /* violet de l'appli : 6,7 au moins en clair, 7 au moins en sombre */
+/* Dans un encart, un titre ne touche pas le texte qui le suit. */
+.card > h2 + :is(p, ul, ol) { margin-top: 8px; }
+/* Règle B : le texte d'un encart part de son bord intérieur. Les listes des règles n'ont plus de puce ni de retrait ; l'explication
+   du verdict n'est plus un encart dans l'encart. */
+.rulelist { list-style: none; padding-left: 0; gap: 8px; }
+.feedback.miss .explain { background: none; padding: 0; border-radius: 0; }
+/* Un titre ou un bouton sur deux lignes se partage en lignes de longueurs voisines : plus de mot seul à la ligne. */
+h1, h2, h3, .primary, .secondary { text-wrap: balance; }
+p, li { text-wrap: pretty; }
