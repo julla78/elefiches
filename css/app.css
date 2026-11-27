@@ -634,5 +634,10 @@ section.card > .trunk { margin-top: 14px; }
 /* Consigne unique d'un écran, dans un encart de couleur. */
 #app > .banner.say { font-size: 1rem; color: var(--ink); padding-block: 14px; margin-bottom: 14px; }
 
+/* Règles du jeu en liste ; bouton principal du retour en pleine largeur. */
+.rulelist { margin: 6px 0 0; padding-left: 20px; display: grid; gap: 6px; }
+.feedback > .primary { display: block; width: 100%; }
+#app > details.why { margin: 0 0 14px; }
+
 /* Bandeau du troupeau encore vide : la phrase tient entièrement dans le ciel, au-dessus de la ligne d'horizon. */
 .deck .prairie .hintline { align-self: flex-start; font-size: .9rem; line-height: 1.25; }

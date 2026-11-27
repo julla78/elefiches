@@ -132,7 +132,8 @@ with sync_playwright() as p:
     assert page.locator('.pace').nth(1).locator('.tag.ok').inner_text() == 'Conseillé par ton cours' and page.locator('.pace .primary').count() == 1
     assert all('environ' in x and 'min par jour' in x for x in page.locator('.pace .big').all_inner_texts())
     assert 'Au bout des 6 jours conseillés' in page.locator('.pace').nth(0).inner_text().replace(' ', ' '), 'le pas lent dit ce qui sera prêt au bout des jours conseillés'
-    assert 'tu auras vu tous les mots au moins une fois' in txt('.planlead.why')
+    assert 'sans lui, les mots ne seront pas sus' in txt('.banner.say') and not page.is_visible('.planlead.why')
+    page.click('details.why summary'); assert 'tu auras vu tous les mots au moins une fois' in txt('.planlead.why'); page.click('details.why summary')
     assert 'Quand feras-tu ta séance ?' in txt('.moment') and not page.locator('.moment [aria-pressed=true]').count()
     page.click('[data-action=moment][data-v="19:00"]'); page.wait_for_selector('.moment [aria-pressed=true]')
     assert kv('settings')['remind'] == {'time': '19:00', 'days': 'daily'} and 'chaque jour vers 19:00' in txt('.moment') and page.locator('.moment [data-action=remind]').count() == 1
@@ -186,7 +187,7 @@ with sync_playwright() as p:
 
     # 6. Interface étudiant : le plan y est, l'espace enseignant n'y est pas.
     page.goto(student); page.wait_for_selector('.deck .rest'); assert page.locator('.planline').count() == 1 and not page.locator('[data-action=teacher]').count()
-    page.click('[data-action=rules]'); rules = page.inner_text('#app'); assert 'Patte de velours' in rules and 'reprise générale' in rules and 'seconde séance' in rules; page.click('[data-action=home]')
+    page.click('[data-action=rules]'); rules = page.inner_text('#app'); assert 'Trois pattes, trois rythmes' in rules.replace('\u00a0', ' ') and 'Le dernier jour, tu revois tout' in rules and 'peut revenir le jour même' in rules and page.locator('.rulelist li').count() == 8; page.click('[data-action=home]')
     page.click('[data-action=privacy]'); assert 'Ta vitesse et tes réussites' in page.inner_text('#app')
 
     # 7. Le temps avance (mode essai de l'enseignant). Jour 2 : « Tout revoir » à la demande et séances courtes proposées.

@@ -26,6 +26,7 @@ const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 const GATED = TEACHER && validAccess(ACCESS) && (!LOCAL || new URLSearchParams(location.search).has('verrou'));
 const siteBase = () => location.origin + location.pathname.replace(/[^/]*\.html$/, '');
 const plainSp = s => String(s).replace(/\u00a0/g, ' ');      // espaces insécables de l'interface ramenées à des espaces simples
+const colon = () => (uiLang() === 'fr' ? '\u00a0:' : ':');      // « Exemple : » en français, « Example: » en anglais et en espagnol
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const S = { locked: GATED, lang: 'auto', minutes: 5, maxNew: 3, help: 'fr', sound: true, voice: true, remind: { time: '18:00', days: 'daily' }, savedAt: 0, decks: [], progress: {}, view: 'home', notice: null, toast: null, confirmReset: null, confirmDel: null, editId: null, cardId: null, draft: {}, local: null, gate: false, builder: { lang: 'fr', level: '', topic: '', count: 20, words: '', grid: '3x3', examples: 4 }, sheets: [], loose: [], perm: 0, sandbox: false, sbDays: 0, confirmSb: false, measure: emptyMeasure(), planId: null, stepAt: 0 };
 // Langue des consignes et du feedback. En mode automatique : français jusqu'au niveau B1,
@@ -653,7 +654,8 @@ function planView() {
   return `<button class="link" data-action="home">← ${t('back')}</button>
     <h1>${t('plTitle')}</h1><p class="lead" lang="${d.lang}">${esc(d.name)}</p>
     <p class="planlead">${plan ? t('plLeadChange', left) : t('plLead', left, d.days)}</p>
-    <p class="planlead why">${t('plWhy', d.days)}</p>
+    <p class="banner say">${t('plMust')}</p>
+    <details class="more why"><summary>${t('plWhyAsk')}</summary><p class="planlead why">${t('plWhy', d.days)}</p></details>
     ${moment}
     <section class="paces">${(S.planOpts?.id === d.id ? S.planOpts.list : planOptions(d, P, now)).map(card).join('')}</section>
     ${own}
@@ -766,7 +768,7 @@ function rulesView() {
   const ages = t('ageNames');
   return `<button class="link" data-action="home">← ${t('back')}</button>
     <h1>${t('rules')}</h1>
-    ${t('rulesText').map(([title, text], i) => `<section class="card"><h2>${title}</h2><p>${text}</p>
+    ${t('rulesText').map(([title, text], i) => `<section class="card"><h2>${title}</h2>${text.includes('\n') ? `<ul class="rulelist">${text.split('\n').map(l => `<li>${l}</li>`).join('')}</ul>` : `<p>${text}</p>`}
       ${i === 1 ? `<ol class="agelist">${ages.map((n, k) => `<li>${mascot(46, '', k + 1)}<span><b>${n}</b><br><span class="meta">${t('box', k + 1)}</span></span></li>`).join('')}</ol>` : ''}
       ${i === 2 ? trunkBar(60, '', t('rules')) : ''}</section>`).join('')}`;
 }
@@ -1617,7 +1619,7 @@ function feedbackView(step, lang) {
   if (a.multi) {
     const missed = (S.local?.missed || S.local?.errors || []).map(id => s.deck.byId[id]);
     return `<div class="card feedback ${fb.ok ? 'good' : 'soft'}" role="status" aria-live="polite"><h3>${title}</h3>
-      ${missed.length ? `<p>${t('toReview')}</p><ul class="missed">${missed.map(c => `<li><b lang="${lang}">${esc(c.bare)}</b> : ${esc(meaning(c, help))}</li>`).join('')}</ul>` : ''}
+      ${missed.length ? `<p>${t('toReview')}</p><ul class="missed">${missed.map(c => `<li><b lang="${lang}">${esc(c.bare)}</b>${colon()} ${esc(meaning(c, help))}</li>`).join('')}</ul>` : ''}
       <button class="primary" data-action="next" autofocus>${t('next')}</button></div>`;
   }
   // Un retour qui explique : ce que voulait dire la réponse choisie, ou les lettres sur lesquelles on s'est trompé.
@@ -1629,19 +1631,19 @@ function feedbackView(step, lang) {
   if (a.cloze && fb.typed && fb.near) { const d = diffParts(a.answer.toLowerCase(), fb.typed.trim().toLowerCase()), i = d[0].length, j = i + d[1].length; sp = [a.answer.slice(0, i), a.answer.slice(i, j), a.answer.slice(j)]; }
   const ex = a.type === 'order' ? '' : a.type === 'speak' ? a.model : card.examples.find(e => !a.cloze || e.replace(/[’`´]/g, "'") !== a.cloze.text) || card.examples[0];
   const move = fb.retry || plc ? '' : fb.boxAfter > fb.boxBefore ? t('boxUp', fb.boxAfter) : fb.boxAfter < fb.boxBefore ? t('boxDown', fb.boxAfter) : '';
-  const when = s.challenge || plc || fb.ask ? '' : fb.ok && !fb.retry ? t('nextIn', Math.max(1, fb.days)) : fb.ok ? '' : t('nextSoon');
+  const when = s.challenge || plc || fb.ask ? '' : fb.ok && !fb.retry ? t('nextIn', Math.max(1, fb.days)) : '';
   const wins = plc ? (fb.ok ? [t('plcJoined')] : []) : [fb.joined ? t('joined') : '', fb.tamed ? t('tamed', card.word, s.tamed.length, s.today.length) : '',
     fb.ok && [3, 5, 10].includes(s.stats.streak) ? t('streak', s.stats.streak) : ''].filter(Boolean);
   return `<div class="card feedback ${fb.ok ? 'good' : 'soft'}" role="status" aria-live="polite">
     <h3>${title}</h3>
     ${wins.length ? `<p class="win">${mascot(44, 'joy', Math.max(1, fb.boxAfter))}<span>${wins.map(esc).join('<br>')}</span></p>` : ''}
-    ${fb.ok ? '' : plc ? `<p class="explain">${t('plcLater')}</p>` : `<p class="oopsrow">${mascot(46, 'oops', Math.max(1, fb.boxAfter))}<span>${fb.pun ? esc(t('puns')[fb.n % t('puns').length]) : ''}</span></p>`}
+    ${fb.ok ? '' : plc ? `<p class="explain">${t('plcLater')}</p>` : `<p class="oopsrow">${mascot(46, 'oops', Math.max(1, fb.boxAfter))}<span>${fb.pun && !['A1', 'A2'].includes(s.deck.level) ? esc(t('puns')[fb.n % t('puns').length]) : ''}</span></p>`}
     ${explain ? `<p class="explain">${esc(explain)}</p>` : ''}
     ${note ? `<p class="explain">${esc(note)}</p>` : ''}
     ${sp ? `<p class="spelling" lang="${lang}">${esc(sp[0])}<mark>${esc(sp[1])}</mark>${esc(sp[2])}</p>` : ''}
     <p class="recap">${card.image ? `<img class="recapimg" src="${esc(card.image)}" alt="">` : ''}<b lang="${lang}">${esc(card.word)}</b> ${listenBtn(card)}</p>
     ${sense(card, lang, 'recapdef')}
-    ${ex ? `<p class="example" lang="${lang}"><span class="meta">${t('example')} :</span> ${esc(ex)}</p>` : ''}
+    ${ex ? `<p class="example" lang="${lang}"><span class="meta">${t('example')}${colon()}</span> ${esc(ex)}</p>` : ''}
     <p class="meta">${[move, when].filter(Boolean).join(' ')}</p>
     ${fb.ask ? `<p class="askline">${t('askFelt')}</p><div class="row felt"><button class="primary" data-action="felt" data-v="easy" autofocus>${t('easy')}</button>
       <button class="secondary" data-action="felt" data-v="hard">${t('hesitated')}</button>${a.options ? `<button class="secondary" data-action="felt" data-v="lucky">${t('lucky')}</button>` : ''}</div>`
