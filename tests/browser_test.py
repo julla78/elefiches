@@ -2,6 +2,12 @@
 # L'interface enseignant sert au parcours complet ; l'interface étudiant (index.html) est vérifiée à part.
 import sys, re, unicodedata
 from playwright.sync_api import sync_playwright
+# Depuis le lot 2b, les textes français de l'interface portent des espaces insécables. Les textes lus dans la page sont ramenés à des
+# espaces simples avant d'être comparés ; un contrôle à part (essai_test.py) vérifie que les insécables sont bien à l'écran.
+from playwright.sync_api import Page as _P, ElementHandle as _E, Locator as _L
+def _plain(f): return lambda self, *a, **k: (lambda r: r.replace('\u00a0', ' ') if isinstance(r, str) else r)(f(self, *a, **k))
+for _c in (_P, _E, _L):
+    for _n in ('inner_text', 'text_content'): setattr(_c, _n, _plain(getattr(_c, _n)))
 
 url, csv, out = sys.argv[1], sys.argv[2], sys.argv[3]
 student = url.split('enseignant.html')[0] + 'index.html'
@@ -473,6 +479,7 @@ with sync_playwright() as p:
     page.click('details.remind summary'); page.fill('input[data-remind=time]', '07:45'); page.keyboard.press('Tab')
     with page.expect_download() as dl: page.click('[data-action=remind]')
     ics = open(dl.value.path(), encoding='utf-8').read(); assert dl.value.suggested_filename.endswith('.ics') and 'T074500' in ics and 'BEGIN:VALARM' in ics, ics[:300]
+    assert '\u00a0' not in ics, 'le fichier d’agenda repart avec des espaces simples (lot 2b)'
     page.screenshot(path=f'{out}/home_v10.png', full_page=True)
     # sauvegarde dans un fichier, puis restauration sur un appareil neuf
     if not page.locator('details.backup[open]').count(): page.click('details.backup summary')

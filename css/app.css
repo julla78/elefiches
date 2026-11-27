@@ -610,15 +610,26 @@ section.card > .trunk { margin-top: 14px; }
 .trunk.meal .track::before { display: none; }
 .trunk.meal .track .grass { position: absolute; bottom: 2px; width: 29px; height: 21px; margin: 0 0 0 -29px; }
 .trunk.meal.some .track .grass { width: 21px; height: 15.5px; margin-left: -21px; } .trunk.meal.many .track .grass { width: 17px; height: 12.5px; margin-left: -17px; }
-/* Alignement (règle de Julie, 27 novembre) : sur chaque page, tout le texte commence sur le même bord gauche, qu'il soit dans un
-   encart ou en dehors, et tous les encarts ont les mêmes bords extérieurs. Le texte hors encart prend donc le retrait intérieur
-   des encarts ; un petit élément encadré (étiquette, onglet, bouton) pose son bord sur ce même repère. Contrôle : outils/alignement.py. */
+/* Alignement (règle B de Julie, 27 novembre) : deux bords seulement sur chaque page. Le bord de la page porte les titres, le texte
+   hors encart et les bords extérieurs des encarts ; le bord intérieur des encarts (--inset) porte le texte qu'ils contiennent.
+   Contrôle : outils/alignement.py. */
 :root { --inset: 22px; }
-#app > :is(h1, h2, h3, p, nav, ul, ol):not(.banner, .sandbox, .card) { padding-inline: var(--inset); }
-#app > .link { margin-inline-start: var(--inset); padding-inline: 0; }
+#app > :is(h1, h2, h3, p, nav):not(.banner, .sandbox, .card) { padding-inline: 0; }
+#app > .link { margin-inline-start: 0; padding-inline: 0; }
 #app > .banner { padding-inline: var(--inset); } #app > .sandbox { padding-inline: calc(var(--inset) - 2px); }
-#app > :is(button, a):not(.link), #app > details:not(.card) { margin-inline-start: var(--inset); }
-#app > details:not(.card) { margin-inline-end: var(--inset); }
+#app > :is(button, a):not(.link), #app > details:not(.card) { margin-inline: 0; }
 .feedback { padding-left: calc(var(--inset) - 8px); }
-.footlinks { padding: 0 var(--inset); }
-.thead .studenturl { margin-inline: calc(-1 * var(--inset)); padding-inline: var(--inset); }
+.footlinks { padding: 0; }
+.thead, h2.sec { padding: 0; }
+.thead .studenturl { margin-inline: 0; padding-inline: var(--inset); }
+
+/* Point (i) : un rond en contour, dans le coin supérieur droit de l'encart ou du titre qu'il explique. Cible de 44 pixels. */
+.hasinfo { position: relative; } .hasinfo > :is(h1, h2) { padding-inline-end: 48px; }
+.infonote > summary { position: absolute; top: 14px; inset-inline-end: 12px; width: 44px; height: 44px; display: grid; place-items: center; list-style: none; cursor: pointer; border-radius: 50%; }
+.infonote > summary::-webkit-details-marker { display: none; }
+.titlerow.hasinfo > .infonote > summary { top: 2px; inset-inline-end: -8px; }
+.infonote[open] > summary .info { background: var(--brand); color: var(--brand-ink); }
+.infobox { margin: 6px 0 14px; padding: 12px 16px; border-radius: 14px; background: var(--brand-soft); color: var(--ink); font-size: .92rem; }
+
+/* Bandeau du troupeau encore vide : la phrase tient entièrement dans le ciel, au-dessus de la ligne d'horizon. */
+.deck .prairie .hintline { align-self: flex-start; font-size: .9rem; line-height: 1.25; }

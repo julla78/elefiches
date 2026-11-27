@@ -25,6 +25,7 @@ const EDITION = 'voc’';
 const LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
 const GATED = TEACHER && validAccess(ACCESS) && (!LOCAL || new URLSearchParams(location.search).has('verrou'));
 const siteBase = () => location.origin + location.pathname.replace(/[^/]*\.html$/, '');
+const plainSp = s => String(s).replace(/\u00a0/g, ' ');      // espaces insécables de l'interface ramenées à des espaces simples
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const S = { locked: GATED, lang: 'auto', minutes: 5, maxNew: 3, help: 'fr', sound: true, voice: true, remind: { time: '18:00', days: 'daily' }, savedAt: 0, decks: [], progress: {}, view: 'home', notice: null, toast: null, confirmReset: null, confirmDel: null, editId: null, cardId: null, draft: {}, local: null, gate: false, builder: { lang: 'fr', level: '', topic: '', count: 20, words: '', grid: '3x3', examples: 4 }, sheets: [], loose: [], perm: 0, sandbox: false, sbDays: 0, confirmSb: false, measure: emptyMeasure(), planId: null, stepAt: 0 };
 // Langue des consignes et du feedback. En mode automatique : français jusqu'au niveau B1,
@@ -586,9 +587,8 @@ const placeGo = n => `${n ? `<button class="primary" data-action="place-go">${t(
 function placeView() {
   const d = S.decks.find(x => x.id === S.placeId), P = S.progress[d.id], fresh = d.cards.filter(c => isNew(P[c.id])), pick = S.placePick || new Set();
   return `<button class="link" data-action="home">← ${t('back')}</button>
-    <h1>${t('plcTitle')}</h1><p class="lead" lang="${d.lang}">${esc(d.name)}</p>
+    <div class="titlerow hasinfo"><h1>${t('plcTitle')}</h1>${infoNote(t('plcWhy'), t('plcTitle'))}</div><p class="lead" lang="${d.lang}">${esc(d.name)}</p>
     <p class="planlead">${t('plcLead')}</p>
-    <p class="pacenote">${t('plcWhy')}</p>
     <ul class="placelist" aria-label="${esc(t('plcListAria', fresh.length))}">${fresh.map(c => `<li><button type="button" class="pick" data-action="place-pick" data-card="${esc(c.id)}" aria-pressed="${pick.has(c.id)}" lang="${d.lang}">${esc(c.word)}</button></li>`).join('')}</ul>
     <div class="stack placego" aria-live="polite">${placeGo(pick.size)}</div>`;
 }
@@ -841,7 +841,7 @@ function teacherView() {
     <h1>${t('tTitle')}</h1><p class="lead">${t('tIntro')}</p>
     <p class="studenturl"><span>${t('studentUrl')}</span> <b>${esc(siteBase())}</b></p></header>
     ${banners()}
-    <section class="card sbcard"><h2>${t('sbTitle')}</h2><p class="sethint">${t('sbIntro')}</p>
+    <section class="card sbcard hasinfo"><h2>${t('sbTitle')}</h2>${infoNote(t('sbMore'), t('sbTitle'))}<p class="sethint">${t('sbIntro')}</p>
       <div class="row"><button type="button" class="primary" data-action="sb-on">${t(S.sandbox ? 'sbResume' : 'sbStart')}</button>${S.sandbox ? `<button type="button" class="link" data-action="sb-off">${t('sbQuit')}</button>` : ''}</div></section>
     <section class="card"><h2>${t('myDecks')}</h2><ul class="decklist">${S.decks.map(d => `<li class="tdeck">
       <span><b lang="${d.lang}">${esc(d.name)}</b><br><span class="meta">${t('nCards', d.cards.length)} · ${esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang)} · ${d.level}${d.days ? ' · ' + t('tDaysMeta', d.days) : ''}${d.seen ? ' · ' + t('tSeenMeta') : ''}</span>${auditView(d)}</span>
@@ -1465,6 +1465,10 @@ const listenBtn = card => `<button class="icon" data-action="speak" data-id="${c
 // Registre : nom dans la langue de l'interface, et note (i) qui explique les sept registres à l'étudiant.
 const regKey = r => 'reg_' + REGISTERS.indexOf(r);
 const regName = r => (REGISTERS.includes(r) ? t(regKey(r)) : esc(r));
+// Point (i) : une explication rangée derrière un rond « i », dans le coin supérieur droit de son encart ou de son titre. Ce qui est
+// nécessaire pour agir reste écrit en clair ; le (i) ne porte que le détail et le pourquoi. Jamais dans un bouton : un bouton logé
+// dans un bouton est inutilisable au clavier et avec un lecteur d'écran.
+const infoNote = (text, about) => `<details class="infonote"><summary><span class="info" aria-hidden="true">i</span><span class="vh">${esc(t('moreAbout', about))}</span></summary><p class="infobox">${text}</p></details>`;
 const regNote = c => `<details class="reginfo"><summary><span class="chip">${regName(c.register)}</span><span class="info" aria-hidden="true">i</span><span class="vh">${t('regWhat')}</span></summary>
   <div class="regbox"><p>${t('regIntro')}</p><dl>${REGISTERS.map(r => `<dt${r === c.register ? ' class="on"' : ''}>${t(regKey(r))}</dt><dd>${t(regKey(r) + 'Def')}</dd>`).join('')}</dl></div></details>`;
 const chips = c => `<div class="chips">${c.theme ? `<span class="chip theme">${esc(c.theme)}</span>` : ''}${c.register ? regNote(c) : ''}</div>`;
@@ -1961,7 +1965,7 @@ app.addEventListener('click', e => {
   else if (action === 'wipe-no') { S.confirmWipe = false; render(); }
   else if (action === 'wipe-yes') { if (!S.confirmWipe || S.view !== 'privacy' || !armed()) return; store.wipe().then(() => location.reload()); }       // tout est effacé sur cet appareil, puis l'application repart de zéro
   else if (action === 'herd') { if (!S.decks.some(x => x.id === id) || !S.progress[id]) return; S.herdId = id; S.view = 'herd'; S.confirmReset = null; window.scrollTo?.(0, 0); render(); }
-  else if (action === 'share') { const st = S.session.stats; navigator.clipboard?.writeText(t('shareText', S.session.deck.name, S.session.tamed.length, st.ok, st.answered)).then(() => toast(t('copied')), () => toast(t('downloadFail'))); }
+  else if (action === 'share') { const st = S.session.stats; navigator.clipboard?.writeText(plainSp(t('shareText', S.session.deck.name, S.session.tamed.length, st.ok, st.answered))).then(() => toast(t('copied')), () => toast(t('downloadFail'))); }
   else if (action === 'edit') { if (!TEACHER || !S.decks.some(d => d.id === id)) return; S.editId = id; S.view = 'edit'; if (b.closest('form')) S.notice = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'fix-card') {      // depuis le contrôle du paquet : ouvre la fiche du mot touché
     const dk = S.decks.find(x => x.id === b.dataset.deck); if (!TEACHER || !dk || !Object.hasOwn(dk.byId, id)) return;
@@ -1986,7 +1990,7 @@ app.addEventListener('click', e => {
   }
   else if (action === 'skip' && !S.feedback) { commit({ ok: false }, { typed: '', chosen: null }); sfx('steps'); render(); }
   else if (action === 'reveal') { S.gate = true; render(); }
-  else if (action === 'remind') { download('elefiches-rappel.ics', buildICS({ ...S.remind, url: siteBase(), title: t('remEvent', S.minutes), note: t('remNote') }), false); toast(t('remOk')); }
+  else if (action === 'remind') { download('elefiches-rappel.ics', buildICS({ ...S.remind, url: siteBase(), title: plainSp(t('remEvent', S.minutes)), note: plainSp(t('remNote')) }), false); toast(t('remOk')); }
   else if (action === 'race') startRace(id);
   else if (action === 'friendly') startFriendly(id);
   else if (action === 'backup') saveBackup();

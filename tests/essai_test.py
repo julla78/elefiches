@@ -3,6 +3,12 @@
 # que la remise à zéro n'efface que les essais et que l'interface étudiant n'a pas ce mode.
 import sys, json
 from playwright.sync_api import sync_playwright
+# Depuis le lot 2b, les textes français de l'interface portent des espaces insécables. Les textes lus dans la page sont ramenés à des
+# espaces simples avant d'être comparés ; un contrôle à part (essai_test.py) vérifie que les insécables sont bien à l'écran.
+from playwright.sync_api import Page as _P, ElementHandle as _E, Locator as _L
+def _plain(f): return lambda self, *a, **k: (lambda r: r.replace('\u00a0', ' ') if isinstance(r, str) else r)(f(self, *a, **k))
+for _c in (_P, _E, _L):
+    for _n in ('inner_text', 'text_content'): setattr(_c, _n, _plain(getattr(_c, _n)))
 
 url, out = sys.argv[1], sys.argv[2]
 student = url.split('enseignant.html')[0] + 'index.html'
@@ -31,6 +37,12 @@ with sync_playwright() as p:
 
     # 2. Entrée par l'espace enseignant : bandeau, progression d'essai vide, vraie progression intacte.
     page.click('[data-action=teacher]'); page.wait_for_selector('.sbcard'); page.screenshot(path=out + '/essai-1-enseignant.png')
+    # Typographie française (lot 2b) : à l'écran, aucune espace ordinaire devant « : ; ! ? » ni dans les guillemets.
+    import re as _re; raw = page.evaluate("document.querySelector('#app').innerText")
+    assert '\u00a0:' in raw and not _re.search(r'[ \u202f][:;!?»]|«[ \u202f]', raw), 'espace ordinaire : ' + repr(_re.findall(r'.{0,14}[ \u202f][:;!?»]', raw)[:3])
+    # Point (i) de « Tester sans limites » : fermé au départ, il s'ouvre et se referme au toucher.
+    assert page.locator('.sbcard .infonote').count() == 1 and not page.is_visible('.sbcard .infobox')
+    page.click('.sbcard .infonote summary'); assert page.is_visible('.sbcard .infobox'); page.screenshot(path=out + '/essai-1b-info.png'); page.click('.sbcard .infonote summary'); assert not page.is_visible('.sbcard .infobox')
     page.click('[data-action=sb-on]'); page.wait_for_selector('section.sandbox'); page.screenshot(path=out + '/essai-2-accueil.png', full_page=True)
     assert page.evaluate("window.__elefiches.state.sandbox") is True and kv('essai')['on'] is True
     assert seen(page.evaluate("window.__elefiches.state.progress")[did]) == [], 'le mode essai commence sans progression'

@@ -1609,5 +1609,29 @@ t('15c, relecture de sécurité : identifiants de fiche réservés, « déjà su
   const sec = new Session(d2, P3, { now: T0 + 3600000, rnd: () => 0.5, plan: { fresh: 0, dueBy: -1, again: weakIds(d2, P3, T0 + 3600000) } }); assert.equal(sec.queue.length, 1); assert.ok(sec.queue[0].second && sec.queue[0].retry);
 });
 
+t('typographie française de l’interface', async () => {
+  const { typoFr, typoDeep, typoFaults } = await import('../js/typo.js'), { STR } = await import('../js/i18n.js'), NB = ' ';
+  assert.equal(typoFr('Mots à apprendre : 14. Prêt ? Oui ! Non ; « Au café » · 15 fiches, {0} min'), `Mots à apprendre${NB}: 14. Prêt${NB}? Oui${NB}! Non${NB}; «${NB}Au café${NB}» · 15${NB}fiches, {0}${NB}min`);
+  assert.equal(typoFr('Jour 2 sur 6'), 'Jour 2 sur 6', 'un nombre suivi d’un mot qui n’est pas une unité reste libre');
+  assert.equal(typoFr('https://exemple.fr/a?b=1'), 'https://exemple.fr/a?b=1', 'une adresse n’est pas touchée');
+  assert.equal(typoFr('fine ?'), `fine${NB}?`, 'l’espace fine, absente de la police, devient une insécable simple');
+  for (const x of ['Prêt ? Oui !', 'a : b', '« x »']) { const y = typoFr(x); assert.equal(typoFr(y), y, 'la passe ne change plus rien la seconde fois'); assert.equal(y.length, x.length, 'la longueur est gardée'); }
+  assert.deepEqual(typoDeep({ a: 'x : y', b: [['t', 'u ?']], c: 3 }), { a: `x${NB}: y`, b: [['t', `u${NB}?`]], c: 3 });
+  // Aucun texte français de l'interface ne garde une espace ordinaire devant « : ; ! ? » ni dans les guillemets.
+  let seen = 0; const walk = (v, k) => { if (typeof v === 'string') { seen++; assert.deepEqual(typoFaults(v), [], 'espace ordinaire dans le texte « ' + k + ' »'); } else if (v && typeof v === 'object') for (const [kk, x] of Object.entries(v)) walk(x, k + '.' + kk); };
+  walk(STR.fr, 'fr'); assert.ok(seen > 600, 'tous les textes français sont parcourus');
+  assert.ok(!STR.en.plLead.includes(NB) && !STR.es.plLead.includes(NB), 'l’anglais et l’espagnol ne reçoivent pas la typographie française');
+});
+
+t('une fiche écrite avec des espaces insécables se comporte comme la même fiche avec des espaces simples', () => {
+  for (const sp of [' ', ' ']) {
+    const nb = x => x.replace(/ ([?!:;»])/g, sp + '$1').replace(/« /g, '«' + sp);
+    for (const [w, x] of [['un café', 'Tu veux un café ?'], ['cher / chère', 'Cette table est trop chère !'], ['la note', 'Monsieur, la note : douze euros.'], ['commander', '« Je voudrais commander », dit-elle.']])
+      assert.deepEqual(findSpans(nb(x), w), findSpans(x, w), x);
+    assert.deepEqual(clozes({ word: 'un café', examples: [nb('Tu veux un café ?')], clozes: [] }).map(c => c.answer), ['café']);
+    assert.equal(check('un' + sp + 'café', ['un café']).ok, true); assert.equal(check('s\'il vous plaît', ['s\'il' + sp + 'vous plaît']).ok, true);
+  }
+});
+
 await Promise.all(pending);
 console.log(`${n} groupes de tests réussis`);

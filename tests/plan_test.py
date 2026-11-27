@@ -6,6 +6,12 @@
 # pattes qui sert de menu, aucune minute), seconde séance, « Tout revoir », séances courtes proposées, reprise générale.
 import sys, json
 from playwright.sync_api import sync_playwright
+# Depuis le lot 2b, les textes français de l'interface portent des espaces insécables. Les textes lus dans la page sont ramenés à des
+# espaces simples avant d'être comparés ; un contrôle à part (essai_test.py) vérifie que les insécables sont bien à l'écran.
+from playwright.sync_api import Page as _P, ElementHandle as _E, Locator as _L
+def _plain(f): return lambda self, *a, **k: (lambda r: r.replace('\u00a0', ' ') if isinstance(r, str) else r)(f(self, *a, **k))
+for _c in (_P, _E, _L):
+    for _n in ('inner_text', 'text_content'): setattr(_c, _n, _plain(getattr(_c, _n)))
 
 url, out = sys.argv[1], sys.argv[2]
 csv = sys.argv[3] if len(sys.argv) > 3 else ''
@@ -101,6 +107,11 @@ with sync_playwright() as p:
     assert page.locator('.pick[aria-pressed=true]').count() == 3 and 'Prouver ma sélection · 3' in txt('.placego') and narrow()
     page.locator('.placelist .pick').nth(2).click(); page.locator('.placelist .pick').nth(2).click()      # décocher puis recocher : l'écran ne bouge pas
     page.screenshot(path=out + '/plan-1a-deja-su.png', full_page=True)
+    # Lot 2b : le titre garde son espace insécable ; le point (i) du titre s'ouvre, reste ouvert quand on coche un mot (l'écran n'est pas redessiné), puis se referme.
+    assert '\u00a0?' in page.evaluate("document.querySelector('.titlerow h1').textContent") and not page.is_visible('.titlerow .infobox')
+    page.click('.titlerow .infonote summary'); assert page.is_visible('.titlerow .infobox')
+    page.locator('.placelist .pick').nth(2).click(); page.locator('.placelist .pick').nth(2).click(); assert page.is_visible('.titlerow .infobox') and page.locator('.pick[aria-pressed=true]').count() == 3
+    page.screenshot(path=out + '/plan-1c-info.png', full_page=True); page.click('.titlerow .infonote summary'); assert not page.is_visible('.titlerow .infobox')
     page.click('[data-action=place-go]'); page.wait_for_selector('.study')
     q = page.evaluate(STEP); assert q['type'] == 'type' and q['hint'] == '', q
     assert 'Déjà su' in txt('.where') and not page.locator('.hintline, .typed .hint').count()
