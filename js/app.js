@@ -76,12 +76,16 @@ function mascot(size = 72, cls = '', age = 2) {
     </g>
   </svg>`;
 }
-// Tête de profil : pendant la session, la barre de progression est sa trompe, qui s'allonge vers la cacahuète.
-const head = (cls = '') => `<svg class="head ${cls}" width="46" height="44" viewBox="52 18 54 50" aria-hidden="true"><circle cx="84" cy="42" r="20" fill="#a4aab4"/><path d="M95 54q4 6 10 .500" fill="none" stroke="#fffaf0" stroke-width="3.6" stroke-linecap="round"/><circle cx="96" cy="48" r="3" fill="#f0a08c" opacity=".4"/><g class="e-eye"><circle cx="91" cy="38" r="2.8" fill="#2b2a33"/><circle cx="92" cy="37" r="1" fill="#fff"/></g><g class="e-ear"><path d="M80 22C62 14 50 32 55 48C59 62 75 64 82 50C85 42 85 30 80 22Z" fill="#babac2" stroke="#8d939e" stroke-width="1.2"/></g></svg>`;
+// Tête de profil : la même que celle de l'éléphanteau de l'en-tête (âge 2). La barre de progression est sa trompe, qui
+// s'allonge vers la touffe d'herbe.
+const head = (cls = '') => `<svg class="head ${cls}" width="42" height="44" viewBox="52 12 56 58" aria-hidden="true"><circle cx="84" cy="42" r="20" fill="#c8bdae"/><path d="M78 23l-1-5M83 21v-6M88 23l2-5" stroke="#9a7b6b" stroke-width="1.6" stroke-linecap="round"/><path d="M92 55q3 3 6 0" fill="none" stroke="#7d6a61" stroke-width="1.4" stroke-linecap="round"/><circle cx="96" cy="48" r="3" fill="#f0a08c" opacity=".4"/><g class="e-eye"><circle cx="91" cy="38" r="2.8" fill="#2b2a33"/><circle cx="92" cy="37" r="1" fill="#fff"/></g><g class="e-ear"><path d="M80 22C62 14 50 32 55 48C59 62 75 64 82 50C85 42 85 30 80 22Z" fill="#d9cec1" stroke="#b0a596" stroke-width="1.2" transform="translate(81 38) scale(.88) translate(-81 -38)"/></g></svg>`;
 
-// Une seule cacahuète, dessinée pour Éléfiches : elle marque l'arrivée, au bout de la trompe.
-const NUT = '<svg class="nut" width="32" height="20" viewBox="0 0 40 24" aria-hidden="true"><path d="M11 2C5 2 1 6.500 1 12s4 10 10 10c3 0 5-1.500 9-1.500s6 1.500 9 1.500c6 0 10-4.500 10-10S35 2 29 2c-3 0-5 1.500-9 1.500S14 2 11 2z" fill="#e6bf82" stroke="#a8782f" stroke-width="1.5"/><path d="M8 8l4 8M14 7l3 9M24 8l3 8M30 7l3 8" stroke="#bf9150" stroke-width="1.2" stroke-linecap="round"/></svg>';
-// Empreinte d'éléphant : bouton des règles du jeu.
+// La friandise au bout de la trompe : une touffe d'herbe tendre, dans les verts de la savane de l'en-tête.
+const GRASS = '<svg class="grass" width="22" height="22" viewBox="0 0 28 28" aria-hidden="true"><path d="M12 27C10 21 7 17 2 15c2 5 5 9 7 12z" fill="#8fb872"/><path d="M14 27C13 17 11 10 7 4c1 8 2 15 3 23z" fill="#6f9e55"/><path d="M13 27c0-9 2-18 6-25 1 9-1 17-2 25z" fill="#8fb872"/><path d="M16 27c2-7 5-12 10-15-2 6-5 11-7 15z" fill="#6f9e55"/></svg>';
+const BLADE = '<svg class="blade" width="10" height="20" viewBox="5 2 10 26" aria-hidden="true"><path d="M14 27C13 17 11 10 7 4c1 8 2 15 3 23z" fill="#6f9e55"/></svg>';
+// Bouton des règles du jeu : la trompe en point d'interrogation, fuselée et plissée (contour calculé, voir les planches).
+const TROMPE = '<svg width="25" height="26" viewBox="0 0 32 34" aria-hidden="true"><path d="M11.06 12.03L11.02 12.19L10.98 12.27L10.94 12.34L10.9 12.4L10.87 12.44L10.83 12.47L10.8 12.48L10.78 12.49L10.76 12.49L10.75 12.49L10.75 12.48L10.76 12.47L10.77 12.46L10.8 12.45L10.83 12.44L10.88 12.44L10.92 12.45L10.96 12.46L11 12.48L11.03 12.49L11.05 12.5L11.06 12.5L11.06 12.48L11.05 12.44L11.05 12.37L11.04 12.28L11.04 12.15L11.04 12L11.07 11.6L11.12 11.21L11.19 10.84L11.27 10.49L11.37 10.15L11.48 9.82L11.6 9.52L11.74 9.22L11.89 8.95L12.05 8.68L12.22 8.44L12.4 8.21L12.59 7.99L12.79 7.79L12.99 7.6L13.21 7.43L13.43 7.27L13.66 7.13L13.9 7L14.14 6.88L14.39 6.78L14.64 6.7L14.9 6.63L15.17 6.57L15.44 6.53L15.72 6.51L16.01 6.5L16.3 6.5L16.61 6.53L16.91 6.57L17.2 6.62L17.48 6.68L17.76 6.76L18.02 6.86L18.27 6.96L18.51 7.07L18.74 7.2L18.96 7.33L19.16 7.48L19.36 7.63L19.54 7.79L19.72 7.96L19.88 8.13L20.03 8.32L20.16 8.5L20.29 8.7L20.4 8.9L20.5 9.1L20.58 9.31L20.66 9.52L20.72 9.74L20.77 9.96L20.8 10.19L20.83 10.42L20.83 10.66L20.83 10.91L20.81 11.12L20.79 11.31L20.76 11.5L20.72 11.67L20.67 11.83L20.62 11.98L20.56 12.12L20.5 12.26L20.43 12.39L20.36 12.52L20.28 12.64L20.19 12.76L20.1 12.89L20 13.01L19.89 13.13L19.77 13.25L19.65 13.38L19.51 13.5L19.37 13.63L19.22 13.76L19.07 13.88L18.9 14.01L18.73 14.15L18.56 14.28L18.37 14.41L18.19 14.55L17.99 14.69L17.8 14.84L17.6 14.98L17.39 15.13L17.19 15.3L16.98 15.46L16.78 15.64L16.57 15.81L16.37 16L16.18 16.2L15.98 16.4L15.79 16.61L15.61 16.84L15.43 17.07L15.26 17.31L15.09 17.56L14.93 17.83L14.79 18.1L14.65 18.38L14.52 18.67L14.41 18.97L14.31 19.27L14.22 19.58L14.14 19.9L14.07 20.22L14.01 20.55L13.97 20.88L13.94 21.21L13.91 21.55L13.9 21.86L14.1 22.93L14.69 23.85L15.59 24.47L16.66 24.7L17.73 24.5L18.65 23.91L19.27 23.01L19.5 21.94L19.49 21.72L19.49 21.55L19.5 21.4L19.51 21.26L19.52 21.13L19.53 21.02L19.55 20.91L19.57 20.81L19.59 20.72L19.61 20.64L19.64 20.56L19.67 20.48L19.7 20.41L19.74 20.34L19.77 20.26L19.82 20.18L19.87 20.11L19.93 20.02L19.99 19.94L20.07 19.85L20.15 19.75L20.24 19.66L20.34 19.55L20.45 19.45L20.57 19.34L20.7 19.22L20.84 19.1L21 18.96L21.19 18.81L21.39 18.64L21.59 18.47L21.8 18.3L22.01 18.12L22.22 17.93L22.44 17.73L22.66 17.52L22.88 17.31L23.1 17.08L23.32 16.85L23.53 16.6L23.75 16.34L23.95 16.07L24.16 15.78L24.35 15.48L24.54 15.17L24.71 14.84L24.87 14.5L25.02 14.14L25.16 13.77L25.27 13.39L25.37 13L25.45 12.6L25.51 12.19L25.55 11.77L25.57 11.34L25.57 10.89L25.54 10.38L25.48 9.86L25.4 9.36L25.28 8.86L25.13 8.38L24.96 7.91L24.76 7.45L24.53 7.01L24.28 6.59L24.01 6.18L23.71 5.79L23.4 5.42L23.06 5.07L22.71 4.74L22.34 4.43L21.95 4.14L21.54 3.87L21.12 3.63L20.69 3.4L20.24 3.2L19.78 3.03L19.31 2.88L18.83 2.75L18.34 2.65L17.84 2.57L17.33 2.52L16.82 2.49L16.3 2.5L15.78 2.53L15.27 2.58L14.77 2.67L14.28 2.79L13.8 2.93L13.34 3.1L12.88 3.29L12.44 3.51L12.02 3.76L11.61 4.03L11.22 4.32L10.85 4.64L10.49 4.98L10.16 5.34L9.85 5.71L9.56 6.11L9.29 6.53L9.05 6.96L8.82 7.4L8.63 7.87L8.45 8.34L8.3 8.83L8.18 9.33L8.08 9.85L8.01 10.37L7.97 10.91L7.95 11.45L7.96 12L7.98 12.38L8.04 12.75L8.12 13.1L8.23 13.44L8.38 13.76L8.56 14.07L8.77 14.35L9.01 14.6L9.28 14.81L9.57 14.99L9.88 15.13L10.2 15.22L10.53 15.27L10.85 15.28L11.17 15.24L11.47 15.17L11.76 15.07L12.04 14.93L12.3 14.77L12.54 14.57L12.75 14.36L12.95 14.12L13.12 13.86L13.26 13.58L13.38 13.28L13.47 12.97L13.52 12.65L13.54 12.37L13.51 11.89L13.3 11.45L12.93 11.12L12.47 10.96L11.99 10.99L11.55 11.2L11.22 11.57z" fill="currentColor"/><path d="M19.36 7.63 L20.98 5.45M20.83 10.66 L23.78 10.48M19.22 13.76 L21.37 16.11" fill="none" class="plis" stroke-width=".9" stroke-linecap="round"/><circle cx="16.7" cy="29.6" r="2.6" fill="currentColor"/></svg>';
+// Empreinte d'éléphant : elle ne sert qu'aux jours du plan et aux trois pas.
 // Pictogrammes et personnages dessinés dans le même style que les éléphants : formes pleines, contours ronds, mêmes teintes.
 const ic = body => `<svg class="ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
 const ICON = {
@@ -126,13 +130,19 @@ const SAVANNA = `<svg class="savanna" viewBox="0 0 800 34" preserveAspectRatio="
 // Paire de défenses : la récompense d'un défi d'étape réussi.
 const tusks = (size = 30, on = true) => `<svg class="tusks${on ? '' : ' off'}" width="${size}" height="${Math.round(size * 0.8)}" viewBox="0 0 40 32" aria-hidden="true"><path d="M12 3c-7 3-10 12-6 19 3 5 9 7 13 6-5-2-8-6-8-11 0-5 1-9 4-13z"/><path d="M28 3c7 3 10 12 6 19-3 5-9 7-13 6 5-2 8-6 8-11 0-5-1-9-4-13z"/></svg>`;
 const PRINT = '<ellipse cx="13" cy="15" rx="9" ry="8.500" fill="currentColor"/><ellipse cx="5.500" cy="6.500" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="10.500" cy="3.800" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="15.800" cy="3.800" rx="2.300" ry="2.800" fill="currentColor"/><ellipse cx="20.700" cy="6.500" rx="2.300" ry="2.800" fill="currentColor"/>';
-const FOOT = `<svg width="26" height="26" viewBox="0 0 26 26" aria-hidden="true">${PRINT}</svg>`;
+// Pictogramme d'allure : la même patte pour les trois pas, avec deux points (velours), deux traits (trotteuse), ou trois
+// traits et une patte penchée (pressée). Jamais seul : le nom du pas est toujours écrit à côté.
+const PAW36 = `<g transform="translate(12 1) scale(.923)">${PRINT}</g>`, DASH = 'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"';
+const ALLURE = { slow: `${PAW36}<circle cx="7" cy="20" r="1.6" fill="currentColor"/><circle cx="2.5" cy="16.5" r="1.2" fill="currentColor"/>`,
+  mid: `${PAW36}<path d="M3 11h6M1 17h8" ${DASH}/>`, fast: `<g transform="rotate(16 24 13)">${PAW36}</g><path d="M2 7h8M0 13h10M3 19h7" ${DASH}/>` };
+const allure = pace => `<svg class="allure" width="30" height="22" viewBox="0 0 36 26" aria-hidden="true">${ALLURE[pace] || ALLURE.mid}</svg>`;
 // Piste d'empreintes : l'icône d'un pas du plan personnel. La même patte pour les trois pas, une empreinte par jour du
 // plan : l'icône montre la vraie différence entre les pas (le nombre de jours), jamais une taille ni un rang.
 // done : jours déjà passés, dessinés en plein ; au-delà de douze empreintes, le reste est écrit en chiffres.
 const trail = (days, done = -1) => `<span class="trail" aria-hidden="true">${Array.from({ length: Math.min(days, 12) }, (_, i) => `<svg class="paw${done >= 0 && i >= done ? ' todo' : ''}" width="16" height="16" viewBox="0 0 26 26">${PRINT}</svg>`).join('')}${days > 12 ? `<span class="trailmore">+${days - 12}</span>` : ''}</span>`;
-// Barre de progression : la trompe s'allonge de la tête vers la cacahuète.
-const trunkBar = (pct, cls, label) => `<div class="trunk" role="progressbar" aria-label="${esc(label)}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">${head(cls)}<div class="track"><span style="width:${pct}%"></span></div>${NUT}</div>`;
+// Barre de progression : la trompe s'allonge de la tête vers la touffe d'herbe. L'herbe frémit quand la trompe approche
+// (classe near) et n'est plus là quand tout est fait (classe eaten).
+const trunkBar = (pct, cls, label) => `<div class="trunk${pct >= 100 ? ' eaten' : pct >= 70 ? ' near' : ''}" role="progressbar" aria-label="${esc(label)}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100">${head(cls)}<div class="track"><span style="width:${pct}%"></span></div>${GRASS}</div>`;
 
 // ---------- Sons ----------
 
@@ -404,17 +414,19 @@ function helpFor(deck) {
 
 // Le troupeau : un éléphanteau naît à chaque mot découvert et grandit de la boîte 1 à la boîte 5.
 // La prairie montre les éléphants de l'étape en cours : dix au plus, assez grands pour qu'on voie leur âge.
-function prairie(d, s, hop = [], sleeping = false) {
+function prairie(d, s, hop = [], sleeping = false, link = false) {
   const [from, to] = s.stage.bounds[s.stage.index - 1], ids = new Set(d.cards.slice(from, to).map(c => c.id));
-  const sizes = [0, 46, 52, 58, 64, 70], mine = s.animals.filter(a => ids.has(a.id));
+  const sizes = link ? [0, 36, 40, 45, 50, 55] : [0, 46, 52, 58, 64, 70], mine = s.animals.filter(a => ids.has(a.id));
   const herd = mine.map(a => `<span class="ele${hop.includes(a.id) ? ' hop' : ''}">${mascot(sizes[a.box], sleeping ? 'sleep' : 'idle', a.box)}</span>`).join('');
-  return `<div class="prairie" role="img" aria-label="${esc(t('stageAria', s.stage.index, s.stage.count, s.stage.seen, s.stage.size))}">${herd || `<span class="hintline">${t('emptyStage')}</span>`}</div>`;
+  const inside = herd || `<span class="hintline">${t('emptyStage')}</span>`;
+  if (link) return `<button type="button" class="prairie" data-action="herd" data-id="${d.id}" aria-label="${esc(t('herdBtn', s.animals.length) + '. ' + t('stageAria', s.stage.index, s.stage.count, s.stage.seen, s.stage.size))}">${inside}</button>`;
+  return `<div class="prairie" role="img" aria-label="${esc(t('stageAria', s.stage.index, s.stage.count, s.stage.seen, s.stage.size))}">${inside}</div>`;
 }
 
 // Défi d'étape : proposé quand tous les mots d'une étape ont été découverts un jour précédent.
 // C'est une révision espacée : le jour même de la découverte, il serait trop facile pour servir la mémoire.
 // Où en est le défi : ouvert, ou ce qu'il manque pour l'ouvrir. Le but reste toujours visible.
-function challengeLine(d, P) {
+function challengeLine(d, P, part = '') {
   const st = stageOf(d, P), done = P._stages || {}, won = Object.keys(done).length, open = pendingStage(d, P);
   const next = Array.from({ length: st.count }, (_, i) => i + 1).find(i => !done[i]);
   let line = '';
@@ -423,7 +435,8 @@ function challengeLine(d, P) {
     const [a, b] = st.bounds[next - 1], left = d.cards.slice(a, b).filter(c => isNew(P[c.id])).length;
     line = `<p class="chlock" title="${esc(left ? t('chLockedNew', next, left) : t('chLockedNight', next))}">${tusks(22, false)}<span>${left ? tn('chShortNew', left) : t('chShortNight')}</span></p>`;
   }
-  return `${line}${won ? `<p class="tuskrow" aria-label="${t('tusksLine', won, st.count)}">${Array.from({ length: Math.min(won, 12) }, () => tusks(20)).join('')}<span>${t('tusksLine', won, st.count)}</span></p>` : ''}`;
+  if (part === 'lock') return open ? '' : line;
+  return `${part === 'rest' && !open ? '' : line}${won ? `<p class="tuskrow" aria-label="${t('tusksLine', won, st.count)}">${Array.from({ length: Math.min(won, 12) }, () => tusks(20)).join('')}<span>${t('tusksLine', won, st.count)}</span></p>` : ''}`;
 }
 // Le grand rendez-vous du paquet : un match amical contre les crocodiles, sur les mots de toutes les étapes.
 // Il s'ouvre quand toutes les défenses sont gagnées ; le but lointain reste visible dès la première paire.
@@ -499,24 +512,27 @@ function otherReviews(d, now = Date.now()) {
 }
 function openPlan(id, own = false) {
   const deck = S.decks.find(d => d.id === id && planned(d)); if (!deck || !S.progress[id]) return;
-  S.planId = id; S.view = 'plan'; S.notice = null; S.paceOpen = null; S.paceOpts = null; S.ownDays = own ? Math.min(deck.days, 3) : 0; S.session = null;
+  S.planId = id; S.view = 'plan'; S.notice = null; S.ownDays = own ? Math.min(deck.days, 3) : 0; S.session = null;
   S.planOpts = { id, list: planOptions(deck, S.progress[id]) };      // les trois pas sont calculés une fois par ouverture de l'écran, pas à chaque geste
   window.scrollTo?.(0, 0); render();
 }
 // days : jours choisis par l'étudiant pour le pas « own » (« J'ai moins de jours »), comptés à partir d'aujourd'hui.
-function choosePace(id, pace, days = 0) {
+function choosePace(id, pace, days = 0, quiet = false) {
   const d = S.decks.find(x => x.id === id), P = S.progress[id]; if (!d || !planned(d) || !P || !(PACES.includes(pace) || pace === OWN)) return;
   const now = Date.now(), plan = P._plan, dNow = plan ? Math.max(0, dayIndex(plan.start, now)) : 0;
   const n = Math.round(Math.min(d.days, Math.max(0, +days || 0)));
-  const o = pace === OWN ? (n >= 1 ? planOption(d, P, OWN, dNow + n, now) : null) : planOptions(d, P, now).find(x => x.pace === pace); if (!o) return;
-  S.paceOpen = null; S.paceOpts = null; S.planOpts = null; S.ownDays = 0;
+  const o = pace === OWN ? (n >= 1 ? planOption(d, P, OWN, dNow + n, now) : null) : (one => one ? planOption(d, P, pace, one[1], now) : null)(paceDays(d.days).find(([x]) => x === pace)); if (!o) return;
+  S.planOpts = null; S.ownDays = 0;
   if (!plan) { P._plan = startPlan(pace, o.total, now, o.min); saveProgress(id); return startSession(id); }      // premier choix : la première journée commence
   // Changement de pas : le premier jour ne bouge pas, la durée devient celle du nouveau pas. Le programme du jour est
   // refait, sauf si la journée est déjà faite : elle le reste, et le nouveau pas vaut à partir de demain.
   const T = ensureDay(d);
   Object.assign(plan, { pace, days: Math.min(PLAN_DAYS.long, o.total), est: o.min, ack: missedNow(plan, dNow) }); if (!T?.complete) plan.day = -1;
   if (o.total - 1 > dNow) plan.recap = -1;      // la fin du plan recule : la reprise générale aura lieu à la nouvelle fin
-  saveProgress(id); S.view = 'home'; S.notice = { text: t('plNow', o.left, o.min) }; window.scrollTo?.(0, 0); render();
+  saveProgress(id); S.view = 'home';
+  // Depuis la carte (quiet) : aucune annonce de minutes. Un ancien message sur le plan serait faux et s'efface ; une alerte (import, fiches à compléter) reste.
+  if (!quiet) { S.notice = { text: t('plNow', o.left, o.min) }; window.scrollTo?.(0, 0); } else if (S.notice && !S.notice.bad && !S.notice.sort) S.notice = null;
+  render();
 }
 
 // ---------- « Déjà su » : test de positionnement avant le premier choix du pas (version 15c) ----------
@@ -560,7 +576,7 @@ function offerDue(d, P, T) {
 function setSmall(id, on, offered = false) {
   const plan = S.progress[id]?._plan; if (!plan) return;
   plan.small = !!on; if (offered || plan.offer === 0) plan.offer = on ? 2 : 1;
-  S.paceOpen = null; S.paceOpts = null; saveProgress(id); toast(t(on ? 'plSmallOk' : 'plSmallEnd')); render();
+  saveProgress(id); toast(t(on ? 'plSmallOk' : 'plSmallEnd')); render();
 }
 // Jour manqué, quand rattraper coûte plus de cinq minutes par jour : l'étudiant choisit de garder la fin ou ses minutes.
 function keepPlan(id, v, k) {
@@ -606,20 +622,23 @@ function planView() {
     ${others ? `<p class="pacenote">${t('plOthers', others)}</p>` : ''}`;
 }
 const MOMENTS = [['08:00', 'plMomAM'], ['12:30', 'plMomNoon'], ['19:00', 'plMomPM']];
-// La piste de pattes est le menu des pas (version 15c) : une empreinte par jour du plan, les jours passés en plein. Le nom
-// du pas n'est plus écrit sur la carte ; il reste dit aux lecteurs d'écran. Les trois pas ne sont calculés que menu ouvert.
-function paceMenu(d, P, T) {
-  const plan = P._plan, open = S.paceOpen === d.id, name = plan.pace === OWN ? t('pace_own') : t('pace_' + plan.pace), where = T.over ? t('plOverTag') : t('plDay', T.d + 1, plan.days);
-  const btn = `<button type="button" class="pacebtn" data-action="pace-menu" data-id="${d.id}" aria-expanded="${open}" aria-label="${esc(t('plMenuAria', name, where))}">${trail(plan.days, Math.min(plan.days, T.d + 1))}<span class="caret" aria-hidden="true">▾</span></button><span class="meta planday">${where}</span>`;
-  if (!open) return { btn, list: '' };
-  const row = o => `<button type="button" class="pacerow${plan.pace === o.pace ? ' current' : ''}" data-action="pace" data-id="${d.id}" data-pace="${o.pace}"${plan.pace === o.pace ? ' aria-current="true"' : ''} aria-label="${esc(t('plRowAria', t('pace_' + o.pace), o.left, o.min))}">${trail(o.total)}<span class="rowtext">${t('plRow', o.left, o.min)}${o.pace === 'mid' ? ` <span class="tag ok">${t('plAdvisedShort')}</span>` : ''}</span>${plan.pace === o.pace ? `<span class="tick" aria-hidden="true">✓</span>` : ''}</button>`;
-  const mine = plan.pace === OWN ? `<p class="pacerow current" aria-current="true">${trail(plan.days)}<span class="rowtext">${t('plRowOwn', Math.max(1, plan.days - T.d))}</span><span class="tick" aria-hidden="true">✓</span></p>` : '';
-  return { btn, list: `<div class="pacelist" role="group" aria-label="${esc(t('plMenuTitle'))}">${(S.paceOpts?.id === d.id ? S.paceOpts.list : planOptions(d, P)).map(row).join('')}${mine}
-      <p class="pacemore"><button class="link" data-action="plan" data-own="1" data-id="${d.id}">${t('plOwnLink')}</button>${plan.offer || plan.small ? `<button class="link" data-action="small" data-id="${d.id}" data-v="${plan.small ? 'off' : 'on'}">${t(plan.small ? 'plSmallOff' : 'plSmallOn')}</button>` : ''}</p></div>` };
+// Sur la carte (design du 27 novembre) : les trois pas restent visibles, chacun avec son pictogramme d'allure et son nom.
+// Dessous, une seule piste d'empreintes, une par jour du plan : jours faits en plein, jour en cours plus gros, jours à
+// venir en contour. Toucher un pas le choisit ; toucher la piste ouvre « Ton plan ». Aucune minute ici.
+function paceRow(d, P, T) {
+  const plan = P._plan, today = T.over ? plan.days : T.d, n = Math.min(plan.days, 12);
+  const where = T.over ? t('plOverTag') : t('plDayCap', T.d + 1, plan.days), note = t('paceNote_' + (PACES.includes(plan.pace) ? plan.pace : 'own'));
+  const two = pace => t('paceBoldFirst') ? `<b>${t('paceB_' + pace)}</b><span>${t('paceS')}</span>` : `<span>${t('paceS')}</span><b>${t('paceB_' + pace)}</b>`;
+  // Au-delà de douze jours, la fenêtre de douze empreintes suit le jour en cours ; le reste est écrit en chiffres, avant et après.
+  const first = Math.max(0, Math.min(today - 6, plan.days - n)), rest = plan.days - first - n, more = k => k > 0 ? `<span class="trailmore">+${k}</span>` : '';
+  const path = `<span class="path${n > 9 ? ' many' : ''}${S.paceAnim === d.id ? ' fresh' : ''}" aria-hidden="true">${more(first)}${Array.from({ length: n }, (_, i) => `<svg class="paw${first + i < today ? '' : first + i === today ? ' now' : ' todo'}" viewBox="0 0 26 26">${PRINT}</svg>`).join('')}${more(rest)}</span>`;
+  const undo = S.paceUndo?.id === d.id ? `<span class="paceundo" role="status">${t('paceChanged', t(PACES.includes(plan.pace) ? 'pace_' + plan.pace : 'pace_own'))} <button type="button" class="link" data-action="pace-undo" data-id="${d.id}">${t('paceUndo')}</button></span>` : '';
+  return `<div class="pacegroup" role="group" aria-label="${esc(t('paceGroup'))}">${PACES.map(pace => `<button type="button" class="pacepick" data-action="pace" data-id="${d.id}" data-pace="${pace}" aria-pressed="${plan.pace === pace}">${allure(pace)}${two(pace)}</button>`).join('')}</div>
+    <div class="planline"><button type="button" class="pathbtn" data-action="plan" data-id="${d.id}" aria-label="${esc(t('plPathAria', where, note))}">${path}</button><span class="meta planday">${T.over ? where.charAt(0).toUpperCase() + where.slice(1) : `${where} · ${note}`}</span>${undo}${plan.offer || plan.small ? `<button class="link" data-action="small" data-id="${d.id}" data-v="${plan.small ? 'off' : 'on'}">${t(plan.small ? 'plSmallOff' : 'plSmallOn')}</button>` : ''}</div>`;
 }
-// Sur la carte du paquet (version 15c, carte sobre) : le programme du jour en deux nombres et une barre, jusqu'à « journée
-// faite ». Aucune minute ici : elles ne servent qu'à comparer les pas, dans le menu de la piste. Une fois la journée
-// faite, la carte propose la seconde séance (mots ratés ou aidés du jour) et « Tout revoir » (reprise générale à la demande).
+// Sur la carte du paquet : une seule barre, la trompe, qui mesure le programme du jour ; les nombres du jour sont écrits
+// dans le bouton (« + 3 nouveaux · 5 à revoir »). Aucune minute ici. Une fois la journée faite, l'herbe est mangée et la
+// carte propose la seconde séance (mots ratés ou aidés du jour) et « Tout revoir » (reprise générale à la demande).
 const AGAIN = '<svg class="ico" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M19 12a7 7 0 1 1-2.2-5.1" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M17.6 2.8v4.6h-4.6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 function planBlock(d, P, T, nextDays) {
   const plan = P._plan, R = ratesFor(d);
@@ -634,11 +653,11 @@ function planBlock(d, P, T, nextDays) {
   const offer = offerDue(d, P, T) ? `<div class="banner planoffer"><p>${t('plOffer', SMALL.fresh)}</p><div class="stack"><button class="secondary" data-action="offer" data-v="yes" data-id="${d.id}">${t('plOfferYes')}</button><button class="link" data-action="offer" data-v="no" data-id="${d.id}">${t('plOfferNo')}</button></div></div>` : '';
   const pct = T.total ? Math.min(100, Math.round(100 * T.done / T.total)) : 100;
   const more = `${T.weak ? `<button class="secondary" data-action="second" data-id="${d.id}">${AGAIN} ${t('plSecond', T.weak)}</button>` : ''}${T.stale ? `<button class="secondary" data-action="recap" data-id="${d.id}">${t('plRecap', T.stale)}</button>` : ''}`;
-  return `${missed}${offer}
+  const sub = [T.freshLeft ? `+ ${tn('plNewN', T.freshLeft)}` : '', T.revLeft ? t(T.recap ? 'plRevAllN' : 'plRevN', T.revLeft) : ''].filter(Boolean).join(' · ');
+  return `${paceRow(d, P, T)}${missed}${offer}
+    ${T.over && T.complete ? '' : trunkBar(pct, 'idle', t('plDayAria', T.done, T.total))}
     ${T.complete ? `<p class="rest dayok">${T.over ? t('nothing', nextDays) : t('plDayDone')}</p>${more ? `<div class="stack daymore">${more}</div>` : ''}`
-      : `<p class="todayline"><b>${t('today')}</b>${T.freshLeft ? `<span class="cnt"><span class="plus" aria-hidden="true">+</span> ${tn('plNewN', T.freshLeft)}</span>` : ''}${T.revLeft ? `<span class="cnt">${AGAIN} ${t(T.recap ? 'plRevAllN' : 'plRevN', T.revLeft)}</span>` : ''}</p>
-      <div class="daybar" role="progressbar" aria-label="${esc(t('plDayAria', T.done, T.total))}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div>
-      <button class="primary" data-action="start" data-id="${d.id}">${t(T.done ? 'plResume' : 'plGo')}</button>`}`;
+      : `<button class="primary go" data-action="start" data-id="${d.id}"><span class="golabel">${t(T.done ? 'plResume' : 'plGo')}</span>${sub ? `<span class="gosub">${sub}</span>` : ''}</button>`}`;
 }
 // Où en est l'étudiant par rapport aux jours conseillés, en un mot ; le détail n'apparaît qu'en cas de retard.
 function planStatus(d, P) {
@@ -654,18 +673,20 @@ function deckCard(d) {
   const pct = Math.round(100 * s.stage.seen / s.stage.size);
   const held = !plan && pickNew(d, P, S.maxNew).length > roomFor(s.due, S.maxNew);
   const mute = voices.length && !voiceFor(d.lang) && d.cards.some(c => !c.audio);
-  const menu = plan && P._plan ? paceMenu(d, P, T) : null;
+  const lang = esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang);
+  const foot = `${plan && P._plan ? planStatus(d, P) : ''}${challengeLine(d, P, 'lock')}`;
+  // Une seule barre par carte : avec un plan, la trompe mesure le programme du jour ; sans plan, elle mesure l'étape.
   return `<article class="deck card" style="--th:${hue(d.cards[0].theme || d.name)}">
-    <div class="deckhead"><div><h2 lang="${d.lang}">${esc(d.name)}</h2><p class="meta">${esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang)} · ${d.level}${d.demo ? ' · ' + t('demo') : ''}</p></div>${menu ? `<p class="planline">${menu.btn}</p>` : ''}</div>${menu?.list || ''}
-    ${prairie(d, s, [], !canStart)}
-    <div class="stagebar"><span>${t('stageN', s.stage.index)}</span>${trunkBar(pct, 'idle', t('stageAria', s.stage.index, s.stage.count, s.stage.seen, s.stage.size))}</div>
-    ${plan ? planBlock(d, P, T, nextDays) : canStart ? `<button class="primary" data-action="start" data-id="${d.id}">${S.sandbox ? t('sbGo') : t('start', S.minutes)}</button>` : `<p class="rest">${t('nothing', nextDays)}</p>`}
+    <div class="deckhead"><h2 lang="${d.lang}">${esc(d.name)}</h2><p class="meta"><i class="dot" aria-hidden="true"></i>${lang} · ${d.level}${d.demo ? ' · ' + t('demo') : ''}</p></div>
+    ${prairie(d, s, [], !canStart, true)}
+    ${plan ? planBlock(d, P, T, nextDays) : `<div class="stagebar"><span>${t('stageN', s.stage.index)}</span>${trunkBar(pct, 'idle', t('stageAria', s.stage.index, s.stage.count, s.stage.seen, s.stage.size))}</div>
+    ${canStart ? `<button class="primary" data-action="start" data-id="${d.id}">${S.sandbox ? t('sbGo') : t('start', S.minutes)}</button>` : `<p class="rest">${t('nothing', nextDays)}</p>`}`}
     ${held ? `<p class="heldline">${t('heldHome')} <button class="link" data-action="start-force" data-id="${d.id}">${t('heldForce')}</button></p>` : ''}
-    ${mute ? `<p class="banner warn">${t('noVoiceDeck', esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang))}</p>` : ''}
-    ${challengeLine(d, P)}
+    ${mute ? `<p class="banner warn">${t('noVoiceDeck', lang)}</p>` : ''}
+    ${challengeLine(d, P, 'rest')}
     ${matchLine(d, P)}
     ${d.cards.filter(c => !isNew(P[c.id])).length >= 6 ? `<button class="secondary race" data-action="race" data-id="${d.id}">${mouse(22)} ${t('raceBtn')}${P._race?.best ? ` <span class="meta">${t('raceBest', +P._race.best || 0)}</span>` : ''}</button>` : ''}
-    <p class="deckfoot">${plan && P._plan ? planStatus(d, P) : ''}<button class="link" data-action="herd" data-id="${d.id}">${t('herdBtn', s.animals.length)}</button></p>
+    ${foot ? `<div class="deckfoot">${foot}</div>` : ''}
   </article>`;
 }
 
@@ -723,11 +744,13 @@ const ungendered = d => d.cards.filter(c => needsGender(c, d.lang));
 const sortNotice = deck => { const n = unsorted(deck).length + ungendered(deck).length; return n ? { id: deck.id, n } : undefined; };
 
 function home() {
-  return `${TEACHER ? `<button class="link" data-action="teacher">← ${t('eBack')}</button>` : ''}<header class="top">${mascot(147, 'idle', 2)}<h1>Éléfiches<span class="edition">${EDITION}</span></h1>
-      <p class="tagline">${t('tagline')}</p>
-      <button class="rulesbtn" data-action="rules">${FOOT}<span>${t('rules')}</span></button>${SAVANNA}</header>
+  // « Le troupeau a commencé » : au moins un mot déjà travaillé, dans n'importe quel paquet.
+  const begun = S.decks.some(d => { const P = S.progress[d.id]; return !!P && d.cards.some(c => !isNew(P[c.id])); });
+  return `${TEACHER ? `<button class="link" data-action="teacher">← ${t('eBack')}</button>` : ''}<header class="top${begun ? ' short' : ''}">${mascot(147, 'idle', 2)}<h1>Éléfiches<span class="edition">${EDITION}</span></h1>
+      ${begun ? '' : `<p class="tagline">${t('tagline')}</p>`}
+      <button class="rulesbtn" data-action="rules" aria-label="${esc(t('rules'))}" title="${esc(t('rules'))}">${TROMPE}</button>${SAVANNA}</header>
     ${S.sandbox ? sandboxBar(true) : ''}${banners()}
-    ${S.decks.some(d => !planned(d)) ? `<div class="appetite"><span class="aplabel">${NUT}${t('appetite')}</span>${seg('maxNew', S.maxNew, [[3, t('ap1')], [5, t('ap2')], [8, t('ap3')]])}</div>` : ''}
+    ${S.decks.some(d => !planned(d)) ? `<div class="appetite"><span class="aplabel">${GRASS}${t('appetite')}</span>${seg('maxNew', S.maxNew, [[3, t('ap1')], [5, t('ap2')], [8, t('ap3')]])}</div>` : ''}
     <section class="decks">${S.decks.map(deckCard).join('')}</section>
     <section class="tools" aria-label="${t('toolsLabel')}">
     <details class="card settings"><summary>${ICON.gear} ${t('settings')}</summary>
@@ -1316,7 +1339,7 @@ function raceView() {
   const a = r.activity, card = r.card;
   return `<div class="bar"><button class="icon" data-action="home" aria-label="${t('quit')}" title="${t('quit')}">✕</button>
       <div class="racetime" role="timer" aria-label="${t('raceTime')}"><span style="width:${(100 * left).toFixed(1)}%"></span></div><span class="racescore" aria-label="${t('raceScore', r.score)}">${r.score}</span></div>
-    <div class="track" aria-hidden="true"><span class="finish">${NUT}</span><span class="hare" style="left:${(12 + 76 * (1 - left)).toFixed(1)}%">${mouse(34)}</span><span class="runner" style="left:${pos.toFixed(1)}%">${mascot(40, 'joy', 3)}</span></div>
+    <div class="track" aria-hidden="true"><span class="finish">${GRASS}</span><span class="hare" style="left:${(12 + 76 * (1 - left)).toFixed(1)}%">${mouse(34)}</span><span class="runner" style="left:${pos.toFixed(1)}%">${mascot(40, 'joy', 3)}</span></div>
     <div class="card study racecard" style="--th:${hue(card.theme)}"><p class="question">${t('raceQ')} <span class="meta">${t('raceGoal', r.goal)}</span></p>
       ${card.image ? `<img class="illus small" src="${esc(card.image)}" alt="">` : ''}<p class="def big" lang="${card.definition ? lang : ''}">${esc(gloss(card, r.deck.help) || meaning(card, r.deck.help))}</p>
       <div class="options">${a.options.map((o, i) => {
@@ -1345,7 +1368,6 @@ function startSession(id, force = false, mode = '') {
       plan = { fresh: T.freshLeft, dueBy: dayEnd(now), also: T.recap ? staleIds(deck, P, now) : [], again: small ? weak : [], chunk: small ? SMALL : null };
     }
   }
-  S.paceOpen = null; S.paceOpts = null;      // le menu des pas ne reste pas ouvert derrière une séance
   S.stageBefore = summary(deck, S.progress[id]).stage;
   // Mode essai : ni frein sur les nouveaux mots, ni fin de session à l'heure (l'enseignant examine chaque écran à son rythme).
   S.session = new Session(deck, S.progress[id], { minutes: S.sandbox ? 600 : S.minutes, maxNew: S.maxNew, force: force || S.sandbox, audio: canListen(deck), plan });
@@ -1728,7 +1750,7 @@ function doneView() {
   if (S.session.challenge) {
     const { stats, deck } = S.session;
     return `<div class="card done">
-      <div class="rain" aria-hidden="true">${Array.from({ length: 16 }, (_, i) => `<i style="left:${(i * 37 + 11) % 96}%;animation-delay:${(i * 0.13).toFixed(2)}s;font-size:${1 + (i % 3) * 0.3}rem">${NUT}</i>`).join('')}</div>
+      <div class="rain" aria-hidden="true">${Array.from({ length: 16 }, (_, i) => `<i style="left:${(i * 37 + 11) % 96}%;animation-delay:${(i * 0.13).toFixed(2)}s;font-size:${1 + (i % 3) * 0.3}rem">${BLADE}</i>`).join('')}</div>
       ${mascot(104, S.chWon ? 'joy' : 'idle', 5)}
       <h2>${t(S.chWon ? 'chDone' : 'chTried', S.chStage)}</h2>
       <p class="win tuskwin">${tusks(44, S.chWon)}<span>${t(S.chWon ? 'chWon' : 'chAlmost')}</span></p>
@@ -1754,7 +1776,7 @@ function doneView() {
   const stageDone = s.stage.count > 1 && (s.stage.index > S.stageBefore.index || (s.stage.allSeen && !S.stageBefore.allSeen));
   const line = (label, ids) => (ids.length ? `<p><span class="label">${t(label)}</span><br>${words(ids)}</p>` : '');
   return `<div class="card done">
-    <div class="rain" aria-hidden="true">${Array.from({ length: 16 }, (_, i) => `<i style="left:${(i * 37 + 11) % 96}%;animation-delay:${(i * 0.13).toFixed(2)}s;font-size:${1 + (i % 3) * 0.3}rem">${NUT}</i>`).join('')}</div>
+    <div class="rain" aria-hidden="true">${Array.from({ length: 16 }, (_, i) => `<i style="left:${(i * 37 + 11) % 96}%;animation-delay:${(i * 0.13).toFixed(2)}s;font-size:${1 + (i % 3) * 0.3}rem">${BLADE}</i>`).join('')}</div>
     ${mascot(104, 'joy', Math.min(5, 1 + Math.floor(summary(deck, P).memory * 5)))}
     <h2>${t('doneTitle')}</h2>
     ${tamed.length ? `<p class="big">${t('doneTamed', tamed.length)}</p>` : ''}
@@ -1838,6 +1860,7 @@ const armed = () => Date.now() - (S.armedAt || 0) >= 800;
 app.addEventListener('click', e => {
   const b = e.target.closest('[data-action]'); if (!b || S.locked || sbBusy) return;      // porte fermée : aucun geste de l'appli n'est possible
   const { action, id, model } = b.dataset;
+  if (action !== 'pace' && action !== 'pace-undo') S.paceUndo = null;      // « Annuler » ne vaut que juste après un changement de pas fait sur la carte
   if (action === 'start') startSession(id);
   else if (action === 'sb-on') { if (S.sandbox) { S.view = 'home'; S.notice = null; window.scrollTo?.(0, 0); render(); } else setSandbox(true); }
   else if (action === 'sb-off') setSandbox(false);
@@ -1847,8 +1870,21 @@ app.addEventListener('click', e => {
   else if (action === 'gate-copy') { navigator.clipboard?.writeText(S.door?.line || '').then(() => toast(t('copied')), () => app.querySelector('[data-line]')?.select()); }
   else if (action === 'start-force') startSession(id, true);
   else if (action === 'plan') openPlan(id, b.dataset.own === '1');
-  else if (action === 'pace') { if (S.view === 'plan') choosePace(S.planId, b.dataset.pace, S.ownDays); else if ((S.view || 'home') === 'home' && S.paceOpen === id) choosePace(id, b.dataset.pace); }
-  else if (action === 'pace-menu') { if ((S.view || 'home') !== 'home') return; const dk = S.decks.find(x => x.id === id && planned(x)), Pk = S.progress[id]; if (!dk || !Pk?._plan) return; S.paceOpen = S.paceOpen === id ? null : id; S.paceOpts = S.paceOpen ? { id, list: planOptions(dk, Pk) } : null; render(); app.querySelector(`.pacebtn[data-id="${CSS.escape(id || '')}"]`)?.focus(); }
+  else if (action === 'pace') { if (S.view === 'plan') choosePace(S.planId, b.dataset.pace, S.ownDays); else if ((S.view || 'home') === 'home') {
+      // Un toucher change de pas, sans confirmation : le plan d'avant est gardé, et la carte propose « Annuler ».
+      const pl = S.progress[id]?._plan; if (!pl || pl.pace === b.dataset.pace) return;
+      const keep = S.paceUndo?.id === id ? S.paceUndo : { id, plan: JSON.parse(JSON.stringify(pl)) };
+      S.paceAnim = id; S.paceUndo = keep; choosePace(id, b.dataset.pace, 0, true); S.paceAnim = null;
+      const now = S.progress[id]?._plan; if (!now || (now.pace === keep.plan.pace && now.days === keep.plan.days)) { S.paceUndo = null; render(); }
+      app.querySelector(`.pacepick[data-id="${CSS.escape(id || '')}"][aria-pressed=true]`)?.focus();
+    }
+  }
+  else if (action === 'pace-undo') {
+    const u = S.paceUndo, P = S.progress[id]; S.paceUndo = null;
+    if ((S.view || 'home') !== 'home' || !u || u.id !== id || !P?._plan || !S.decks.some(x => x.id === id && planned(x))) return;
+    P._plan = u.plan; saveProgress(id); S.paceAnim = id; render(); S.paceAnim = null;
+    app.querySelector(`.pacepick[data-id="${CSS.escape(id || '')}"][aria-pressed=true], .pathbtn[data-id="${CSS.escape(id || '')}"]`)?.focus();
+  }
   else if (action === 'own-open' || action === 'own-step') {
     const d = S.view === 'plan' ? S.decks.find(x => x.id === S.planId) : null; if (!d || !planned(d)) return;
     S.ownDays = action === 'own-open' ? Math.min(d.days, 3) : Math.min(d.days, Math.max(1, (S.ownDays || 1) + (b.dataset.v === '1' ? 1 : -1)));
@@ -1866,7 +1902,7 @@ app.addEventListener('click', e => {
   else if (action === 'second') { if (['home', 'done'].includes(S.view || 'home') && S.decks.some(x => x.id === id)) startSession(id, false, 'second'); }
   else if (action === 'recap') { if ((S.view || 'home') === 'home') recapNow(id); }
   else if (action === 'offer') { if ((S.view || 'home') === 'home') setSmall(id, b.dataset.v === 'yes', true); }
-  else if (action === 'small') { if ((S.view || 'home') === 'home' && S.paceOpen === id) setSmall(id, b.dataset.v === 'on'); }
+  else if (action === 'small') { const pl = S.progress[id]?._plan; if ((S.view || 'home') === 'home' && pl && (pl.offer || pl.small) && S.decks.some(x => x.id === id && planned(x))) setSmall(id, b.dataset.v === 'on'); }
   else if (action === 'plan-keep') keepPlan(id, b.dataset.v, +b.dataset.k);
   else if (action === 'next') advance();
   else if (action === 'home' || action === 'quit') { stopRace(); dropRecording(); if (S.session) { saveProgress(S.session.deck.id); if (!S.session.challenge) saveMeasure(); } S.stepAt = 0; S.view = 'home'; S.session = null; window.scrollTo?.(0, 0); render(); }
@@ -1877,7 +1913,7 @@ app.addEventListener('click', e => {
   else if (action === 'wipe') { S.confirmWipe = true; S.armedAt = Date.now(); render(); }
   else if (action === 'wipe-no') { S.confirmWipe = false; render(); }
   else if (action === 'wipe-yes') { if (!S.confirmWipe || S.view !== 'privacy' || !armed()) return; store.wipe().then(() => location.reload()); }       // tout est effacé sur cet appareil, puis l'application repart de zéro
-  else if (action === 'herd') { S.herdId = id; S.view = 'herd'; S.confirmReset = null; window.scrollTo?.(0, 0); render(); }
+  else if (action === 'herd') { if (!S.decks.some(x => x.id === id) || !S.progress[id]) return; S.herdId = id; S.view = 'herd'; S.confirmReset = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'share') { const st = S.session.stats; navigator.clipboard?.writeText(t('shareText', S.session.deck.name, S.session.tamed.length, st.ok, st.answered)).then(() => toast(t('copied')), () => toast(t('downloadFail'))); }
   else if (action === 'edit') { if (!TEACHER || !S.decks.some(d => d.id === id)) return; S.editId = id; S.view = 'edit'; if (b.closest('form')) S.notice = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'fix-card') {      // depuis le contrôle du paquet : ouvre la fiche du mot touché

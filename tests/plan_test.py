@@ -134,19 +134,18 @@ with sync_playwright() as p:
     assert plan['pace'] == 'mid' and plan['days'] == 6 and plan['day'] == 0 and plan['fresh'] == per_day and plan['est'] >= 1 and plan['recap'] == -1, plan
     kinds = set(); done = play(page, stop_after=2, seen=kinds, slow_first=True); assert done == 2 and 'intro' not in kinds
 
-    # 4. Carte sobre : deux nombres et une barre, aucune minute, aucun nom de pas ; la piste de pattes est le menu des pas.
-    line = txt('.todayline'); assert 'Aujourd’hui' in line and f'{per_day - 2} nouveaux' in line and 'min' not in line and 'révision' not in line, line
-    assert page.get_attribute('.daybar', 'aria-valuenow') == str(round(100 * 2 / per_day)) and page.inner_text('.deck [data-action=start]') == 'Continuer'
-    assert 'jour 1 sur 6' in txt('.planline') and page.locator('.planline .paw').count() == 6 and page.locator('.planline .paw.todo').count() == 5
-    card = txt('.deck'); assert 'Patte' not in card and 'Changer de pas' not in card and 'Objectif du cours' not in card and 'environ' not in card, card
-    assert 'Dans les temps' in txt('.deckfoot .status.ok') and 'Patte trotteuse' in page.get_attribute('.pacebtn', 'aria-label')
-    assert not page.locator('.pacelist').count() and page.get_attribute('.pacebtn', 'aria-expanded') == 'false'
+    # 4. Carte du design (27 novembre) : trois pas visibles avec leur nom, une seule piste, une seule barre (la trompe), les nombres
+    # du jour dans le bouton, aucune minute, plus de menu déroulant.
+    go = txt('.deck [data-action=start]'); assert 'Continuer' in go and f'{per_day - 2} nouveaux' in go and 'min' not in go and 'révision' not in go, go
+    assert page.get_attribute('.deck .trunk', 'aria-valuenow') == str(round(100 * 2 / per_day)) and page.inner_text('.deck .golabel') == 'Continuer' and page.locator('.deck .trunk').count() == 1
+    assert 'Jour 1 sur 6' in txt('.planline') and page.locator('.planline .paw').count() == 6 and page.locator('.planline .paw.todo').count() == 5 and page.locator('.planline .paw.now').count() == 1
+    card = txt('.deck'); assert 'Changer de pas' not in card and 'Objectif du cours' not in card and 'environ' not in card and ' min' not in card and 'Aujourd’hui' not in card, card
+    picks = page.locator('.deck .pacepick'); assert picks.count() == 3 and [picks.nth(i).get_attribute('aria-pressed') for i in range(3)] == ['false', 'true', 'false']
+    assert 'Patte' in picks.nth(0).inner_text() and 'velours' in picks.nth(0).inner_text() and 'trotteuse' in picks.nth(1).inner_text() and 'pressée' in picks.nth(2).inner_text()
+    assert 'Dans les temps' in txt('.deckfoot .status.ok') and 'le rythme de ton cours' in txt('.planline') and not page.locator('.stagebar').count()
+    assert page.locator('.deck .trunk .grass').count() == 1 and page.locator('.top .rulesbtn svg').count() == 1 and page.get_attribute('.top .rulesbtn', 'aria-label') == 'Règles du jeu'
+    assert 'short' in page.get_attribute('.top', 'class') and not page.locator('.top .tagline').count(), 'en-tête court dès que le troupeau a commencé'
     assert narrow(); page.screenshot(path=out + '/plan-3-carte.png', full_page=True)
-    page.click('.pacebtn'); page.wait_for_selector('.pacelist'); rows = page.locator('.pacelist .pacerow')
-    assert rows.count() == 3 and [rows.nth(i).locator('.paw').count() for i in range(3)] == [9, 6, 4] and all('j · env.' in x and 'min' in x for x in rows.all_inner_texts())
-    assert rows.nth(1).get_attribute('aria-current') == 'true' and 'cours' in rows.nth(1).inner_text() and page.get_attribute('.pacebtn', 'aria-expanded') == 'true'
-    assert page.evaluate("document.activeElement.classList.contains('pacebtn')"), 'le focus reste sur le bouton du menu'
-    assert narrow(); page.screenshot(path=out + '/plan-3b-menu.png', full_page=True); page.click('.pacebtn'); page.wait_for_selector('.pacelist', state='detached')
 
     # 4 bis. Fin de la journée, avec une réponse ratée : elle est proposée en seconde séance, sans déplacer la fiche.
     page.click('.deck [data-action=start]'); play(page, seen=kinds, wrong=1); page.wait_for_selector('.done')
@@ -180,8 +179,8 @@ with sync_playwright() as p:
     assert f'Mots à apprendre : {n_cards}' in txt('.planlead'), 'progression d’essai : aucun mot déjà su'
     page.click('[data-action=pace][data-pace=mid]'); page.wait_for_selector('.study'); play(page)
     page.click('.done [data-action=home]'); page.wait_for_selector('.deck .rest'); pd0 = -(-n_cards // 3)
-    page.click('[data-action=sb-skip][data-days="1"]'); page.wait_for_selector('.todayline')
-    assert 'jour 2 sur 6' in txt('.planline') and f'{-(-(n_cards - pd0) // 2)} nouveaux' in txt('.todayline'), txt('.deck')
+    page.click('[data-action=sb-skip][data-days="1"]'); page.wait_for_selector('.gosub')
+    assert 'Jour 2 sur 6' in txt('.planline') and f'{-(-(n_cards - pd0) // 2)} nouveaux' in txt('.gosub'), txt('.deck')
     assert kv('progress:' + did)['_plan']['last'] == 0 and len([k for k in kv('essai:' + did) if not k.startswith('_')]) == pd0, 'la vraie progression ne bouge pas'
     finish_day(); page.wait_for_selector('.deck .rest')
     # Séances courtes : proposées une fois, quand moins de trois premières réponses sur quatre sont justes après deux jours travaillés.
@@ -199,32 +198,36 @@ with sync_playwright() as p:
     page.click('[data-action=sb-skip][data-days="1"]'); page.wait_for_selector('.planline:has-text("jour 3 sur 6")'); assert not page.locator('.planmiss').count()
     page.click('.deck [data-action=start]'); page.wait_for_selector('.study'); assert state('session.today.length') <= 5, 'séance courte : cinq mots nouveaux au plus'
     page.click('[data-action=quit]'); page.wait_for_selector('.deck')
-    page.click('.pacebtn'); page.wait_for_selector('.pacelist [data-action=small][data-v=off]'); page.click('.pacelist [data-action=small]'); page.wait_for_selector('.pacelist', state='detached')
+    page.wait_for_selector('.deck [data-action=small][data-v=off]'); page.click('.deck [data-action=small]'); page.wait_for_selector('.deck [data-action=small][data-v=on]')
     assert state(f"progress['{did}']._plan.small") is False and state(f"progress['{did}']._plan.offer") == 2, 'retour aux séances habituelles, sans nouvelle proposition'
     # Jour 4 après un jour manqué (le jour 3 n'a pas été fait).
     page.click('[data-action=sb-skip][data-days="1"]'); page.wait_for_selector('.planmiss')
     miss = txt('.planmiss'); assert 'Jours sans séance : 1' in miss, miss
-    assert 'jour 4 sur 6' in txt('.planline') and 'En retard' in txt('.deckfoot .status.late'); page.screenshot(path=out + '/plan-5-jour-manque.png', full_page=True)
+    assert 'Jour 4 sur 6' in txt('.planline') and 'En retard' in txt('.deckfoot .status.late'); page.screenshot(path=out + '/plan-5-jour-manque.png', full_page=True)
     finish_day(); page.wait_for_selector('.deck .rest')
     sb = state(f"progress['{did}']._plan"); assert sb['missed'] == 1 and sb['ack'] == 1 and sb['last'] == 3, sb
     assert not page.locator('.planmiss').count(), 'jour manqué annoncé une fois, pas davantage'
     # Dernier jour du plan : la reprise générale est au programme, et la carte le dit.
     page.click('[data-action=sb-skip][data-days="1"]'); page.wait_for_selector('.planline:has-text("jour 5 sur 6")'); finish_day(); page.wait_for_selector('.deck .rest')
     page.click('[data-action=sb-skip][data-days="1"]'); page.wait_for_selector('.planline:has-text("jour 6 sur 6")')
-    last = txt('.todayline'); assert 'reprise générale' in last, last
+    last = txt('.gosub'); assert 'reprise générale' in last, last
     assert state(f"progress['{did}']._plan.recap") == 5; page.screenshot(path=out + '/plan-6-reprise.png', full_page=True)
-    # Changement de pas depuis la piste : la durée s'allonge, la reprise générale repart à la nouvelle fin du plan.
-    page.click('.pacebtn'); page.wait_for_selector('.pacelist'); page.click('.pacerow[data-pace=slow]'); page.wait_for_selector('.banner.good')
-    assert 'jours restants 4' in page.inner_text('.banner.good').replace(' ', ' ') and 'Patte' not in txt('.deck'), page.inner_text('.banner.good')
-    sb = state(f"progress['{did}']._plan"); assert sb['pace'] == 'slow' and sb['days'] == 9 and sb['start'] and sb['recap'] == -1 and 'jour 6 sur 9' in txt('.planline'), sb
-    assert 'reprise générale' not in txt('.todayline') if page.locator('.todayline').count() else True
-    # « J'ai moins de jours » depuis le menu : l'écran du plan s'ouvre sur le réglage, le plan prend les jours dits.
-    page.click('.pacebtn'); page.wait_for_selector('.pacelist'); page.click('.pacelist [data-action=plan][data-own="1"]'); page.wait_for_selector('.ownbox')
+    # Changement de pas depuis la carte (un toucher, sans annonce de minutes ; le focus reste sur le pas choisi) : la durée s'allonge, la reprise générale repart à la nouvelle fin du plan.
+    before = state(f"progress['{did}']._plan"); page.click('.pacepick[data-pace=fast]'); page.wait_for_selector('.paceundo [data-action=pace-undo]')
+    assert 'Patte pressée' in txt('.paceundo') and state(f"progress['{did}']._plan.pace") == 'fast'
+    assert narrow(); page.screenshot(path=out + '/plan-6a-annuler.png', full_page=True)
+    page.click('[data-action=pace-undo]'); page.wait_for_selector('.paceundo', state='detached'); assert state(f"progress['{did}']._plan") == before, 'Annuler rend le plan tel qu’il était'
+    page.click('.pacepick[data-pace=slow]'); page.wait_for_selector('.pacepick[data-pace=slow][aria-pressed=true]'); assert page.locator('[data-action=pace-undo]').count() == 1
+    assert not page.locator('.banner.good').count() and page.evaluate("document.activeElement.dataset.pace") == 'slow' and 'des séances plus légères' in txt('.planline')
+    sb = state(f"progress['{did}']._plan"); assert sb['pace'] == 'slow' and sb['days'] == 9 and sb['start'] and sb['recap'] == -1 and 'Jour 6 sur 9' in txt('.planline'), sb
+    assert 'reprise générale' not in txt('.gosub') if page.locator('.gosub').count() else True
+    # « J'ai moins de jours » : toucher la piste ouvre « Ton plan », où se trouve le lien ; le plan prend les jours dits.
+    page.click('.deck .pathbtn'); page.wait_for_selector('[data-action=own-open]'); page.click('[data-action=own-open]'); page.wait_for_selector('.ownbox')
     assert 'Jours : 3' in txt('.ownn') and 'à partir d’aujourd’hui' in txt('.ownsays') and page.locator('.pace.current').count() == 1 and not page.locator('.moment').count()
     page.screenshot(path=out + '/plan-6b-moins-de-jours.png', full_page=True)
     page.click('.ownbox [data-action=pace]'); page.wait_for_selector('.banner.good')
-    sb = state(f"progress['{did}']._plan"); assert sb['pace'] == 'own' and sb['days'] == 8 and 'jour 6 sur 8' in txt('.planline') and 'Mes jours' in page.get_attribute('.pacebtn', 'aria-label'), sb
-    page.click('.pacebtn'); page.wait_for_selector('.pacelist'); assert page.locator('.pacelist .pacerow').count() == 4 and 'Mes jours' in txt('.pacelist .pacerow.current'); page.click('.pacebtn')
+    sb = state(f"progress['{did}']._plan"); assert sb['pace'] == 'own' and sb['days'] == 8 and 'Jour 6 sur 8' in txt('.planline') and 'tes jours' in txt('.planline') and not page.locator('.pacepick[aria-pressed=true]').count(), sb
+    assert page.locator('.deck .pacepick').count() == 3, 'les trois pas restent proposés quand l’étudiant a choisi ses jours'
     page.click('[data-action=sb-off]'); page.wait_for_selector('.sbcard')
 
     # 8. Un second paquet, sans jours conseillés : il garde « Appétit du jour » et sa séance minutée, à côté du paquet à plan.
@@ -257,7 +260,7 @@ with sync_playwright() as p:
         page.screenshot(path=out + '/plan-8a-deja-su-longue.png', full_page=True); page.click('[data-action=place-skip]'); page.wait_for_selector('.paces'); page.screenshot(path=out + '/plan-8-longue-liste.png', full_page=True)
         assert 'jusqu’à' in txt('.paces'), 'les jours de découverte sont plus chargés : l’écran le dit'
         page.click('[data-action=pace][data-pace=mid]'); page.wait_for_selector('.intro'); page.click('[data-action=quit]'); page.wait_for_selector('.deck')      # mots non vus en classe : l'écran de découverte reste
-        mine = f'.deck:has(.pacebtn[data-id="{long["id"]}"])'
+        mine = f'.deck:has(.pathbtn[data-id="{long["id"]}"])'
         day = lambda n: page.wait_for_selector(mine + f' .planline:has-text("jour {n} sur 6")')      # un saut à la fois : le suivant n'est accepté qu'une fois le premier fini
         # Depuis la 15c, la reprise générale du dernier jour est comptée dans les minutes : pour cette longue liste, le
         # choix est proposé dès le deuxième jour manqué (un seul jour manqué reste une simple annonce).
@@ -267,7 +270,7 @@ with sync_playwright() as p:
         ask = txt(mine + ' .planmiss'); assert 'Jours sans séance : 2' in ask and 'Finir comme prévu' in ask and 'plus tard' in ask, ask
         page.screenshot(path=out + '/plan-9-choix.png', full_page=True)
         page.click(mine + ' .planmiss [data-action=plan-keep][data-v=min]'); page.wait_for_selector(mine + ' .planmiss', state='detached')
-        lp = state(f"progress['{long['id']}']._plan"); assert lp['days'] == 8 and lp['ack'] == 2 and 'jour 3 sur 8' in txt(mine + ' .planline'), lp
+        lp = state(f"progress['{long['id']}']._plan"); assert lp['days'] == 8 and lp['ack'] == 2 and 'Jour 3 sur 8' in txt(mine + ' .planline'), lp
         page.click('[data-action=sb-off]'); page.wait_for_selector('.sbcard')
 
     print('ERREURS CONSOLE:', errors or 'aucune'); assert not errors, errors

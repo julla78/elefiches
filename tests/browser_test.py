@@ -429,7 +429,7 @@ with sync_playwright() as p:
     page.screenshot(path=f'{out}/herd.png', full_page=True); page.click('[data-action=home]')
     # langue de l'interface
     page.click('details.settings summary'); page.click('[data-action=set][data-key=lang][data-value=en]')
-    assert 'my herd' in page.inner_text('body').lower()
+    assert 'my herd' in page.get_attribute('.deck .prairie', 'aria-label').lower() and page.get_attribute('.top .rulesbtn', 'aria-label') == 'How to play'      # le bandeau du troupeau est le lien, le bouton des règles n'a plus de libellé visible
     # règle de niveau : en mode Auto, un paquet B2 d'anglais donne des consignes en anglais, un paquet A2 en français
     page.click('[data-action=set][data-key=lang][data-value=auto]')
     page.click('[data-action=teacher]'); page.click('details.card.more > summary'); page.locator('[data-action=try][data-model=en]').click(); page.wait_for_selector('.deck')
