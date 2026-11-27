@@ -25,7 +25,14 @@ export function buildPrompts({ lang = 'fr', level = 'A2', topic = '', count = 20
   const twinsEx = lang === 'en' ? 'hire et recruit, job et work' : lang === 'es' ? 'contratar et emplear, trabajo et empleo' : 'embaucher et recruter, boulot et travail';
   const defForm = lang === 'en' ? 'par exemple, tous les verbes définis par « to + verbe », tous les noms par un groupe nominal' : 'par exemple, tous les verbes définis par un infinitif, tous les noms par un groupe nominal';
   const shape = `{"elefiches":1,"name":"${title}","lang":"${lang}","level":"${level}","grid":"${grid}","cards":[\n{"word":"","definition":"","translations":${trJson},"pos":""${gendered ? ',"gender":""' : ''},"examples":[${exShape}],"situation":"","distractors":["","",""],"theme":"","register":"","family":"","ipa":"","image":"","doubt":""}\n]}`;
-  const head = `Tu es enseignant ${de}${target} langue étrangère à l'université et concepteur de tests de langue. Crée un paquet de ${n} fiches de vocabulaire pour l'application Éléfiches.
+  // Demande autonome : le prompt doit donner le même travail quel que soit le compte où il est collé. Certains comptes ont une
+  // mémoire, des instructions, un projet ou des « skills » personnels qui se déclenchent sur une demande de conception et font
+  // consulter un référentiel que les autres enseignants n'ont pas. Le prompt les écarte, sans retirer les outils de fichiers et d'images.
+  const SOLO = `DEMANDE AUTONOME : tout ce qu'il te faut est dans ce message. Pour toute cette conversation, ne consulte et n'applique aucun référentiel, cahier des charges, méthode, skill, projet, dossier ni mémoire propres à ce compte, et ne pose aucune question préalable à ce titre : suis seulement les consignes ci-dessous. Tu gardes tes outils pour créer des fichiers et des images.`;
+  const SOLO_AGAIN = `(Rappel : demande autonome. Aucun référentiel, cahier des charges, méthode ni skill propres à ce compte ; seulement les consignes de cette conversation.)`;
+  const head = `${SOLO}
+
+Tu es enseignant ${de}${target} langue étrangère à l'université et concepteur de tests de langue. Crée un paquet de ${n} fiches de vocabulaire pour l'application Éléfiches.
 
 PUBLIC
 Étudiants d'université, jeunes adultes, francophones ou vivant en France. Niveau ${level} du CECRL.
@@ -174,11 +181,13 @@ Interdits : texte, lettres, chiffres, numéros de case, légendes, cadres, logos
 Laisse blanches les cases qui n'ont pas de dessin.`,
     next: `Dessine maintenant la planche 2, avec exactement la même grille et le même style.`,
     // À coller quand le tableau de l'étape 1 convient (après y avoir ajouté ses corrections, s'il y en a).
-    go: `Mes corrections sur le tableau : (écris-les ici, ou « aucune »).
+    go: `${SOLO_AGAIN}
+Mes corrections sur le tableau : (écris-les ici, ou « aucune »).
 Pour chaque doute que tu as signalé et que je n'ai pas tranché, garde-le dans le champ "doubt" de la fiche.
 Passe maintenant à l'ÉTAPE 2. Rappel des règles éliminatoires : "pos" rempli${gendered ? ', "gender" rempli pour chaque nom' : ''} ; une définition qui ne désigne qu'un mot ; une seule bonne réponse dans la première phrase ; des mots pièges de même catégorie${gendered ? ', de même genre' : ''}, de même nombre de mots et de même début que la réponse ; des phrases que l'on dit vraiment ; l'orthographe exacte de chaque mot${lang === 'en' ? '' : ', accents et signes compris'}. Travaille par lots de dix fiches, écris le RAPPORT DE CONTRÔLE avant le paquet, et ne saute aucun contrôle.`,
     // À coller dans la même conversation quand le paquet reçu contient des erreurs.
-    review: `Relis le paquet que tu viens de produire, fiche par fiche, comme un correcteur ${de}${target} langue étrangère, puis corrige-le.
+    review: `${SOLO_AGAIN}
+Relis le paquet que tu viens de produire, fiche par fiche, comme un correcteur ${de}${target} langue étrangère, puis corrige-le.
 Pour chaque fiche, vérifie et corrige :
 1. Chaque phrase d'exemple est celle qu'un locuteur natif dirait vraiment, avec le temps et le déterminant naturels.${natural}
 2. Dans la première phrase d'exemple, aucun autre mot du paquet ne pourrait remplacer le mot entre crochets : essaie chaque autre mot du paquet à sa place, et ajoute un indice propre au mot si l'un d'eux convient.

@@ -1609,6 +1609,15 @@ t('15c, relecture de sécurité : identifiants de fiche réservés, « déjà su
   const sec = new Session(d2, P3, { now: T0 + 3600000, rnd: () => 0.5, plan: { fresh: 0, dueBy: -1, again: weakIds(d2, P3, T0 + 3600000) } }); assert.equal(sec.queue.length, 1); assert.ok(sec.queue[0].second && sec.queue[0].retry);
 });
 
+t('prompts : demande autonome, sans référentiel ni skill propres au compte', () => {
+  for (const lang of ['fr', 'en', 'es']) {
+    const p = buildPrompts({ lang, level: 'A1', topic: 'Au café', count: 15 });
+    for (const k of ['file', 'cards']) { assert.ok(p[k].startsWith('DEMANDE AUTONOME'), k + ' commence par la clause'); assert.ok(/aucun référentiel, cahier des charges, méthode, skill/.test(p[k]) && p[k].includes('Tu gardes tes outils pour créer des fichiers et des images'), k); assert.ok(p[k].includes('\n\nTu es enseignant'), 'le rôle suit la clause'); }
+    for (const k of ['go', 'review']) assert.ok(p[k].startsWith('(Rappel : demande autonome.'), k + ' rappelle la clause');
+    assert.ok(!p.cards.split('\n')[0].includes('préférence'), 'la clause n’écarte pas les réglages de langue et d’accessibilité de la personne');
+  }
+});
+
 t('typographie française de l’interface', async () => {
   const { typoFr, typoDeep, typoFaults } = await import('../js/typo.js'), { STR } = await import('../js/i18n.js'), NB = ' ';
   assert.equal(typoFr('Mots à apprendre : 14. Prêt ? Oui ! Non ; « Au café » · 15 fiches, {0} min'), `Mots à apprendre${NB}: 14. Prêt${NB}? Oui${NB}! Non${NB}; «${NB}Au café${NB}» · 15${NB}fiches, {0}${NB}min`);
