@@ -67,9 +67,10 @@ select, input:not([type=file]) { background: var(--card); border: 2px solid var(
 .trunk .head { flex: none; margin-right: -12px; position: relative; z-index: 1; }
 .trunk .track { flex: 1; height: 16px; background: var(--line); border-radius: 99px; overflow: hidden; }
 .trunk .track span { display: block; height: 100%; min-width: 14px; background: #a4aab4; border-radius: 99px; transition: width .5s cubic-bezier(.3, 1.4, .5, 1); }
-.dots { display: flex; flex-wrap: wrap; gap: 3px; max-width: 34%; }
-.dots .leaf { flex: none; width: 13px; height: 15px; fill: none; stroke: #5c8a44; stroke-width: 1.8; stroke-linejoin: round; transform: rotate(18deg); }
-.dots .leaf.on { fill: #8fb872; }
+.dots { flex: none; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 2px; max-width: 46%; margin-top: -8px; }
+.dots .grass { flex: none; width: 22px; height: 22px; }
+.dots.some .grass { width: 15px; height: 15px; } .dots.many .grass { width: 13px; height: 13px; }
+.dots .grass.eaten { visibility: hidden; }
 .where { margin-bottom: 10px; }
 .chip { display: inline-block; background: var(--brand-soft); border-radius: 99px; padding: 3px 11px; font-size: .82rem; font-weight: 600; }
 .chip.theme { background: hsl(var(--th) 70% 90%); color: hsl(var(--th) 45% 28%); }
