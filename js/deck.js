@@ -54,6 +54,10 @@ const LANGS = { fr: 'fr', francais: 'fr', french: 'fr', frances: 'fr', en: 'en',
 const plain = s => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
 // Un identifiant venu d'un fichier sert de clé d'objet : lettres, chiffres, tiret et souligné seulement, jamais un nom réservé.
+// Identifiant de fiche : jamais un nom réservé de la progression (« _plan », « _stages »… : la progression d'un paquet range
+// le plan et les défis sous des clés qui commencent par « _ », dans le même objet que les états de fiches), ni un
+// identifiant que la sauvegarde ne sait pas conserver (« * »). Relecture de sécurité, 15c.
+export const cardKey = v => { const k = safeKey(v); return k && k[0] !== '_' && !k.includes('*') ? k : ''; };
 export const safeKey = v => (typeof v === 'string' && /^[A-Za-z0-9_*-]{1,64}$/.test(v) && !['__proto__', 'constructor', 'prototype'].includes(v) ? v : '');
 
 // Un texte venu d'Anki, d'un tableur ou d'une IA peut contenir des codes HTML à la place des caractères
@@ -333,7 +337,7 @@ export function prepare(deck) {
   if (deck.fields !== undefined) deck.fields = (Array.isArray(deck.fields) ? deck.fields : []).filter(f => typeof f === 'string').slice(0, 60).map(f => f.slice(0, 80));
   const ids = new Set();
   for (const c of deck.cards) {
-    if (!safeKey(c.id) || c.id === 'new' || ids.has(c.id)) c.id = hash(c.word + '|' + (c.definition || '') + '|' + ids.size);
+    if (!cardKey(c.id) || c.id === 'new' || ids.has(c.id)) c.id = hash(c.word + '|' + (c.definition || '') + '|' + ids.size);
     ids.add(c.id);
     if (c.image && !imgRef(c.image)) delete c.image;
     if (c.audio && !safeUrl(c.audio)) delete c.audio;
@@ -485,7 +489,7 @@ export function deckFromJSON(text, name, level) {
   if (d.cards.length > DECK_LIMITS.cards * 5) throw new Error('too-many');     // au-delà, on ne tente même pas la lecture
   const str = v => (typeof v === 'string' ? v : '');
   const cards = d.cards.filter(c => c && str(c.word)).map(c => ({
-    id: safeKey(c.id) || hash(c.word + '|' + (str(c.definition) || Object.values(c.translations || {}).find(str) || '')), word: str(c.word), definition: str(c.definition) || undefined,
+    id: cardKey(c.id) || hash(c.word + '|' + (str(c.definition) || Object.values(c.translations || {}).find(str) || '')), word: str(c.word), definition: str(c.definition) || undefined,
     translations: Object.fromEntries(Object.entries(c.translations && typeof c.translations === 'object' ? c.translations : {}).filter(([k, v]) => safeKey(k) && str(v))),
     examples: (Array.isArray(c.examples) ? c.examples : []).filter(str), theme: str(c.theme) || undefined, register: str(c.register) || undefined,
     family: str(c.family) || undefined, ipa: str(c.ipa) || undefined, image: imgRef(c.image) || undefined, audio: safeUrl(c.audio) || undefined, extra: {},

@@ -2,16 +2,16 @@
 import * as store from './store.js';
 import { deckFromCSV, deckFromJSON, deckFromAnki, mergeDecks, audit, REGISTERS, safeKey, deckToJSON, looksJSON, levelIn, prepare, serialize, hash, demoDeck, MODELS, safeUrl, LEVELS, PLAN_DAYS, adviseDays } from './deck.js';
 import { summary, boxOf, dueInDays, isNew, isDue, stageOf, HERD_BOX, shiftProgress, nextDueIn } from './scheduler.js';
-import { Session, Challenge, Tour, meaning, gloss, pickNew, judge, roomFor, buildActivity, SELF, kindOf, suggestKind, genderOf, needsGender, GENDERED_LANGS } from './session.js';
+import { Session, Challenge, Tour, Placement, meaning, gloss, pickNew, judge, roomFor, buildActivity, SELF, kindOf, suggestKind, genderOf, needsGender, GENDERED_LANGS } from './session.js';
 import { clozeParts, norm, noAcc, noArt, diffParts, remark, spoken, slug } from './match.js';
 import { unzip, typeOf } from './zip.js';
 import { buildPrompts, GRIDS, gridOf } from './prompts.js';
 import { openSqlite } from './sqlite.js';
 import { buildICS } from './remind.js';
-import { makeBackup, readBackup, mergeProgress, cleanProgress, countReplaced, countAdded } from './backup.js';
+import { makeBackup, readBackup, mergeProgress, cleanProgress, countReplaced, countAdded, countLate } from './backup.js';
 import { ACCESS, MIN_CODE, validAccess, makeAccess, checkAccess } from './acces.js';
 import { STR, LANG_NAMES } from './i18n.js';
-import { PACES, DAY, EXTRA_MIN, paceDays, simulate, today as planToday, outlook, startPlan, cleanMeasure, emptyMeasure, addTime, addTry, rates, minutes, missedNow, markWorked, stepsLeft, milestone, dayEnd, dayIndex } from './plan.js';
+import { PACES, DAY, EXTRA_MIN, paceDays, simulate, today as planToday, outlook, startPlan, cleanMeasure, emptyMeasure, addTime, addTry, rates, minutes, missedNow, markWorked, stepsLeft, milestone, dayEnd, dayIndex, OWN, SMALL, OFFER, staleIds, weakIds } from './plan.js';
 
 const app = document.getElementById('app');
 // En ligne, l'application ne s'affiche pas à l'intérieur de la page d'un autre site (protection contre le détournement de clics).
@@ -35,6 +35,7 @@ function uiLang() {
   return d && ['B2', 'C1', 'C2'].includes(d.level) && STR[d.lang] ? d.lang : 'fr';
 }
 const t = (k, ...a) => { let s = (STR[uiLang()] || STR.fr)[k] ?? STR.fr[k] ?? k; if (typeof s !== 'string') return s; return s.replace(/\{(\d)\}/g, (m, i) => (i < a.length ? String(a[i]) : m)); };      // une seule passe : un argument qui contient « {0} » ou « $& » reste du texte
+const tn = (k, n, ...a) => t(k + (n === 1 ? '_1' : '_n'), n, ...a);      // libellé qui s'accorde : « 1 nouveau », « 12 nouveaux »
 const hue = theme => parseInt(hash(theme || 'x'), 36) % 360;
 const VOICES = { fr: 'fr-FR', en: 'en-GB', es: 'es-ES' };
 const pctOf = x => Math.round(100 * x);
@@ -420,7 +421,7 @@ function challengeLine(d, P) {
   if (open) line = `<button class="secondary challenge" data-action="challenge" data-id="${d.id}" data-stage="${open}">${tusks(26)}<span>${t('challengeBtn', open)}</span></button>`;
   else if (next) {
     const [a, b] = st.bounds[next - 1], left = d.cards.slice(a, b).filter(c => isNew(P[c.id])).length;
-    line = `<p class="chlock">${tusks(22, false)}<span>${left ? t('chLockedNew', next, left) : t('chLockedNight', next)}</span></p>`;
+    line = `<p class="chlock" title="${esc(left ? t('chLockedNew', next, left) : t('chLockedNight', next))}">${tusks(22, false)}<span>${left ? tn('chShortNew', left) : t('chShortNight')}</span></p>`;
   }
   return `${line}${won ? `<p class="tuskrow" aria-label="${t('tusksLine', won, st.count)}">${Array.from({ length: Math.min(won, 12) }, () => tusks(20)).join('')}<span>${t('tusksLine', won, st.count)}</span></p>` : ''}`;
 }
@@ -476,13 +477,19 @@ function ensureDay(d) {
 }
 // Les trois pas d'un paquet : durée totale, jours qui restent, minutes par jour. Au premier choix, le calcul porte sur
 // tous les mots ; ensuite, sur ce qu'il reste, à partir de la vraie progression.
-function planOptions(d, P, now = Date.now()) {
-  const plan = P._plan || null, R = rates(S.measure), one = perNew(d), dNow = plan ? Math.max(0, dayIndex(plan.start, now)) : 0;
-  return paceDays(d.days).map(([pace, total]) => {
-    const sim = plan ? outlook(d, P, plan, now, { ok: R.ok, perNew: one, days: total }) : simulate({ fresh: d.cards.length, days: total, ok: R.ok, perNew: one, cap: d.days, now, mark: d.days });
-    return { pace, total, left: plan ? Math.max(1, total - dNow) : total, min: minutes(sim.avg, R.sec), peak: minutes(sim.max, R.sec), seen: sim.seen, again: sim.again };
-  });
+// Version 15c : au premier choix, le calcul part de la progression réelle. Les mots prouvés « déjà sus » au test de
+// positionnement ne sont donc plus des mots à découvrir : le plan se calcule sur les mots restants.
+function planOption(d, P, pace, total, now = Date.now()) {
+  const plan = P._plan || null, R = ratesFor(d), dNow = plan ? Math.max(0, dayIndex(plan.start, now)) : 0;
+  const sim = outlook(d, P, plan || startPlan(pace, total, now), now, { ok: R.ok, perNew: perNew(d), days: total, mark: plan ? 0 : pace === OWN ? total : d.days });
+  return { pace, total, left: plan ? Math.max(1, total - dNow) : total, min: minutes(sim.avg, R.sec), peak: minutes(sim.max, R.sec), seen: sim.seen, again: sim.again };
 }
+const planOptions = (d, P, now = Date.now()) => paceDays(d.days).map(([pace, total]) => planOption(d, P, pace, total, now));
+// Vitesse de départ, tant que rien n'est mesuré sur l'appareil : écrire un mot prend plus de temps que le choisir. Vingt
+// secondes par étape pour un paquet « mots déjà vus en classe » (première question écrite), quinze sinon. Choix de
+// conception (aucune étude ne fixe ce chiffre) ; la mesure de l'appareil le remplace dès dix étapes.
+const startSec = d => (d?.seen === true ? 20 : 15);
+const ratesFor = d => { const R = rates(S.measure); return R.timed ? R : { ...R, sec: startSec(d) }; };
 // Révisions que les autres paquets demanderont pendant ce plan, en minutes par jour : elles se font depuis leur carte.
 function otherReviews(d, now = Date.now()) {
   const R = rates(S.measure), until = now + d.days * DAY; let n = 0;
@@ -490,17 +497,70 @@ function otherReviews(d, now = Date.now()) {
   const m = n * (2 - R.ok) / d.days * R.sec / 60;
   return m >= 1 ? Math.round(m) : 0;
 }
-function openPlan(id) {
-  if (!S.decks.some(d => d.id === id && planned(d)) || !S.progress[id]) return;
-  S.planId = id; S.view = 'plan'; S.notice = null; window.scrollTo?.(0, 0); render();
+function openPlan(id, own = false) {
+  const deck = S.decks.find(d => d.id === id && planned(d)); if (!deck || !S.progress[id]) return;
+  S.planId = id; S.view = 'plan'; S.notice = null; S.paceOpen = null; S.paceOpts = null; S.ownDays = own ? Math.min(deck.days, 3) : 0; S.session = null;
+  S.planOpts = { id, list: planOptions(deck, S.progress[id]) };      // les trois pas sont calculés une fois par ouverture de l'écran, pas à chaque geste
+  window.scrollTo?.(0, 0); render();
 }
-function choosePace(id, pace) {
-  const d = S.decks.find(x => x.id === id), P = S.progress[id]; if (!d || !planned(d) || !P || !PACES.includes(pace)) return;
-  const now = Date.now(), o = planOptions(d, P, now).find(x => x.pace === pace); if (!o) return;
-  if (!P._plan) { P._plan = startPlan(pace, o.total, now, o.min); saveProgress(id); return startSession(id); }      // premier choix : la première journée commence
-  // Changement de pas : le premier jour ne bouge pas, la durée devient celle du nouveau pas, le programme du jour est refait.
-  Object.assign(P._plan, { pace, days: o.total, est: o.min, day: -1, ack: missedNow(P._plan, Math.max(0, dayIndex(P._plan.start, now))) });
-  saveProgress(id); S.view = 'home'; S.notice = { text: t('plChanged', t('pace_' + pace), o.min) }; window.scrollTo?.(0, 0); render();
+// days : jours choisis par l'étudiant pour le pas « own » (« J'ai moins de jours »), comptés à partir d'aujourd'hui.
+function choosePace(id, pace, days = 0) {
+  const d = S.decks.find(x => x.id === id), P = S.progress[id]; if (!d || !planned(d) || !P || !(PACES.includes(pace) || pace === OWN)) return;
+  const now = Date.now(), plan = P._plan, dNow = plan ? Math.max(0, dayIndex(plan.start, now)) : 0;
+  const n = Math.round(Math.min(d.days, Math.max(0, +days || 0)));
+  const o = pace === OWN ? (n >= 1 ? planOption(d, P, OWN, dNow + n, now) : null) : planOptions(d, P, now).find(x => x.pace === pace); if (!o) return;
+  S.paceOpen = null; S.paceOpts = null; S.planOpts = null; S.ownDays = 0;
+  if (!plan) { P._plan = startPlan(pace, o.total, now, o.min); saveProgress(id); return startSession(id); }      // premier choix : la première journée commence
+  // Changement de pas : le premier jour ne bouge pas, la durée devient celle du nouveau pas. Le programme du jour est
+  // refait, sauf si la journée est déjà faite : elle le reste, et le nouveau pas vaut à partir de demain.
+  const T = ensureDay(d);
+  Object.assign(plan, { pace, days: Math.min(PLAN_DAYS.long, o.total), est: o.min, ack: missedNow(plan, dNow) }); if (!T?.complete) plan.day = -1;
+  if (o.total - 1 > dNow) plan.recap = -1;      // la fin du plan recule : la reprise générale aura lieu à la nouvelle fin
+  saveProgress(id); S.view = 'home'; S.notice = { text: t('plNow', o.left, o.min) }; window.scrollTo?.(0, 0); render();
+}
+
+// ---------- « Déjà su » : test de positionnement avant le premier choix du pas (version 15c) ----------
+// L'étudiant coche les mots qu'il pense déjà savoir écrire ; chacun reçoit aussitôt une question écrite (Placement).
+// Rien n'est obligatoire : il peut passer, et le plan se calcule alors sur tous les mots.
+function openPlace(id) {
+  const d = S.decks.find(x => x.id === id), P = S.progress[id]; if (!d || !planned(d) || !P) return;
+  if (P._plan || !d.cards.some(c => isNew(P[c.id]))) return openPlan(id);
+  S.placeId = id; S.placePick = new Set(); S.view = 'place'; S.notice = null; S.session = null; window.scrollTo?.(0, 0); render();
+}
+const placeGo = n => `${n ? `<button class="primary" data-action="place-go">${t('plcGo', n)}</button>` : ''}<button class="${n ? 'secondary' : 'primary'}" data-action="place-skip">${t(n ? 'plcSkipSome' : 'plcSkip')}</button>`;
+function placeView() {
+  const d = S.decks.find(x => x.id === S.placeId), P = S.progress[d.id], fresh = d.cards.filter(c => isNew(P[c.id])), pick = S.placePick || new Set();
+  return `<button class="link" data-action="home">← ${t('back')}</button>
+    <h1>${t('plcTitle')}</h1><p class="lead" lang="${d.lang}">${esc(d.name)}</p>
+    <p class="planlead">${t('plcLead')}</p>
+    <p class="pacenote">${t('plcWhy')}</p>
+    <ul class="placelist" aria-label="${esc(t('plcListAria', fresh.length))}">${fresh.map(c => `<li><button type="button" class="pick" data-action="place-pick" data-card="${esc(c.id)}" aria-pressed="${pick.has(c.id)}" lang="${d.lang}">${esc(c.word)}</button></li>`).join('')}</ul>
+    <div class="stack placego" aria-live="polite">${placeGo(pick.size)}</div>`;
+}
+function startPlacement() {
+  const d = S.decks.find(x => x.id === S.placeId), P = S.progress[S.placeId]; if (!d || !P || P._plan || !S.placePick?.size) return;
+  d.help = helpFor(d);
+  S.session = new Placement(d, P, [...S.placePick]); S.placePick = new Set();
+  S.view = 'session'; S.notice = null; S.stepAt = 0; advance();
+}
+// « Tout revoir aujourd'hui » : la reprise générale à la demande, une fois par jour, quand le programme du jour est fait.
+// Le nombre de mots nouveaux du jour ne change pas : seules les révisions du programme augmentent.
+function recapNow(id) {
+  const d = S.decks.find(x => x.id === id), plan = S.progress[id]?._plan; if (!d || !planned(d) || !plan) return;
+  const T = ensureDay(d); if (!T.complete || T.recap || !T.stale) return;
+  plan.ask = T.d; plan.rev = Math.min(2000, (plan.rev || 0) + T.stale); saveProgress(id); startSession(id);
+}
+// Parcours adapté : proposé une seule fois, après deux jours travaillés et des mesures suffisantes, quand moins de trois
+// premières réponses sur quatre sont justes ou quand le programme du jour dépasse vingt minutes. L'appli ne nomme aucun
+// profil : elle propose des séances plus courtes, et l'étudiant décide. Il peut revenir en arrière depuis le menu du pas.
+function offerDue(d, P, T) {
+  const plan = P._plan, R = rates(S.measure); if (!plan || plan.offer || plan.small || !R.measured || plan.last + 1 - plan.missed < 2) return false;
+  return R.ok < OFFER.ok || minutes(T.rev * (2 - R.ok) + T.fresh * (perNew(d) + 1 - R.ok), R.sec) > OFFER.min;
+}
+function setSmall(id, on, offered = false) {
+  const plan = S.progress[id]?._plan; if (!plan) return;
+  plan.small = !!on; if (offered || plan.offer === 0) plan.offer = on ? 2 : 1;
+  S.paceOpen = null; S.paceOpts = null; saveProgress(id); toast(t(on ? 'plSmallOk' : 'plSmallEnd')); render();
 }
 // Jour manqué, quand rattraper coûte plus de cinq minutes par jour : l'étudiant choisit de garder la fin ou ses minutes.
 function keepPlan(id, v, k) {
@@ -523,18 +583,47 @@ function planView() {
       <p class="pacenote">${t('plNote_' + o.pace)}</p>
       ${!plan && o.total > d.days ? `<p class="pacenote">${t('plReady', d.days, pctOf(o.seen), pctOf(o.again))}</p>` : ''}
       <button class="${o.pace === 'mid' ? 'primary' : 'secondary'}" data-action="pace" data-pace="${o.pace}">${t('plPick', t('pace_' + o.pace))}</button></article>`;
+  // « Quand feras-tu ta séance ? » : décider à l'avance du moment aide à tenir un but (Gollwitzer et Sheeran 2006). Un
+  // geste, facultatif, au premier choix seulement ; la réponse règle l'heure du rappel d'agenda déjà présent dans l'appli.
+  const moment = plan ? '' : `<section class="moment card"><h2>${t('plMomQ')}</h2>
+      <div class="seg" role="group" aria-label="${esc(t('plMomQ'))}">${MOMENTS.map(([v, k]) => `<button type="button" data-action="moment" data-v="${v}" aria-pressed="${!!S.momentSet && S.remind.time === v}">${t(k)}</button>`).join('')}</div>
+      ${S.momentSet ? `<p class="pacenote">${t('plMomOk', esc(S.remind.time))} <button class="link" data-action="remind">${ICON.cal} ${t('remAdd')}</button></p>` : `<p class="pacenote">${t('plMomHint')}</p>`}</section>`;
+  // « J'ai moins de jours » : l'étudiant dit ses jours, l'appli répond ce qui sera prêt, sans rien embellir.
+  const dNow = plan ? Math.max(0, dayIndex(plan.start, now)) : 0, n = Math.round(Math.min(d.days, Math.max(0, S.ownDays || 0)));
+  const own = !n ? `<p class="ownlink"><button class="link" data-action="own-open">${t('plOwnLink')}</button></p>` : (o => `<section class="card ownbox"><h2>${t('plOwnQ')}</h2>
+      <div class="stepper"><button type="button" class="secondary" data-action="own-step" data-v="-1" aria-label="${esc(t('plOwnLess'))}"${n <= 1 ? ' disabled' : ''}>−</button><b class="ownn" aria-live="polite">${t('plOwnN', n)}</b><button type="button" class="secondary" data-action="own-step" data-v="1" aria-label="${esc(t('plOwnMore'))}"${n >= d.days ? ' disabled' : ''}>+</button></div>
+      <p class="ownsays">${plan ? t('plOwnSaysLeft', n, o.min) : t('plOwnSays', n, pctOf(o.seen), pctOf(o.again), o.min)}</p>
+      ${!plan && o.again < 0.9 ? `<p class="pacenote">${t('plOwnWarn')}</p>` : ''}
+      <button class="secondary" data-action="pace" data-pace="${OWN}">${t('plOwnPick', n)}</button></section>`)(planOption(d, P, OWN, dNow + n, now));
   return `<button class="link" data-action="home">← ${t('back')}</button>
     <h1>${t('plTitle')}</h1><p class="lead" lang="${d.lang}">${esc(d.name)}</p>
-    <p class="planlead">${plan ? t('plLeadChange', left) : t('plLead', d.cards.length, d.days)}</p>
+    <p class="planlead">${plan ? t('plLeadChange', left) : t('plLead', left, d.days)}</p>
     <p class="planlead why">${t('plWhy', d.days)}</p>
-    <section class="paces">${planOptions(d, P, now).map(card).join('')}</section>
+    ${moment}
+    <section class="paces">${(S.planOpts?.id === d.id ? S.planOpts.list : planOptions(d, P, now)).map(card).join('')}</section>
+    ${own}
     <p class="pacenote">${t('plFoot')}</p>
     ${others ? `<p class="pacenote">${t('plOthers', others)}</p>` : ''}`;
 }
-// Sur la carte du paquet : le pas choisi, le programme du jour et sa barre, jusqu'à « journée faite ».
+const MOMENTS = [['08:00', 'plMomAM'], ['12:30', 'plMomNoon'], ['19:00', 'plMomPM']];
+// La piste de pattes est le menu des pas (version 15c) : une empreinte par jour du plan, les jours passés en plein. Le nom
+// du pas n'est plus écrit sur la carte ; il reste dit aux lecteurs d'écran. Les trois pas ne sont calculés que menu ouvert.
+function paceMenu(d, P, T) {
+  const plan = P._plan, open = S.paceOpen === d.id, name = plan.pace === OWN ? t('pace_own') : t('pace_' + plan.pace), where = T.over ? t('plOverTag') : t('plDay', T.d + 1, plan.days);
+  const btn = `<button type="button" class="pacebtn" data-action="pace-menu" data-id="${d.id}" aria-expanded="${open}" aria-label="${esc(t('plMenuAria', name, where))}">${trail(plan.days, Math.min(plan.days, T.d + 1))}<span class="caret" aria-hidden="true">▾</span></button><span class="meta planday">${where}</span>`;
+  if (!open) return { btn, list: '' };
+  const row = o => `<button type="button" class="pacerow${plan.pace === o.pace ? ' current' : ''}" data-action="pace" data-id="${d.id}" data-pace="${o.pace}"${plan.pace === o.pace ? ' aria-current="true"' : ''} aria-label="${esc(t('plRowAria', t('pace_' + o.pace), o.left, o.min))}">${trail(o.total)}<span class="rowtext">${t('plRow', o.left, o.min)}${o.pace === 'mid' ? ` <span class="tag ok">${t('plAdvisedShort')}</span>` : ''}</span>${plan.pace === o.pace ? `<span class="tick" aria-hidden="true">✓</span>` : ''}</button>`;
+  const mine = plan.pace === OWN ? `<p class="pacerow current" aria-current="true">${trail(plan.days)}<span class="rowtext">${t('plRowOwn', Math.max(1, plan.days - T.d))}</span><span class="tick" aria-hidden="true">✓</span></p>` : '';
+  return { btn, list: `<div class="pacelist" role="group" aria-label="${esc(t('plMenuTitle'))}">${(S.paceOpts?.id === d.id ? S.paceOpts.list : planOptions(d, P)).map(row).join('')}${mine}
+      <p class="pacemore"><button class="link" data-action="plan" data-own="1" data-id="${d.id}">${t('plOwnLink')}</button>${plan.offer || plan.small ? `<button class="link" data-action="small" data-id="${d.id}" data-v="${plan.small ? 'off' : 'on'}">${t(plan.small ? 'plSmallOff' : 'plSmallOn')}</button>` : ''}</p></div>` };
+}
+// Sur la carte du paquet (version 15c, carte sobre) : le programme du jour en deux nombres et une barre, jusqu'à « journée
+// faite ». Aucune minute ici : elles ne servent qu'à comparer les pas, dans le menu de la piste. Une fois la journée
+// faite, la carte propose la seconde séance (mots ratés ou aidés du jour) et « Tout revoir » (reprise générale à la demande).
+const AGAIN = '<svg class="ico" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M19 12a7 7 0 1 1-2.2-5.1" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/><path d="M17.6 2.8v4.6h-4.6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 function planBlock(d, P, T, nextDays) {
-  const plan = P._plan, R = rates(S.measure);
-  if (!plan) return `<p class="planline">${t('plNone', d.cards.length, d.days)}</p><button class="primary" data-action="plan" data-id="${d.id}">${t('plChoose')}</button>`;
+  const plan = P._plan, R = ratesFor(d);
+  if (!plan) return `<p class="planline">${t('plNone', d.cards.filter(c => isNew(P[c.id])).length, d.days)}</p><button class="primary" data-action="place" data-id="${d.id}">${t('plBegin')}</button>`;
   const now = Date.now(), miss = T.over ? 0 : missedNow(plan, T.d) - plan.ack; let missed = '';
   if (miss > 0 && !T.complete) {
     const opt = { ok: R.ok, perNew: perNew(d) }, a = minutes(outlook(d, P, plan, now, opt).avg, R.sec), b = minutes(outlook(d, P, plan, now, { ...opt, days: Math.min(PLAN_DAYS.long, plan.days + miss) }).avg, R.sec);
@@ -542,15 +631,20 @@ function planBlock(d, P, T, nextDays) {
         <button class="secondary" data-action="plan-keep" data-v="min" data-k="${miss}" data-id="${d.id}">${t('plKeepMin', b, miss)}</button></div></div>`
       : `<p class="banner planmiss">${t('plMissed', miss, a)}</p>`;
   }
+  const offer = offerDue(d, P, T) ? `<div class="banner planoffer"><p>${t('plOffer', SMALL.fresh)}</p><div class="stack"><button class="secondary" data-action="offer" data-v="yes" data-id="${d.id}">${t('plOfferYes')}</button><button class="link" data-action="offer" data-v="no" data-id="${d.id}">${t('plOfferNo')}</button></div></div>` : '';
   const pct = T.total ? Math.min(100, Math.round(100 * T.done / T.total)) : 100;
-  return `<p class="planline">${trail(plan.days, Math.min(plan.days, T.d + 1))}<span><b>${t('pace_' + plan.pace)}</b> <span class="meta">${T.over ? t('plOverTag') : t('plDay', T.d + 1, plan.days)}</span></span>
-      <button class="link" data-action="plan" data-id="${d.id}">${t('plChange')}</button></p>
-    ${missed}
-    ${(m => `<p class="milestone">${T.d < d.days ? t('plMile', d.days, m.seen, m.total, m.again) : m.unseen ? t('plMileLate', d.days, m.unseen) : t('plMileDone', d.days, m.again, m.total)}</p>`)(milestone(d, P, plan, now))}
-    ${T.complete ? `<p class="rest">${T.over ? t('nothing', nextDays) : t('plDayDone')}</p>`
-      : `<p class="todayline">${t('plToday', T.freshLeft, T.revLeft, minutes(stepsLeft(T, { ok: R.ok, perNew: perNew(d) }), R.sec))}</p>
+  const more = `${T.weak ? `<button class="secondary" data-action="second" data-id="${d.id}">${AGAIN} ${t('plSecond', T.weak)}</button>` : ''}${T.stale ? `<button class="secondary" data-action="recap" data-id="${d.id}">${t('plRecap', T.stale)}</button>` : ''}`;
+  return `${missed}${offer}
+    ${T.complete ? `<p class="rest dayok">${T.over ? t('nothing', nextDays) : t('plDayDone')}</p>${more ? `<div class="stack daymore">${more}</div>` : ''}`
+      : `<p class="todayline"><b>${t('today')}</b>${T.freshLeft ? `<span class="cnt"><span class="plus" aria-hidden="true">+</span> ${tn('plNewN', T.freshLeft)}</span>` : ''}${T.revLeft ? `<span class="cnt">${AGAIN} ${t(T.recap ? 'plRevAllN' : 'plRevN', T.revLeft)}</span>` : ''}</p>
       <div class="daybar" role="progressbar" aria-label="${esc(t('plDayAria', T.done, T.total))}" aria-valuenow="${pct}" aria-valuemin="0" aria-valuemax="100"><span style="width:${pct}%"></span></div>
       <button class="primary" data-action="start" data-id="${d.id}">${t(T.done ? 'plResume' : 'plGo')}</button>`}`;
+}
+// Où en est l'étudiant par rapport aux jours conseillés, en un mot ; le détail n'apparaît qu'en cas de retard.
+function planStatus(d, P) {
+  const plan = P._plan, m = milestone(d, P, plan, Date.now());
+  const ok = k => `<span class="status ok"><span aria-hidden="true">✓</span> ${t(k)}</span>`, warn = (k, n) => `<span class="status late">${t(k, n)}</span>`;
+  return m.d >= d.days ? (m.unseen ? warn('plLateUnseen', m.unseen) : ok('plAllSeen')) : m.behind ? warn('plBehind', m.behind) : ok('plOnTime');
 }
 
 function deckCard(d) {
@@ -560,8 +654,9 @@ function deckCard(d) {
   const pct = Math.round(100 * s.stage.seen / s.stage.size);
   const held = !plan && pickNew(d, P, S.maxNew).length > roomFor(s.due, S.maxNew);
   const mute = voices.length && !voiceFor(d.lang) && d.cards.some(c => !c.audio);
+  const menu = plan && P._plan ? paceMenu(d, P, T) : null;
   return `<article class="deck card" style="--th:${hue(d.cards[0].theme || d.name)}">
-    <div><h2 lang="${d.lang}">${esc(d.name)}</h2><p class="meta">${esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang)} · ${d.level}${d.demo ? ' · ' + t('demo') : ''}</p></div>
+    <div class="deckhead"><div><h2 lang="${d.lang}">${esc(d.name)}</h2><p class="meta">${esc(Object.hasOwn(LANG_NAMES, d.lang) ? LANG_NAMES[d.lang] : d.lang)} · ${d.level}${d.demo ? ' · ' + t('demo') : ''}</p></div>${menu ? `<p class="planline">${menu.btn}</p>` : ''}</div>${menu?.list || ''}
     ${prairie(d, s, [], !canStart)}
     <div class="stagebar"><span>${t('stageN', s.stage.index)}</span>${trunkBar(pct, 'idle', t('stageAria', s.stage.index, s.stage.count, s.stage.seen, s.stage.size))}</div>
     ${plan ? planBlock(d, P, T, nextDays) : canStart ? `<button class="primary" data-action="start" data-id="${d.id}">${S.sandbox ? t('sbGo') : t('start', S.minutes)}</button>` : `<p class="rest">${t('nothing', nextDays)}</p>`}
@@ -570,7 +665,7 @@ function deckCard(d) {
     ${challengeLine(d, P)}
     ${matchLine(d, P)}
     ${d.cards.filter(c => !isNew(P[c.id])).length >= 6 ? `<button class="secondary race" data-action="race" data-id="${d.id}">${mouse(22)} ${t('raceBtn')}${P._race?.best ? ` <span class="meta">${t('raceBest', +P._race.best || 0)}</span>` : ''}</button>` : ''}
-    <button class="link" data-action="herd" data-id="${d.id}">${t('herdBtn', s.animals.length)}</button>
+    <p class="deckfoot">${plan && P._plan ? planStatus(d, P) : ''}<button class="link" data-action="herd" data-id="${d.id}">${t('herdBtn', s.animals.length)}</button></p>
   </article>`;
 }
 
@@ -967,7 +1062,7 @@ function editView() {
         <p class="sethint">${t('fRhythmHint')}</p>
         <label>${t('fDays')} <input name="days" type="number" min="${PLAN_DAYS.min}" max="${PLAN_DAYS.max}" step="1" inputmode="numeric" value="${d.days || ''}" autocomplete="off"><span class="sethint">${t('fDaysHint', PLAN_DAYS.min, PLAN_DAYS.max)}</span></label>
         <label class="pick"><input type="checkbox" name="seen"${d.seen ? ' checked' : ''}> <span>${t('fSeen')}</span></label><p class="sethint">${t('fSeenHint')}</p></fieldset>
-      ${d.days ? (e => `<p class="banner" role="status">${t('fEstimate', d.cards.length, d.days, minutes(e.avg), minutes(e.max))}</p>`)(simulate({ fresh: d.cards.length, days: d.days, perNew: perNew(d), cap: d.days })) : ''}
+      ${d.days ? (e => `<p class="banner" role="status">${t('fEstimate', d.cards.length, d.days, minutes(e.avg, startSec(d)), minutes(e.max, startSec(d)), startSec(d))}</p>`)(simulate({ fresh: d.cards.length, days: d.days, perNew: perNew(d), cap: d.days })) : ''}
       <button class="primary">${t('save')}</button></form></section>
     <section class="card">
       <div class="row tools"><input type="search" data-input="search" placeholder="${t('eSearch')}" aria-label="${t('eSearch')}">
@@ -1122,7 +1217,7 @@ async function restoreBackup(file) {
     let d; try { d = deckFromJSON(JSON.stringify(raw)); } catch { continue; }
     d.id = safeKey(raw?.id) || d.id;
     const cur = S.progress[d.id] || cleanProgress(await store.get(pkey(d.id)));
-    decks.push({ deck: d, saved: b.progress[d.id], replaced: countReplaced(cur, b.progress[d.id]), added: countAdded(cur, b.progress[d.id]), fresh: !S.decks.some(x => x.id === d.id) });
+    decks.push({ deck: d, saved: b.progress[d.id], replaced: countReplaced(cur, b.progress[d.id]), added: countAdded(cur, b.progress[d.id]), late: countLate(cur, b.progress[d.id]), fresh: !S.decks.some(x => x.id === d.id) });
   }
   if (!decks.length) { S.notice = { bad: true, text: t('bkBad') }; return render(); }
   const when = new Date(b.date); S.pendingBackup = { decks, date: Number.isNaN(+when) ? '' : when.toLocaleDateString(uiLang()) }; S.notice = null; render();
@@ -1149,7 +1244,7 @@ function backupView() {
       <p class="sethint">${t('bkIntro')}</p>
       ${iosSafari() ? `<p class="banner warn">${t('bkIos')}</p>` : ''}
       ${late ? `<p class="banner warn">${days < 0 ? t('bkNever') : t('bkLate', days)}</p>` : days >= 0 ? `<p class="sethint">${t('bkWhen', days)}</p>` : ''}
-      ${S.pendingBackup ? `<div class="banner warn bkask" role="alert"><p><b>${S.pendingBackup.date ? t('bkAsk', esc(S.pendingBackup.date)) : t('bkAskNoDate')}</b></p><ul>${S.pendingBackup.decks.map(x => `<li><span lang="${esc(x.deck.lang)}">${esc(x.deck.name)}</span> : ${t(x.fresh ? 'bkAskNew' : 'bkAskOld', x.deck.cards.length, x.replaced, x.added)}</li>`).join('')}</ul>
+      ${S.pendingBackup ? `<div class="banner warn bkask" role="alert"><p><b>${S.pendingBackup.date ? t('bkAsk', esc(S.pendingBackup.date)) : t('bkAskNoDate')}</b></p><ul>${S.pendingBackup.decks.map(x => `<li><span lang="${esc(x.deck.lang)}">${esc(x.deck.name)}</span> : ${t(x.fresh ? 'bkAskNew' : 'bkAskOld', x.deck.cards.length, x.replaced, x.added)}${x.late ? ` ${t('bkAskLate', x.late)}` : ''}</li>`).join('')}</ul>
         <div class="row"><button class="primary" data-action="backup-yes">${t('bkYes')}</button><button class="secondary" data-action="backup-no">${t('cancel')}</button></div></div>` : ''}
       <div class="stack"><button class="secondary" data-action="backup">${t('bkSave')}</button>
       <label class="secondary filebtn">${t('bkRestore')}<input type="file" class="vh" data-file="backup" accept=".json,application/json"></label></div>
@@ -1232,17 +1327,25 @@ function raceView() {
 
 // ---------- Session ----------
 
-function startSession(id, force = false) {
+function startSession(id, force = false, mode = '') {
   const deck = S.decks.find(d => d.id === id);
   deck.help = helpFor(deck);
   let plan = null;
   if (planned(deck)) {
     // Plan personnel : pas de séance sans pas choisi ; la séance contient le programme du jour, ou ce qu'il en reste.
-    const P = S.progress[id]; if (!P._plan) return openPlan(id);
-    const T = ensureDay(deck); if (T.complete) return render();
-    P._plan.ack = missedNow(P._plan, T.d);      // commencer sans choisir, après un jour manqué : la fin du plan ne bouge pas
-    plan = { fresh: T.freshLeft, dueBy: dayEnd(Date.now()) };
+    const P = S.progress[id]; if (!P._plan) return openPlace(id);
+    const now = Date.now(), T = ensureDay(deck), weak = weakIds(deck, P, now), small = P._plan.small === true;
+    if (T.complete) {      // journée faite : seule la seconde séance (mots ratés ou aidés du jour) peut encore s'ouvrir
+      if (mode !== 'second' || !weak.length) return render();
+      plan = { fresh: 0, dueBy: -1, again: weak };
+    } else {
+      P._plan.ack = missedNow(P._plan, T.d);      // commencer sans choisir, après un jour manqué : la fin du plan ne bouge pas
+      // Reprise générale : ses fiches s'ajoutent aux révisions. Séances courtes : cinq mots nouveaux et dix révisions au
+      // plus, et les mots ratés ou aidés de la séance précédente reviennent en tête de la suivante.
+      plan = { fresh: T.freshLeft, dueBy: dayEnd(now), also: T.recap ? staleIds(deck, P, now) : [], again: small ? weak : [], chunk: small ? SMALL : null };
+    }
   }
+  S.paceOpen = null; S.paceOpts = null;      // le menu des pas ne reste pas ouvert derrière une séance
   S.stageBefore = summary(deck, S.progress[id]).stage;
   // Mode essai : ni frein sur les nouveaux mots, ni fin de session à l'heure (l'enseignant examine chaque écran à son rythme).
   S.session = new Session(deck, S.progress[id], { minutes: S.sandbox ? 600 : S.minutes, maxNew: S.maxNew, force: force || S.sandbox, audio: canListen(deck), plan });
@@ -1441,7 +1544,7 @@ function bankView(step, lang) {
 
 function feedbackView(step, lang) {
   const { card, activity: a } = step, fb = S.feedback, s = S.session, help = s.deck.help;
-  const title = fb.ok ? t(['ok1', 'ok2', 'ok3'][fb.n % 3]) : a.multi ? t('almost') : t('no');
+  const plc = !!s.placement, title = plc ? t(fb.ok ? 'plcYes' : 'plcNo') : fb.ok ? t(['ok1', 'ok2', 'ok3'][fb.n % 3]) : a.multi ? t('almost') : t('no');
   if (a.multi) {
     const missed = (S.local?.missed || S.local?.errors || []).map(id => s.deck.byId[id]);
     return `<div class="card feedback ${fb.ok ? 'good' : 'soft'}" role="status" aria-live="polite"><h3>${title}</h3>
@@ -1456,14 +1559,14 @@ function feedbackView(step, lang) {
   let sp = null;
   if (a.cloze && fb.typed && fb.near) { const d = diffParts(a.answer.toLowerCase(), fb.typed.trim().toLowerCase()), i = d[0].length, j = i + d[1].length; sp = [a.answer.slice(0, i), a.answer.slice(i, j), a.answer.slice(j)]; }
   const ex = a.type === 'order' ? '' : a.type === 'speak' ? a.model : card.examples.find(e => !a.cloze || e.replace(/[’`´]/g, "'") !== a.cloze.text) || card.examples[0];
-  const move = fb.retry ? '' : fb.boxAfter > fb.boxBefore ? t('boxUp', fb.boxAfter) : fb.boxAfter < fb.boxBefore ? t('boxDown', fb.boxAfter) : '';
-  const when = s.challenge || fb.ask ? '' : fb.ok && !fb.retry ? t('nextIn', Math.max(1, fb.days)) : fb.ok ? '' : t('nextSoon');
-  const wins = [fb.joined ? t('joined') : '', fb.tamed ? t('tamed', card.word, s.tamed.length, s.today.length) : '',
+  const move = fb.retry || plc ? '' : fb.boxAfter > fb.boxBefore ? t('boxUp', fb.boxAfter) : fb.boxAfter < fb.boxBefore ? t('boxDown', fb.boxAfter) : '';
+  const when = s.challenge || plc || fb.ask ? '' : fb.ok && !fb.retry ? t('nextIn', Math.max(1, fb.days)) : fb.ok ? '' : t('nextSoon');
+  const wins = plc ? (fb.ok ? [t('plcJoined')] : []) : [fb.joined ? t('joined') : '', fb.tamed ? t('tamed', card.word, s.tamed.length, s.today.length) : '',
     fb.ok && [3, 5, 10].includes(s.stats.streak) ? t('streak', s.stats.streak) : ''].filter(Boolean);
   return `<div class="card feedback ${fb.ok ? 'good' : 'soft'}" role="status" aria-live="polite">
     <h3>${title}</h3>
     ${wins.length ? `<p class="win">${mascot(44, 'joy', Math.max(1, fb.boxAfter))}<span>${wins.map(esc).join('<br>')}</span></p>` : ''}
-    ${fb.ok ? '' : `<p class="oopsrow">${mascot(46, 'oops', Math.max(1, fb.boxAfter))}<span>${fb.pun ? esc(t('puns')[fb.n % t('puns').length]) : ''}</span></p>`}
+    ${fb.ok ? '' : plc ? `<p class="explain">${t('plcLater')}</p>` : `<p class="oopsrow">${mascot(46, 'oops', Math.max(1, fb.boxAfter))}<span>${fb.pun ? esc(t('puns')[fb.n % t('puns').length]) : ''}</span></p>`}
     ${explain ? `<p class="explain">${esc(explain)}</p>` : ''}
     ${note ? `<p class="explain">${esc(note)}</p>` : ''}
     ${sp ? `<p class="spelling" lang="${lang}">${esc(sp[0])}<mark>${esc(sp[1])}</mark>${esc(sp[2])}</p>` : ''}
@@ -1481,7 +1584,7 @@ function feedbackView(step, lang) {
 // ou, pour un choix, « Coup de chance ». Ces boutons remplacent « Continuer » : ils ne coûtent aucun appui de plus.
 // Dans un défi ou un aperçu, rien n'est enregistré : la question n'est pas posée.
 function ask(result, extra = {}) {
-  if (S.session.challenge) { cheer(commit(result, extra)); return render(); }
+  if (S.session.challenge || S.session.placement) { cheer(commit(result, extra)); return render(); }      // défi, aperçu, preuve du « déjà su » : rien à déclarer
   const box = boxOf(S.session.progress[S.step.card.id]);
   S.feedback = { ...result, ...extra, ask: true, retry: true, boxBefore: box, boxAfter: box, days: 0, n: S.session.served };
   sfx('pop'); autoSpeak(); render();
@@ -1491,11 +1594,11 @@ function commit(result, extra = {}) {
   const step = S.step, s = S.session, before = boxOf(s.progress[step.card.id]);
   const st = s.answer(step, result.ok, undefined, { assisted: extra.assisted, hesitated: extra.hesitated, chosen: result.ok || extra.lucky ? null : extra.chosen, missed: extra.missed });
   // Mesure locale : seule la première réponse à une question compte pour le taux de réussite, jamais un rattrapage.
-  if (!s.challenge && !step.activity.multi && !step.item.retry) { addTry(S.measure, !!result.ok); saveMeasure(); }
+  if (!s.challenge && !s.placement && !step.activity.multi && !step.item.retry) { addTry(S.measure, !!result.ok); saveMeasure(); }      // les mots cochés « déjà sus » ne disent rien du taux de réussite
   if (s.planned && s.progress._plan && !step.activity.multi) markWorked(s.progress._plan);      // la journée est travaillée ; les jours manqués sont constatés
   const after = boxOf(st), retry = !!s.challenge || (!!step.item.retry && after === before);
   S.feedback = { ...result, ...extra, retry, boxBefore: before, boxAfter: after, days: dueInDays(st), n: s.served,
-    tamed: s.lastTamed, joined: before < HERD_BOX && after >= HERD_BOX, pun: !result.ok && !step.activity.multi && (S.errors = (S.errors || 0) + 1) % 3 === 1 };
+    tamed: s.lastTamed, joined: before < HERD_BOX && after >= HERD_BOX, pun: !result.ok && !s.placement && !step.activity.multi && (S.errors = (S.errors || 0) + 1) % 3 === 1 };
   saveProgress(s.deck.id); autoSpeak();
   return S.feedback;
 }
@@ -1604,7 +1707,7 @@ function sessionView() {
       ${trunkBar(pct, S.feedback ? (S.feedback.ok ? 'joy' : 'oops') : 'idle', t('sessionBar'))}
       ${dots}
     </div>
-    <p class="where"><span class="chip box">${s.tour ? (s.box ? t('tourN', s.box) : t('tourAll')) : s.friendly ? t('fmChip') : s.challenge ? t('challengeN', S.chStage) : step.intro ? t('newCard') : step.activity.multi ? t('recap') : t('box', +box || 1)}</span></p>
+    <p class="where"><span class="chip box">${s.placement ? t('plcChip') : s.tour ? (s.box ? t('tourN', s.box) : t('tourAll')) : s.friendly ? t('fmChip') : s.challenge ? t('challengeN', S.chStage) : step.intro ? t('newCard') : step.activity.multi ? t('recap') : t('box', +box || 1)}</span></p>
     ${step.intro ? introView(step.card, lang) : activityView(step, lang)}`;
 }
 
@@ -1635,6 +1738,15 @@ function doneView() {
       <div class="row">${S.chWon ? '' : `<button class="secondary" data-action="challenge" data-id="${deck.id}" data-stage="${S.chStage}">${t('chRetry')}</button>`}<button class="primary" data-action="home" autofocus>${t('home')}</button></div>
     </div>`;
   }
+  if (S.session.placement) {              // test « déjà su » : ce qui est prouvé rejoint le troupeau, le reste s'apprendra ; puis le choix du pas
+    const { stats, deck } = S.session, left = deck.cards.filter(c => isNew(S.progress[deck.id][c.id])).length;
+    return `<div class="card done">${mascot(104, stats.known.length ? 'joy' : 'idle', 4)}
+      <h2>${t('plcDone')}</h2>
+      ${stats.known.length ? `<p class="big">${t('plcKnownN', stats.known.length)}</p><p>${stats.known.map(id => `<span class="chip" lang="${deck.lang}">${esc(deck.byId[id].word)}</span>`).join(' ')}</p>` : `<p>${t('plcNone')}</p>`}
+      <p>${t('plcLeft', left)}</p>
+      <div class="row"><button class="primary" data-action="plan" data-id="${deck.id}" autofocus>${t('plChoose')}</button></div>
+    </div>`;
+  }
   const { stats, deck, tamed, today } = S.session, P = S.progress[deck.id];
   const words = ids => [...new Set(ids)].map(id => `<span class="chip" lang="${deck.lang}">${esc(deck.byId[id].word)}</span>`).join(' ');
   const T = S.session.planned ? ensureDay(deck) : null;
@@ -1653,8 +1765,9 @@ function doneView() {
     <p class="quip">${t('quips')[(stats.answered + s.animals.length) % t('quips').length]}</p>
     ${line('doneHerd', stats.herd)}${line('doneUp', stats.up)}${line('doneAgain', stats.again)}
     ${T ? `<p class="win planwin">${trail(1)}<span>${T.complete ? t('plDayDone') : t('plDonePart', T.freshLeft, T.revLeft)}</span></p>` : ''}
+    ${T?.complete && T.weak ? `<p class="pacenote">${t('plSecondWhy', T.weak)}</p>` : ''}
     ${S.session.held ? `<p class="heldline">${t('heldDone')} <button class="link" data-action="start-force" data-id="${deck.id}">${t('heldForce')}</button></p>` : ''}
-    <div class="row">${more ? `<button class="secondary" data-action="start" data-id="${deck.id}">${t(T ? 'plResume' : 'again')}</button>` : ''}${other ? `<button class="secondary" data-action="start" data-id="${other.deck.id}">${t('nextList', esc(other.deck.name), other.n)}</button>` : ''}<button class="primary" data-action="home" autofocus>${t('home')}</button></div>
+    <div class="row">${more ? `<button class="secondary" data-action="start" data-id="${deck.id}">${t(T ? 'plResume' : 'again')}</button>` : ''}${T?.complete && T.weak ? `<button class="secondary" data-action="second" data-id="${deck.id}">${AGAIN} ${t('plSecond', T.weak)}</button>` : ''}${other ? `<button class="secondary" data-action="start" data-id="${other.deck.id}">${t('nextList', esc(other.deck.name), other.n)}</button>` : ''}<button class="primary" data-action="home" autofocus>${t('home')}</button></div>
     <button class="link" data-action="share">${t('share')}</button>
     <button class="link" data-action="remind">${ICON.bell} ${t('remDone')}</button>
   </div>`;
@@ -1712,7 +1825,7 @@ function paint() {
   if (S.locked) { document.documentElement.lang = 'fr'; app.innerHTML = gateView(); app.querySelector('[autofocus]')?.focus({ preventScroll: true }); return; }
   document.documentElement.lang = uiLang();
   const open = app.querySelector('details.settings')?.open;
-  app.innerHTML = (S.sandbox && !['home', 'teacher'].includes(S.view || 'home') ? sandboxBar(false) : '') + (S.view === 'session' ? sessionView() : S.view === 'done' ? doneView() : S.view === 'teacher' ? teacherView() : S.view === 'rules' ? rulesView() : S.view === 'herd' ? herdView() : S.view === 'images' ? imagesView() : S.view === 'edit' ? editView() : S.view === 'sort' && TEACHER && S.decks.some(d => d.id === S.sortId) ? sortView() : S.view === 'card' ? cardView() : S.view === 'race' ? raceView() : S.view === 'privacy' ? privacyView() : S.view === 'plan' && S.decks.some(d => d.id === S.planId && planned(d)) && S.progress[S.planId] ? planView() : home());
+  app.innerHTML = (S.sandbox && !['home', 'teacher'].includes(S.view || 'home') ? sandboxBar(false) : '') + (S.view === 'session' ? sessionView() : S.view === 'done' ? doneView() : S.view === 'teacher' ? teacherView() : S.view === 'rules' ? rulesView() : S.view === 'herd' ? herdView() : S.view === 'images' ? imagesView() : S.view === 'edit' ? editView() : S.view === 'sort' && TEACHER && S.decks.some(d => d.id === S.sortId) ? sortView() : S.view === 'card' ? cardView() : S.view === 'race' ? raceView() : S.view === 'privacy' ? privacyView() : S.view === 'plan' && S.decks.some(d => d.id === S.planId && planned(d)) && S.progress[S.planId] ? planView() : S.view === 'place' && S.decks.some(d => d.id === S.placeId && planned(d)) && S.progress[S.placeId] && !S.progress[S.placeId]._plan ? placeView() : home());
   if (open && app.querySelector('details.settings')) app.querySelector('details.settings').open = true;
   if (S.view === 'session' || S.view === 'done') {
     app.querySelector('[autofocus]')?.focus({ preventScroll: true });
@@ -1733,8 +1846,27 @@ app.addEventListener('click', e => {
   else if (action === 'sb-reset-yes') { if (!S.sandbox || !S.confirmSb || !armed()) return; sandboxReset(); }
   else if (action === 'gate-copy') { navigator.clipboard?.writeText(S.door?.line || '').then(() => toast(t('copied')), () => app.querySelector('[data-line]')?.select()); }
   else if (action === 'start-force') startSession(id, true);
-  else if (action === 'plan') openPlan(id);
-  else if (action === 'pace') { if (S.view === 'plan') choosePace(S.planId, b.dataset.pace); }
+  else if (action === 'plan') openPlan(id, b.dataset.own === '1');
+  else if (action === 'pace') { if (S.view === 'plan') choosePace(S.planId, b.dataset.pace, S.ownDays); else if ((S.view || 'home') === 'home' && S.paceOpen === id) choosePace(id, b.dataset.pace); }
+  else if (action === 'pace-menu') { if ((S.view || 'home') !== 'home') return; const dk = S.decks.find(x => x.id === id && planned(x)), Pk = S.progress[id]; if (!dk || !Pk?._plan) return; S.paceOpen = S.paceOpen === id ? null : id; S.paceOpts = S.paceOpen ? { id, list: planOptions(dk, Pk) } : null; render(); app.querySelector(`.pacebtn[data-id="${CSS.escape(id || '')}"]`)?.focus(); }
+  else if (action === 'own-open' || action === 'own-step') {
+    const d = S.view === 'plan' ? S.decks.find(x => x.id === S.planId) : null; if (!d || !planned(d)) return;
+    S.ownDays = action === 'own-open' ? Math.min(d.days, 3) : Math.min(d.days, Math.max(1, (S.ownDays || 1) + (b.dataset.v === '1' ? 1 : -1)));
+    render(); app.querySelector(action === 'own-open' ? '.ownbox .stepper button:not([disabled])' : `.ownbox [data-action=own-step][data-v="${b.dataset.v === '1' ? '1' : '-1'}"]:not([disabled]), .ownbox .stepper button:not([disabled])`)?.focus();
+  }
+  else if (action === 'moment') { const m = MOMENTS.find(x => x[0] === b.dataset.v); if (!m || S.view !== 'plan') return; S.remind = { ...S.remind, time: m[0], days: 'daily' }; S.momentSet = true; saveSettings(); render(); app.querySelector(`[data-action=moment][data-v="${m[0]}"]`)?.focus(); }
+  else if (action === 'place') openPlace(id);
+  else if (action === 'place-pick') {      // cocher un mot : sans redessiner l'écran, pour ne perdre ni la place ni le focus
+    const d = S.view === 'place' ? S.decks.find(x => x.id === S.placeId) : null, cid = b.dataset.card; if (!d || !Object.hasOwn(d.byId, cid) || !isNew(S.progress[d.id]?.[cid])) return;
+    const pick = S.placePick ??= new Set(); if (pick.has(cid)) pick.delete(cid); else pick.add(cid);
+    b.setAttribute('aria-pressed', String(pick.has(cid))); const go = app.querySelector('.placego'); if (go) go.innerHTML = placeGo(pick.size);
+  }
+  else if (action === 'place-go') { if (S.view === 'place') startPlacement(); }
+  else if (action === 'place-skip') { if (S.view === 'place') openPlan(S.placeId); }
+  else if (action === 'second') { if (['home', 'done'].includes(S.view || 'home') && S.decks.some(x => x.id === id)) startSession(id, false, 'second'); }
+  else if (action === 'recap') { if ((S.view || 'home') === 'home') recapNow(id); }
+  else if (action === 'offer') { if ((S.view || 'home') === 'home') setSmall(id, b.dataset.v === 'yes', true); }
+  else if (action === 'small') { if ((S.view || 'home') === 'home' && S.paceOpen === id) setSmall(id, b.dataset.v === 'on'); }
   else if (action === 'plan-keep') keepPlan(id, b.dataset.v, +b.dataset.k);
   else if (action === 'next') advance();
   else if (action === 'home' || action === 'quit') { stopRace(); dropRecording(); if (S.session) { saveProgress(S.session.deck.id); if (!S.session.challenge) saveMeasure(); } S.stepAt = 0; S.view = 'home'; S.session = null; window.scrollTo?.(0, 0); render(); }

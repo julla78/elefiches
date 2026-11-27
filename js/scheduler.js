@@ -6,6 +6,15 @@ const engine = fsrs(generatorParameters({ request_retention: 0.9, enable_fuzz: t
 const DAY = 86400000;
 
 export const HERD_BOX = 4;      // un mot rejoint le troupeau quand il atteint la boîte 4 (rappel écrit réussi après espacement)
+// « Déjà su » (version 15c) : un mot que l'étudiant a coché puis écrit de tête, du premier coup et sans aide, avant de
+// commencer son plan. Il rejoint le troupeau et n'est redemandé qu'à la reprise générale ; tant qu'il est réussi sans
+// aide, il ne revient jamais avant trente-cinq jours (la durée d'un cours de cinq semaines). Raté ou aidé une seule
+// fois, il redevient un mot comme les autres. Une déclaration ne suffit jamais : c'est la réponse écrite qui prouve.
+export const KNOWN_DAYS = 35;
+export function known(now = Date.now()) {
+  const st = review(undefined, 'good', now);
+  return { ...st, box: HERD_BOX, born: now, known: true, fsrs: { ...st.fsrs, due: now + KNOWN_DAYS * DAY, scheduled_days: KNOWN_DAYS, last_review: now } };
+}
 
 // grade : 'again' (raté), 'hard' (réussi en reconnaissance : preuve faible), 'good' (réussi en rappel écrit)
 export function review(state, grade, now = Date.now()) {
@@ -18,11 +27,13 @@ export function review(state, grade, now = Date.now()) {
   catch { ({ card } = engine.next(createEmptyCard(new Date(now)), new Date(now), rating)); }      // état de mémoire illisible : on repart d'une fiche neuve
   const box0 = state?.box ?? 1;
   const box = grade === 'again' ? Math.max(1, box0 - 1) : Math.min(5, box0 + 1);
-  return {
+  const out = {
     seen: true, box, born: state?.born,
     fsrs: { ...card, due: card.due.getTime(), last_review: card.last_review ? card.last_review.getTime() : now },
     lastOk: grade !== 'again',
   };
+  if (state?.known === true && grade === 'good') { out.known = true; out.fsrs.due = Math.max(out.fsrs.due, now + KNOWN_DAYS * DAY); }
+  return out;
 }
 
 export const isNew = st => !st || !st.seen;
@@ -74,6 +85,7 @@ export function shiftProgress(P, ms) {
     else {
       out[id] = { ...st };
       if ('born' in st) out[id].born = back(st.born);
+      if ('weak' in st) out[id].weak = back(st.weak);
       if (st.fsrs && typeof st.fsrs === 'object') out[id].fsrs = { ...st.fsrs, due: back(st.fsrs.due), last_review: back(st.fsrs.last_review) };
     }
   }

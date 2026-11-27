@@ -1,6 +1,6 @@
 // Éléfiches — déroulement d'une session : quelles fiches, dans quel ordre, sous quelle forme.
 // Les questions se répondent par un choix ou par une réponse courte écrite (un mot ou une expression).
-import { review, isNew, isDue, boxOf, HERD_BOX } from './scheduler.js';
+import { review, isNew, isDue, boxOf, HERD_BOX, known } from './scheduler.js';
 import { check, variants, articleOf, visible } from './match.js';
 import { spec, LIMITS } from './levels.js';
 
@@ -477,6 +477,12 @@ export class Session {
   // programme qui la borne, pas un minuteur. Sans plan, rien ne change (durée choisie, « Appétit du jour », frein).
   // Paquet « mots déjà vus en classe » (deck.seen) : pas d'écran de découverte ; la première question d'un mot nouveau
   // demande de l'écrire à partir de son sens, et la fiche complète s'affiche après la réponse, juste ou fausse.
+  // Version 15c, toujours en plan personnel :
+  //   plan.also  : fiches de la reprise générale, ajoutées aux révisions du jour (enregistrées comme des révisions) ;
+  //   plan.again : seconde séance. Les mots dont la première réponse du jour a été ratée ou aidée sont redemandés, à
+  //                l'écrit quand la fiche le permet. Comme tout rattrapage, cette réponse ne déplace pas la fiche : seule
+  //                la première réponse du jour compte pour le calendrier ;
+  //   plan.chunk : séances courtes du parcours adapté ({fresh, rev} : mots nouveaux et révisions au plus par séance).
   constructor(deck, progress, { minutes = 5, maxNew = 3, now = Date.now(), rnd = Math.random, force = false, audio = false, plan = null } = {}) {
     Object.assign(this, { deck, progress, rnd, audio, startedAt: now, endAt: plan ? Infinity : now + minutes * 60000, planned: !!plan, noIntro: deck.seen === true });
     // Niveau A1, mots déjà vus en classe : écrire d'emblée un mot entier dépasse ce que le niveau permet. L'étudiant
@@ -485,13 +491,15 @@ export class Session {
     this.ease = this.noIntro && deck.level === 'A1';
     this.stats = { answered: 0, ok: 0, fresh: 0, up: [], again: [], herd: [], streak: 0, best: 0 };
     this.served = 0; this.today = []; this.tamed = []; this.waiting = new Set();
-    const due = deck.cards.filter(c => isDue(progress[c.id], plan ? plan.dueBy : now))
-      .sort((a, b) => (progress[a.id].fsrs?.due ?? 0) - (progress[b.id].fsrs?.due ?? 0));
+    const also = new Set(plan?.also || []), chunk = plan?.chunk || null;
+    const due = deck.cards.filter(c => isDue(progress[c.id], plan ? plan.dueBy : now) || (also.has(c.id) && !isNew(progress[c.id])))
+      .sort((a, b) => (progress[a.id].fsrs?.due ?? 0) - (progress[b.id].fsrs?.due ?? 0)).slice(0, chunk ? Math.max(0, chunk.rev) : Infinity);
     const reviews = due.map(c => ({ id: c.id, kind: 'quiz' }));
+    const again = (plan?.again || []).filter(id => deck.byId[id] && !isNew(progress[id]) && !due.some(c => c.id === id)).map(id => ({ id, kind: 'quiz', retry: true, second: true, force: 'type' }));
     // Principe de Leitner : les révisions passent avant les nouveautés. Introduire trop de mots nouveaux quand les
     // révisions s'accumulent fait s'effondrer l'apprentissage (Reddy et al., 2016) ; les seuils (10 et 20) sont un choix pratique.
     // L'étudiant garde la main : « J'en veux quand même » (force) lève ce frein pour la session.
-    const room = plan ? Math.max(0, Math.round(plan.fresh) || 0) : force ? maxNew : roomFor(due.length, maxNew);
+    const room = plan ? Math.min(Math.max(0, Math.round(plan.fresh) || 0), chunk ? Math.max(0, chunk.fresh) : Infinity) : force ? maxNew : roomFor(due.length, maxNew);
     const fresh = plan ? orderNew(deck, progress, room, now) : pickNew(deck, progress, room);
     this.held = !plan && room < maxNew && pickNew(deck, progress, maxNew).length > fresh.length;
     this.today = fresh.map(c => c.id);
@@ -508,8 +516,8 @@ export class Session {
     const q = reviews.splice(0, 2);
     news.forEach((item, i) => { q.push(item); if (i % 2 === 1 && reviews.length) q.push(reviews.shift()); });
     q.push(...reviews);
-    this.queue = q;
-    this.total = q.length;
+    this.queue = [...again, ...q];      // les mots à redemander d'abord : ils sont loin de leur première réponse
+    this.total = this.queue.length;
   }
 
   // Prochaine étape, ou null quand la session est finie. Passé la durée choisie, on n'introduit plus rien.
@@ -558,11 +566,13 @@ export class Session {
       const fresh = isNew(P[card.id]);
       P[card.id] = review(P[card.id], grade, now);
       if (fresh) { P[card.id].born = now; this.stats.fresh++; }      // sans écran de découverte, le mot naît à sa première réponse
+      if (this.planned && grade !== 'good') P[card.id].weak = now;      // raté, aidé ou hésité : proposé en seconde séance le jour même
       if (P[card.id].box > before) this.stats.up.push(card.id);
       if (before < HERD_BOX && P[card.id].box >= HERD_BOX) this.stats.herd.push(card.id);
     };
     const twoStep = this.today.includes(card.id) && (this.noIntro ? this.ease : card.clozes.length > 0);      // mot déjà vu en classe : une réponse écrite suffit, précédée d'un choix en A1
     let tamedNow = false;
+    if (item.second && P[card.id]) delete P[card.id].weak;      // redemandé : il ne le sera plus aujourd'hui
     if (!item.retry) {                                   // première réponse du jour sur cette fiche
       this.stats.answered++;
       if (ok) this.stats.ok++; else this.stats.again.push(card.id);
@@ -589,6 +599,38 @@ export class Session {
     return P[card.id];
   }
 
+  get remaining() { return this.queue.length; }
+}
+
+// « Déjà su » (version 15c) : avant de choisir son pas, l'étudiant coche les mots qu'il pense savoir écrire. Chaque mot
+// coché reçoit aussitôt une question écrite à partir du sens, sans indice, le mot n'étant pas montré ; la forme exacte et
+// l'article sont exigés comme partout. Réussi du premier coup : le mot est « déjà su » (scheduler.js, known). Raté, aidé
+// par le second essai, ou impossible à écrire (expression en deux morceaux) : il reste un mot à apprendre, sans pénalité.
+// Les questions arrivent dans le désordre, pour que la liste que l'étudiant vient de lire ne lui serve pas d'appui.
+export class Placement {
+  constructor(deck, progress, ids, { rnd = Math.random } = {}) {
+    Object.assign(this, { deck, progress, rnd, placement: true, planned: false, today: [], tamed: [], served: 0 });
+    this.stats = { answered: 0, ok: 0, known: [], later: [], streak: 0, best: 0, again: [], up: [], herd: [], fresh: 0 };
+    this.queue = shuffle([...new Set(ids)].filter(id => deck.byId[id] && isNew(progress[id])), rnd).map(id => ({ id, kind: 'quiz', first: true }));
+    this.total = this.queue.length;
+  }
+  next() {
+    for (let item = this.queue.shift(); item; item = this.queue.shift()) {
+      const card = this.deck.byId[item.id], activity = buildActivity(this.deck, card, 5, this.rnd, { force: 'type' });
+      if (activity?.type !== 'type') { this.stats.later.push(card.id); continue; }      // pas de preuve écrite possible : le mot s'apprendra avec les autres
+      this.served++;
+      return { item, card, activity: { ...activity, hint: '' } };
+    }
+    return null;
+  }
+  answer(step, ok, now = Date.now(), info = {}) {
+    const { card } = step, proven = !!ok && !info.assisted;
+    if (step.item.done) return this.progress[card.id];      // une réponse déjà enregistrée ne se rejoue pas
+    step.item.done = true; this.stats.answered++;
+    if (proven) { this.stats.ok++; this.stats.known.push(card.id); this.progress[card.id] = known(now); } else this.stats.later.push(card.id);
+    this.stats.streak = proven ? this.stats.streak + 1 : 0; this.stats.best = Math.max(this.stats.best, this.stats.streak);
+    return this.progress[card.id];
+  }
   get remaining() { return this.queue.length; }
 }
 

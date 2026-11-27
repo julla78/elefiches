@@ -92,7 +92,7 @@ ${spelling}
 RÈGLES ÉLIMINATOIRES
 Une fiche qui enfreint une seule de ces règles ne doit pas être livrée : corrige-la d'abord.
 A. "pos" est rempli${gendered ? ', et "gender" aussi pour chaque nom' : ''}.
-B. La définition, lue seule, ne désigne qu'un mot du paquet.
+B. La définition, lue seule, ne désigne qu'un mot du paquet. L'application la montre seule, sans le mot ni phrase d'exemple, chaque fois que l'étudiant doit écrire le mot de tête (première question, preuve d'un mot qu'il dit déjà savoir, mot redemandé le jour même) : si elle convient à deux mots, une bonne réponse sera comptée fausse.
 C. Dans la PREMIÈRE phrase d'exemple, aucun autre mot du paquet ni aucun mot piège ne peut remplacer le mot entre crochets : une seule bonne réponse.
 D. Chaque mot piège a la même catégorie${gendered ? ', le même genre' : ''}, le même nombre, le même nombre de mots et le même début (voyelle ou consonne) que le mot entre crochets : rien ne s'élimine par la grammaire, l'orthographe, la majuscule ou la longueur.
 E. Chaque phrase est celle qu'une personne dirait vraiment.
@@ -183,7 +183,7 @@ Pour chaque fiche, vérifie et corrige :
 1. Chaque phrase d'exemple est celle qu'un locuteur natif dirait vraiment, avec le temps et le déterminant naturels.${natural}
 2. Dans la première phrase d'exemple, aucun autre mot du paquet ne pourrait remplacer le mot entre crochets : essaie chaque autre mot du paquet à sa place, et ajoute un indice propre au mot si l'un d'eux convient.
 2 bis. Chaque fiche a exactement ${numEx} phrase${oneEx ? '' : 's'} d'exemple${oneEx ? '' : `, qui montrent le mot sous des formes différentes (singulier et pluriel, déterminants différents : ${articles} ; pour un verbe, des sujets différents et une phrase négative ou une question)`}. Complète les fiches qui en ont moins et raccourcis celles qui en ont plus, sans jamais sacrifier le naturel.
-3. La définition respecte ce format : ${W.def}. Elle ne contient ni le mot ni un mot de sa famille. Lue seule, elle ne désigne qu'un mot du paquet : si elle convient aussi à un autre (${twinsEx}), réécris-la pour dire ce qui les distingue, et donne aux deux fiches la même "family".
+3. La définition respecte ce format : ${W.def}. Elle ne contient ni le mot ni un mot de sa famille. Lue seule, elle ne désigne qu'un mot du paquet (l'application la montre seule quand l'étudiant doit écrire le mot de tête) : si elle convient aussi à un autre (${twinsEx}), réécris-la pour dire ce qui les distingue, et donne aux deux fiches la même "family".
 3 bis. Chaque fiche a son "pos" (nom, verbe, adjectif, adverbe, préposition, déterminant, pronom, conjonction ou expression), et chaque catégorie présente compte au moins quatre fiches. Des mots grammaticaux que l'on choisit l'un contre l'autre (${slotEx}) ont la même catégorie.${gendered ? `
 3 ter. Chaque nom a son "gender" ("m", "f" ou "mf"), vérifié, y compris quand l'article ne le montre pas (« l' », « les », « des »).` : ''}
 4. Aucun des trois mots pièges ne conviendrait dans la première phrase. Chacun est de la même catégorie grammaticale${gendered ? ', du même genre' : ''} et du même thème que le mot, compte le même nombre de mots que lui et commence comme lui (voyelle ou consonne) : un étudiant ne doit pouvoir en écarter aucun par la grammaire, par l'orthographe ou par la longueur.

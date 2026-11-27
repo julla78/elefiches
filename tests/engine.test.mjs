@@ -668,9 +668,12 @@ t('sécurité : progression forgée reconstruite, paquet démesuré refusé, tex
   // ni sur un travail de la semaine dernière (version 15a : auparavant la date forgée, ramenée à maintenant, gagnait)
   const old3 = { abc: st(3, now - 7 * 86400000) };
   assert.equal(mergeProgress(old3, forged, now).abc.box, 3); assert.equal(countReplaced(old3, forged, now), 0);
-  // une heure d'avance (deux appareils mal réglés) n'est pas un état forgé : la sauvegarde plus récente l'emporte normalement
-  const skew = { abc: { ...st(4, now), fsrs: { ...st(4, now).fsrs, last_review: now + 3600000 } } };
+  // deux minutes d'avance (deux appareils à l'heure automatique) ne sont pas un état forgé : la sauvegarde plus récente l'emporte normalement
+  const skew = { abc: { ...st(4, now), fsrs: { ...st(4, now).fsrs, last_review: now + 120000 } } };
   assert.equal(mergeProgress(old3, skew, now).abc.box, 4); assert.equal(countReplaced(old3, skew, now), 1);
+  // une heure d'avance : laissée de côté depuis la version 15c (tolérance ramenée de vingt-quatre heures à cinq minutes)
+  const hour = { abc: { ...st(4, now), fsrs: { ...st(4, now).fsrs, last_review: now + 3600000 } } };
+  assert.equal(mergeProgress(old3, hour, now).abc.box, 3); assert.equal(countReplaced(old3, hour, now), 0);
   // contre-vérification : une dernière révision absente ou illisible (ramenée à maintenant par cleanState) ne gagne pas non plus
   for (const lr of [undefined, null, 'abc', '', true, false, {}, [1, 2], -1e999, { valueOf: 9e15 }]) {
     const f = { abc: { seen: true, box: 5, fsrs: { state: 2, stability: 39999, difficulty: 4, due: far, ...(lr === undefined ? {} : { last_review: lr }) } } };
@@ -1299,7 +1302,7 @@ t('15b : le calendrier joué à blanc donne des durées stables et plausibles', 
 });
 
 t('15b : mesure locale de la vitesse et de la réussite', () => {
-  const m = emptyMeasure(); assert.deepEqual(rates(m), { sec: 15, ok: 0.9, measured: false });
+  const m = emptyMeasure(); assert.deepEqual(rates(m), { sec: 15, ok: 0.9, timed: false, measured: false });
   addTime(m, 500); addTime(m, 91000); addTime(m, NaN); assert.equal(m.t.length, 0, 'ni double appui, ni téléphone posé');
   for (let i = 0; i < 9; i++) addTime(m, 20000); assert.equal(rates(m).sec, 15, 'neuf mesures : pas encore'); addTime(m, 20000); assert.equal(rates(m).sec, 20);
   for (let i = 0; i < 80; i++) addTime(m, 8000); assert.equal(m.t.length, 60); assert.equal(rates(m).sec, 8, 'les soixante dernières : la médiane suit l’étudiant');
@@ -1374,8 +1377,8 @@ t('15b : le plan est sauvegardé, restauré et décalé comme le reste, jamais r
   for (const bad of [null, 'slow', { pace: 'mammouth', days: 6, start: T0 }, { pace: 'mid', days: '<img>', start: T0 }, { pace: 'mid', days: 6 }, { pace: 'mid', days: 6, start: 'hier' }]) assert.equal(cleanPlan(bad, now), null);
   assert.ok(!('_plan' in cleanProgress({ _plan: { pace: '<img src=x onerror=alert(1)>', days: 6, start: T0 } }, now)), 'pas forgé : écarté');
   const odd = cleanPlan({ pace: 'fast', days: 1e9, start: now + 90 * PDAY, last: -50, missed: 3, ack: 99, est: -4, day: 'x', fresh: 1e9, rev: -3 }, now);
-  assert.deepEqual(odd, { pace: 'fast', days: PLAN_DAYS.long, start: dayStart(now), last: -1, missed: 3, ack: 3, est: 0, day: -1, fresh: 2000, rev: 0 }, 'chaque champ borné ; jamais un début dans le futur');
-  assert.ok(Object.values(odd).every(v => typeof v === 'number' || PACES.includes(v)), 'rien d’autre que des nombres et un nom de pas connu : aucun texte ne peut atteindre l’écran');
+  assert.deepEqual(odd, { pace: 'fast', days: PLAN_DAYS.long, start: dayStart(now), last: -1, missed: 3, ack: 3, est: 0, day: -1, fresh: 2000, rev: 0, recap: -1, ask: -1, offer: 0, small: false }, 'chaque champ borné ; jamais un début dans le futur');
+  assert.ok(Object.values(odd).every(v => typeof v === 'number' || typeof v === 'boolean' || PACES.includes(v)), 'rien d’autre que des nombres et un nom de pas connu : aucun texte ne peut atteindre l’écran');
   const shifted = shiftProgress({ _plan: plan }, 2 * PDAY)._plan; assert.equal(shifted.start, plan.start - 2 * PDAY, 'mode essai : avancer de deux jours fait avancer le plan de deux jours'); assert.equal(dayIndex(shifted.start, T0), 2); assert.equal(shifted.pace, 'slow');
   const mine = { _plan: plan }, saved = { _plan: startPlan('fast', 4, T0 - 9 * PDAY) };
   assert.equal(mergeProgress(mine, saved, now)._plan.pace, 'slow', 'restaurer une sauvegarde ne remplace pas le plan en cours'); assert.equal(mergeProgress({}, saved, now)._plan.pace, 'fast', 'mais le rend à un appareil qui n’en a pas');
@@ -1447,6 +1450,160 @@ t('15b : prompts, ordre des fiches gardé et rien sur le rythme', () => {
     assert.ok(!/"days"|"seen"/.test(withList[k]), 'le modèle de paquet donné à l’IA ne contient ni « days » ni « seen »');
   }
   assert.ok(withList.review.includes('Ne change pas l\'ordre des fiches'));
+});
+
+// ---------- Version 15c : « déjà su », reprise générale, seconde séance, séances courtes, jours choisis ----------
+const { known, KNOWN_DAYS, isNew: isNew15 } = await import('../js/scheduler.js');
+const { Placement } = await import('../js/session.js');
+const { isStale, staleIds, weakIds, OWN, SMALL, cleanPlan: cleanPlan15, startPlan: startPlan15, today: today15, simulate: simulate15, milestone: milestone15, newToday: newToday15, outlook: outlook15 } = await import('../js/plan.js');
+const { countLate, LATE_MS, cleanState: cleanState15 } = await import('../js/backup.js');
+const DAY15 = 86400000;
+
+t('15c : « déjà su », un état prouvé par écrit, qui ne revient pas avant trente-cinq jours tant qu’il est réussi sans aide', () => {
+  const st = known(T0);
+  assert.equal(st.known, true); assert.equal(st.box, 4); assert.ok(inHerd(st), 'le mot rejoint le troupeau'); assert.equal(st.born, T0);
+  assert.equal(st.fsrs.due, T0 + KNOWN_DAYS * DAY15); assert.ok(!isDue(st, T0 + 34 * DAY15) && isDue(st, T0 + 36 * DAY15));
+  const good = review(st, 'good', T0 + 5 * DAY15); assert.equal(good.known, true); assert.ok(good.fsrs.due >= T0 + 40 * DAY15 - 1000, 'réussi à la reprise générale : pas avant trente-cinq jours de plus');
+  const hard = review(st, 'hard', T0 + 5 * DAY15); assert.ok(!hard.known && hard.fsrs.due < T0 + 40 * DAY15, 'aidé ou hésitant : il redevient un mot comme les autres');
+  const again = review(st, 'again', T0 + 5 * DAY15); assert.ok(!again.known && again.box === 3 && again.fsrs.due < T0 + 8 * DAY15, 'raté : circuit normal');
+  const kept = cleanState15({ ...st, weak: T0, evil: '<img>' }, T0 + 1000); assert.equal(kept.known, true); assert.equal(kept.weak, T0); assert.ok(!('evil' in kept));
+  assert.ok(!('known' in cleanState15({ ...st, known: 'oui' }, T0)) && !('weak' in cleanState15({ ...st, weak: '<b>' }, T0)) && !('weak' in cleanState15({ ...st, weak: true }, T0)), 'ni texte ni valeur étrangère');
+  assert.equal(cleanState15({ ...st, weak: T0 + 9 * DAY15 }, T0).weak, T0, 'jamais dans le futur');
+  assert.equal(shiftProgress({ a: { ...st, weak: T0 } }, DAY15).a.weak, T0 - DAY15, 'le mode essai décale aussi ce repère');
+});
+
+t('15c : test « déjà su », une question écrite sans indice par mot coché, réussite du premier coup exigée', () => {
+  const d = planDeck(), P = {}, ids = d.cards.slice(0, 5).map(c => c.id), s = new Placement(d, P, [...ids, ids[0], 'inconnu'], { rnd: () => 0.3 });
+  assert.equal(s.total, 5, 'ni doublon ni fiche étrangère'); assert.equal(s.placement, true);
+  const a = s.next(); assert.equal(a.activity.type, 'type'); assert.equal(a.activity.hint, '', 'aucun indice : c’est une preuve'); assert.ok(a.activity.accepted.length > 0);
+  s.answer(a, true, T0, {}); assert.ok(P[a.card.id].known && inHerd(P[a.card.id]), 'réussi du premier coup : déjà su');
+  const b = s.next(); s.answer(b, true, T0, { assisted: true }); assert.equal(P[b.card.id], undefined, 'réussi au second essai : pas une preuve, le mot reste à apprendre');
+  const c = s.next(); s.answer(c, false, T0, {}); assert.equal(P[c.card.id], undefined, 'raté : aucune pénalité, le mot reste nouveau');
+  assert.deepEqual(s.stats.known, [a.card.id]); assert.deepEqual(s.stats.later, [b.card.id, c.card.id]); assert.equal(s.remaining, 2);
+  assert.equal(new Placement(d, P, ids).total, 4, 'un mot déjà prouvé n’est pas redemandé');
+  // Le plan se calcule sur les mots restants : un mot déjà su n’est ni un mot nouveau ni une révision du jour.
+  const plan = startPlan15('mid', 6, T0), T = today15(d, P, plan, T0);
+  assert.equal(T.left, d.cards.length - 1); assert.equal(T.done, 0); assert.equal(T.rev, 0); assert.equal(T.fresh, newToday15(d.cards.length - 1, 6, 0, 0, 6), 'programme du premier jour : seulement les mots à apprendre');
+  const all = simulate15({ fresh: 60, days: 6, single: true, cap: 6, now: T0 }).total, less = simulate15({ fresh: 45, days: 6, single: true, cap: 6, now: T0 }).total; assert.ok(less < all * 0.8, 'quinze mots déjà sus : un plan plus léger');
+  assert.equal(milestone15(d, P, plan, T0).again, 1, 'un mot déjà su compte comme rappelé');
+});
+
+t('15c : reprise générale le dernier jour du plan, une seule fois, et à la demande', () => {
+  const d = planDeck(), P = {}, plan = startPlan15('mid', 6, T0), day = k => T0 + k * DAY15;
+  // Jour 0 : dix mots découverts et réussis. Jour 3 : cinq d’entre eux revus.
+  d.cards.slice(0, 10).forEach(c => { P[c.id] = { ...review(undefined, 'good', day(0)), born: day(0) }; P[c.id].fsrs.due = day(20); });
+  d.cards.slice(0, 5).forEach(c => { P[c.id] = { ...review(P[c.id], 'good', day(3)), born: day(0) }; P[c.id].fsrs.due = day(20); });
+  assert.ok(!isStale(P[d.cards[0].id], day(3)) && !isStale(P[d.cards[0].id], day(4)) && isStale(P[d.cards[0].id], day(5)), 'à reprendre : pas rappelé depuis deux jours');
+  assert.ok(!isStale(P[d.cards[7].id], day(0)) && isStale(P[d.cards[7].id], day(1)), 'ou jamais rappelé un autre jour que celui de sa découverte');
+  assert.ok(!isStale(undefined, day(5)) && !isStale({}, day(5)));
+  const mid = today15(d, P, plan, day(4)); assert.equal(mid.recap, false); assert.equal(mid.stale, 5, 'en cours de plan : rien n’est ajouté, mais cinq mots pourraient être repris');
+  const last = today15(d, P, plan, day(5)); assert.equal(last.recap, true); assert.equal(last.revLeft, 10, 'dernier jour : les dix mots à reprendre sont au programme'); assert.equal(last.snap.recap, 5);
+  assert.deepEqual(staleIds(d, P, day(5)).sort(), d.cards.slice(0, 10).map(c => c.id).sort());
+  Object.assign(plan, last.snap);
+  const s = new Session(d, P, { now: day(5), rnd: () => 0.5, plan: { fresh: 0, dueBy: day(5), also: staleIds(d, P, day(5)) } }); assert.equal(s.queue.length, 10);
+  const st = s.next(day(5)); s.answer(st, true, day(5), {}); assert.ok(P[st.card.id].fsrs.last_review === day(5), 'enregistrée comme une révision ordinaire');
+  assert.equal(today15(d, P, plan, day(5)).revLeft, 9); assert.equal(today15(d, P, plan, day(6)).recap, false, 'le lendemain : la reprise a eu lieu, elle ne revient pas');
+  const late = startPlan15('mid', 6, T0); assert.equal(today15(d, P, late, day(8)).recap, true, 'dernier jour manqué : la reprise attend le premier jour travaillé ensuite');
+  const ask = startPlan15('mid', 6, T0); ask.ask = 4; const asked = today15(d, P, ask, day(4)); assert.equal(asked.recap, true); assert.equal(asked.snap.recap, -1, '« Tout revoir » : à la demande, sans consommer la reprise du dernier jour');
+  assert.equal(today15(d, P, startPlan15(OWN, 1, T0), T0).recap, false, 'plan d’un seul jour : rien à reprendre');
+  // La simulation la compte : plus d’étapes le dernier jour, et davantage de mots rappelés un autre jour.
+  const on = simulate15({ fresh: 60, days: 6, single: true, cap: 6, now: T0, mark: 6 }), off = simulate15({ fresh: 60, days: 6, single: true, cap: 6, now: T0, mark: 6, recap: false });
+  assert.ok(on.per[5] > off.per[5] && on.again >= off.again && on.again > 0.99, 'avec la reprise : tous les mots rappelés un autre jour au bout des six jours');
+  const three = simulate15({ fresh: 60, days: 3, single: true, cap: 6, now: T0, mark: 3 }), threeOff = simulate15({ fresh: 60, days: 3, single: true, cap: 6, now: T0, mark: 3, recap: false });
+  assert.ok(three.again > 0.99 && threeOff.again < 0.7, 'plan de trois jours : c’est la reprise qui donne à chaque mot un rappel un autre jour');
+  plan.recap = 2; assert.ok(outlook15(d, P, plan, day(4)).total <= outlook15(d, P, { ...plan, recap: -1 }, day(4)).total, 'reprise déjà faite : elle n’est plus comptée');
+});
+
+t('15c : seconde séance, les mots ratés ou aidés du jour sont redemandés sans déplacer la fiche', () => {
+  const d = planDeck(), P = {}, s = new Session(d, P, { now: T0, rnd: () => 0.5, plan: { fresh: 4, dueBy: dayEnd(T0) } });
+  const a = s.next(T0); s.answer(a, false, T0 + 1000, {}); const b = s.next(T0 + 2000); if (b.item.retry) { s.answer(b, true, T0 + 2000, {}); }
+  let x; const seenIds = new Set([a.card.id]); let aided = null, clean = null;
+  while ((x = s.next(T0 + 3000))) { if (x.item.retry) { s.answer(x, true, T0 + 3000, {}); continue; } if (seenIds.has(x.card.id)) continue; seenIds.add(x.card.id); if (!aided) { aided = x.card.id; s.answer(x, true, T0 + 3000, { assisted: true }); } else { clean = x.card.id; s.answer(x, true, T0 + 3000, {}); } }
+  assert.ok(P[a.card.id].weak >= T0 && P[aided].weak >= T0, 'raté ou aidé : marqué pour la seconde séance'); assert.ok(!('weak' in P[clean]), 'réussi sans aide : rien à redemander');
+  assert.deepEqual(weakIds(d, P, T0 + 5000).sort(), [a.card.id, aided].sort()); assert.deepEqual(weakIds(d, P, T0 + DAY15), [], 'le lendemain, ils ne sont plus redemandés : le calendrier les ramène');
+  assert.equal(today15(d, P, startPlan15('mid', 6, T0), T0 + 5000).weak, 2);
+  const before = JSON.stringify(P[aided].fsrs), s2 = new Session(d, P, { now: T0 + 3600000, rnd: () => 0.5, plan: { fresh: 0, dueBy: 0, again: weakIds(d, P, T0 + 3600000) } });
+  assert.equal(s2.queue.length, 2); assert.ok(s2.queue.every(i => i.retry && i.second && i.force === 'type'), 'à l’écrit, hors calendrier');
+  const r = s2.next(T0 + 3600000); assert.equal(r.activity.type, 'type'); s2.answer(r, true, T0 + 3600000, {});
+  assert.ok(!('weak' in P[r.card.id]), 'redemandé une fois : il ne le sera plus aujourd’hui'); if (r.card.id === aided) assert.equal(JSON.stringify(P[aided].fsrs), before, 'la fiche ne bouge pas');
+  const r2 = s2.next(T0 + 3600000); s2.answer(r2, false, T0 + 3600000, {}); assert.equal(s2.queue.length, 1, 'raté encore : rattrapage dans la séance, comme d’habitude'); assert.deepEqual(weakIds(d, P, T0 + 3700000), []);
+  const free = demoDeck(), Pf = {}, sf = new Session(free, Pf, { now: T0, rnd: () => 0.5 }); let y; while ((y = sf.next(T0))) { if (!y.intro && !y.activity.multi) sf.answer(y, false, T0, {}); }
+  assert.ok(Object.values(Pf).every(st => !('weak' in st)), 'hors plan personnel : rien ne change');
+});
+
+t('15c : séances courtes du parcours adapté, cinq mots nouveaux et dix révisions au plus', () => {
+  const d = planDeck(), P = {};
+  d.cards.slice(0, 14).forEach(c => { P[c.id] = { ...review(undefined, 'good', T0 - 4 * DAY15), born: T0 - 4 * DAY15 }; });
+  const full = new Session(d, P, { now: T0, rnd: () => 0.5, plan: { fresh: 9, dueBy: dayEnd(T0) } }), small = new Session(d, P, { now: T0, rnd: () => 0.5, plan: { fresh: 9, dueBy: dayEnd(T0), chunk: SMALL } });
+  assert.equal(full.today.length, Math.min(9, d.cards.length - 14)); assert.equal(small.today.length, Math.min(5, d.cards.length - 14)); assert.ok(small.queue.filter(i => !i.first).length <= 10 && small.queue.length < full.queue.length);
+  assert.deepEqual(small.today, full.today.slice(0, small.today.length), 'toujours dans l’ordre des fiches : les mots prioritaires d’abord');
+  const plan = cleanPlan15({ ...startPlan15('mid', 6, T0), offer: 2, small: true }, T0); assert.equal(plan.small, true); assert.equal(plan.offer, 2);
+  assert.equal(cleanPlan15({ ...startPlan15('mid', 6, T0), offer: 9, small: 'oui', recap: '<b>', ask: 1e9 }, T0).offer, 2); assert.equal(cleanPlan15({ ...startPlan15('mid', 6, T0), small: 'oui' }, T0).small, false);
+});
+
+t('15c : « J’ai moins de jours », un plan aux jours choisis par l’étudiant, annoncé honnêtement', () => {
+  const own = startPlan15(OWN, 2, T0); assert.equal(own.pace, 'own'); assert.equal(own.days, 2); assert.equal(cleanPlan15(own, T0).pace, 'own'); assert.equal(cleanPlan15({ ...own, pace: 'turbo' }, T0), null);
+  assert.equal(newToday15(60, 2, 0, 0, 6), 60, 'deux jours : tout le premier jour'); assert.equal(newToday15(60, 3, 0, 0, 6), 30); assert.equal(newToday15(60, 1, 0, 0, 6), 60);
+  const two = simulate15({ fresh: 60, days: 2, single: true, cap: 6, now: T0, mark: 2 }), six = simulate15({ fresh: 60, days: 6, single: true, cap: 6, now: T0, mark: 6 });
+  assert.ok(two.seen > 0.99 && two.again > 0.99 && two.avg > six.avg * 2, 'deux jours : tout est vu et repris une fois, au prix de journées bien plus lourdes');
+  const one = simulate15({ fresh: 60, days: 1, single: true, cap: 6, now: T0, mark: 1 }); assert.ok(one.seen > 0.99 && one.again === 0, 'un seul jour : tout est vu, rien n’est rappelé un autre jour, et l’écran le dit');
+});
+
+t('15c : « dans les temps » ou en retard, d’après les mots qui devraient déjà être vus', () => {
+  const d = planDeck(), n = d.cards.length, plan = startPlan15('mid', 6, T0), P = {};
+  assert.equal(milestone15(d, P, plan, T0).behind, 0, 'premier jour : rien n’est attendu');
+  assert.equal(milestone15(d, P, plan, T0 + DAY15).behind, Math.floor(n / 3), 'un jour sans rien : le tiers des mots manque (découverte sur trois jours)');
+  d.cards.slice(0, Math.ceil(n / 3)).forEach(c => { P[c.id] = { ...review(undefined, 'good', T0), born: T0 }; });
+  assert.equal(milestone15(d, P, plan, T0 + DAY15).behind, 0, 'programme fait : dans les temps'); assert.equal(milestone15(d, P, plan, T0 + 4 * DAY15).behind, n - Math.ceil(n / 3));
+});
+
+t('15c, sécurité : une sauvegarde datée de plus de cinq minutes dans le futur ne remplace rien, et l’appli le compte', () => {
+  assert.equal(LATE_MS, 5 * 60000);
+  const mine = { a: review(undefined, 'good', T0 - DAY15), b: review(undefined, 'good', T0 - DAY15) };
+  const soon = { ...review(undefined, 'good', T0), box: 5 }; soon.fsrs.last_review = T0 + 6 * 3600000;      // « dans six heures » : acceptée jusqu’à la 15b
+  const near = { ...review(undefined, 'good', T0), box: 4 }; near.fsrs.last_review = T0 + 2 * 60000;        // deux minutes d’avance : écart d’horloge ordinaire
+  const out = mergeProgress(mine, { a: soon, b: near, c: soon }, T0);
+  assert.equal(out.a.box, mine.a.box, 'datée dans le futur : la progression de l’appareil est gardée'); assert.equal(out.b.box, 4, 'deux minutes d’avance : acceptée'); assert.ok(out.c, 'fiche sans progression : reprise quand même, ramenée à maintenant'); assert.ok(out.c.fsrs.last_review <= T0);
+  assert.equal(countLate(mine, { a: soon, b: near, c: soon, _plan: {} }, T0), 1); assert.equal(countLate(mine, null, T0), 0); assert.equal(countLate(mine, { a: { fsrs: { last_review: '<img>' } } }, T0), 1, 'date illisible : laissée de côté elle aussi');
+});
+
+t('15c : textes en trois langues, mêmes clés, sans tiret cadratin, et chaque clé appelée par l’interface existe', async () => {
+  const { STR } = await import('../js/i18n.js'), app = fs.readFileSync(new URL('../js/app.js', import.meta.url), 'utf8');
+  const mine = Object.keys(STR.fr).filter(k => /^(pl[A-Z]|plc|pace_|chShort|bkAskLate)/.test(k));
+  assert.ok(mine.length > 80);
+  for (const l of ['fr', 'en', 'es']) for (const k of mine) assert.ok(typeof STR[l][k] === 'string' && STR[l][k].length > 1 && !STR[l][k].includes('—'), l + ' ' + k);
+  const used = new Set([...app.matchAll(/\bt\('(pl[A-Za-z_]*|plc[A-Za-z]*|chShort[A-Za-z]*|bkAskLate)'/g)].map(m => m[1]));
+  for (const k of used) if (!k.endsWith('_')) assert.ok(k in STR.fr, 'clé appelée mais absente : ' + k);      // « plNote_ » + pas : clé composée
+  for (const k of ['plNewN', 'chShortNew']) for (const l of ['fr', 'en', 'es']) assert.ok(STR[l][k + '_1'] && STR[l][k + '_n'], 'singulier et pluriel : ' + k);
+  for (const l of ['fr', 'en', 'es']) assert.ok(STR[l].fEstimate.includes('{4}') && !/\b15 (secondes|seconds|segundos)/.test(STR[l].fEstimate), 'l’estimation dit la vitesse de départ réellement utilisée');
+});
+
+t('15c : prompts, la définition doit suffire seule parce que l’appli la montre seule pour faire écrire le mot', () => {
+  const pr = buildPrompts({ lang: 'fr', level: 'A2', topic: 'Le logement', words: 'un loyer\nun bail' }), en = buildPrompts({ lang: 'en', level: 'B1', topic: 'Work', count: 20 });
+  for (const x of [pr, en]) { for (const k of ['file', 'cards']) assert.ok(x[k].includes('preuve d\'un mot qu\'il dit déjà savoir') && x[k].includes('une bonne réponse sera comptée fausse'), k); assert.ok(x.review.includes('la montre seule quand l\'étudiant doit écrire le mot de tête')); }
+  assert.ok(!/déjà su|reprise générale|seconde séance/i.test(pr.file), 'rien d’autre sur le plan : il se règle dans l’appli');
+});
+
+t('15c, relecture de sécurité : identifiants de fiche réservés, « déjà su » d’un fichier, réponse rejouée, naissance négative', async () => {
+  const { cardKey } = await import('../js/deck.js');
+  for (const bad of ['_plan', '_stages', '_race', '_match', '_x', 'a*b', '__proto__', '', 'a b', null]) assert.equal(cardKey(bad), '', 'refusé : ' + bad);
+  assert.equal(cardKey('abc-1_2'), 'abc-1_2');
+  const raw = JSON.parse(deckToJSON(demoDeck())); raw.cards[0].id = '_plan'; raw.cards[1].id = '_stages'; raw.cards[2].id = 'a*b';
+  const d = deckFromJSON(JSON.stringify(raw)); assert.ok(d.cards.every(c => cardKey(c.id) === c.id), 'aucune fiche ne peut porter une clé réservée de la progression');
+  const P = { _plan: startPlan15('mid', 6, T0) }, s = new Session(Object.assign(d, { days: 6, seen: true }), P, { now: T0, rnd: () => 0.5, plan: { fresh: 5, dueBy: dayEnd(T0) } });
+  let x; while ((x = s.next(T0))) { if (!x.intro && !x.activity.multi) s.answer(x, true, T0, {}); }
+  assert.equal(P._plan.pace, 'mid'); assert.equal(P._plan.days, 6, 'le plan n’est jamais écrasé par une réponse');
+  // « déjà su » venu d’un fichier : gardé pour une fiche sans progression, jamais posé sur une fiche déjà travaillée ici.
+  const mine = { a: review(undefined, 'good', T0 - DAY15) }, forged = { ...known(T0 - 1000) };
+  const merged = mergeProgress(mine, { a: forged, b: forged }, T0);
+  assert.ok(merged.a.box === 4 && !('known' in merged.a), 'état plus récent repris, sans le drapeau'); assert.equal(merged.b.known, true, 'nouvel appareil : la preuve suit la sauvegarde');
+  assert.equal(cleanState15({ ...mine.a, born: -1e308 }, T0).born, 0, 'naissance jamais négative');
+  // Une réponse rejouée sur la même question du test « déjà su » ne change rien.
+  const d2 = planDeck(), P2 = {}, pl = new Placement(d2, P2, d2.cards.slice(0, 2).map(c => c.id), { rnd: () => 0.3 }), st = pl.next();
+  pl.answer(st, false, T0, {}); pl.answer(st, true, T0, {}); assert.equal(P2[st.card.id], undefined, 'raté puis rejoué juste : toujours pas une preuve'); assert.equal(pl.stats.answered, 1); assert.deepEqual(pl.stats.known, []);
+  // Seconde séance : une échéance forgée à zéro n’y entre pas comme révision ordinaire.
+  const P3 = {}; d2.cards.slice(0, 3).forEach(c => { P3[c.id] = { ...review(undefined, 'good', T0), born: T0 }; P3[c.id].fsrs.due = 0; }); P3[d2.cards[0].id].weak = T0;
+  const sec = new Session(d2, P3, { now: T0 + 3600000, rnd: () => 0.5, plan: { fresh: 0, dueBy: -1, again: weakIds(d2, P3, T0 + 3600000) } }); assert.equal(sec.queue.length, 1); assert.ok(sec.queue[0].second && sec.queue[0].retry);
 });
 
 await Promise.all(pending);
