@@ -17,6 +17,7 @@ import { addWrite } from '../js/plan.js';
 import { RETRY_GAP } from '../js/session.js';
 import { unzip } from '../js/zip.js';
 import { buildPrompts } from '../js/prompts.js';
+import { exampleOrder, ANCHOR_BOX } from '../js/session.js';
 import { levelIn, looksJSON, deckFromAnki } from '../js/deck.js';
 import { openSqlite } from '../js/sqlite.js';
 import { execFileSync } from 'node:child_process';
@@ -451,7 +452,7 @@ t('écoute, oral et phrase libre : une fiche sur deux, avec repli quand le son m
   assert.ok(seen[5].has('sentence') && seen[5].has('situation-type'), [...seen[5]].join());
   for (const c of d.cards) for (const box of [2, 3, 4]) for (const turn of [0, 1]) assert.ok(!['listen', 'listen-type', 'speak'].includes(buildActivity(d, c, box, rnd, { audio: false, vary: true, turn }).type), 'sans son : aucune forme d’écoute ni d’oral');
   const cafe = d.cards[0], li = buildActivity(d, cafe, 2, rnd, { force: 'listen' }), sp = buildActivity(d, cafe, 4, rnd, { force: 'speak' }), se = buildActivity(d, cafe, 5, rnd, { force: 'sentence' }), lt = buildActivity(d, cafe, 3, rnd, { force: 'listen-type' });
-  assert.ok(li.listen && !li.gated && li.options.includes(li.answer)); assert.ok(sp.self && sp.model === cafe.examples[0]); assert.deepEqual(se.models, cafe.examples); assert.ok(lt.listen && lt.accepted.length);
+  assert.ok(li.listen && !li.gated && li.options.includes(li.answer)); assert.ok(sp.self && cafe.examples.slice(1).includes(sp.model), 'boîte 4 : une autre phrase que la première'); assert.deepEqual(se.models, cafe.examples); assert.ok(lt.listen && lt.accepted.length);
   assert.ok(li.pics && Object.keys(li.pics).length === li.options.length || !li.pics, 'niveau A1 ou A2 avec images : le sens se choisit parmi des images');
   // une session entière avec le son : les nouvelles formes se jugent comme les autres
   const P = {}, now = Date.UTC(2026, 0, 1); let s = new Session(d, P, { maxNew: 5, now, audio: true }), n = 0, types = new Set();
@@ -726,9 +727,70 @@ t('phrase à reconstruire : ni majuscule ni ponctuation pour deviner le début e
 });
 
 t('oral : la phrase entière dès le début, avec le mot repéré', () => {
-  const deck = farm(), a = buildActivity(deck, deck.cards[0], 4, Math.random, { force: 'speak', audio: true });
+  const deck = farm(), a = buildActivity(deck, deck.cards[0], 1, Math.random, { force: 'speak', audio: true });      // boîte 1 : la première phrase
   assert.equal(a.model, 'The cow gives us milk.'); assert.equal(a.cloze.answer, 'cow'); assert.ok(a.self);
   assert.equal(clozeParts(a.cloze).filter(p => p.blank).map(p => p.text).join(''), 'cow', 'le mot à mettre en gras');
+});
+
+t('exemples : ancrer puis varier (une seule réserve de phrases par fiche)', () => {
+  const deck = farm(), cow = deck.cards[0];
+  // L'ordre : en boîte 1 (mot nouveau ou retombé), la première phrase d'abord, quel que soit le nombre de révisions.
+  assert.equal(ANCHOR_BOX, 1);
+  for (const turn of [0, 1, 2, 3, 7]) assert.deepEqual(exampleOrder(cow, 1, turn), [0, 1, 2, 3], 'boîte 1 : ancrage');
+  assert.deepEqual(exampleOrder(cow, 0, 5), [0, 1, 2, 3], 'mot jamais vu : ancrage');
+  for (const box of [undefined, null, NaN, 'x', {}]) assert.deepEqual(exampleOrder(cow, box, 2), [0, 1, 2, 3], 'boîte illisible : ancrage');
+  for (const turn of [Infinity, -Infinity, NaN, 1e300, {}, '2']) assert.equal(exampleOrder(cow, 3, turn).slice().sort().join(''), '0123', 'rang forgé : toujours une permutation');
+  // Ensuite les AUTRES phrases tournent, une par révision ; la première ne revient en tête que si le mot retombe en boîte 1.
+  assert.deepEqual(exampleOrder(cow, 2, 1), [1, 2, 3, 0]); assert.deepEqual(exampleOrder(cow, 3, 2), [2, 3, 1, 0]);
+  assert.deepEqual(exampleOrder(cow, 4, 3), [3, 1, 2, 0]); assert.deepEqual(exampleOrder(cow, 5, 4), [1, 2, 3, 0]);
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 8].map(turn => exampleOrder(cow, 3, turn)[0]), [1, 2, 3, 1, 2, 3, 1, 2], 'chaque autre phrase est vue à son tour');
+  for (let turn = 0; turn < 12; turn++) for (const box of [2, 3, 4, 5]) assert.notEqual(exampleOrder(cow, box, turn)[0], 0, 'mot raté puis réussi : la première révision en boîte 2 ne remontre pas la première phrase');
+  assert.deepEqual(exampleOrder({ examples: ['Une seule.'] }, 4, 3), [0], 'une seule phrase : rien à faire varier');
+  assert.deepEqual(exampleOrder({ examples: [] }, 4, 3), []); assert.deepEqual(exampleOrder({}, 4, 3), []);
+  assert.deepEqual(exampleOrder(cow, 3, -1), [2, 3, 1, 0], 'un rang négatif ne casse rien'); assert.deepEqual(exampleOrder(cow, 3, 'x'), [1, 2, 3, 0]);
+  assert.deepEqual(exampleOrder({ examples: ['a', 'b'] }, 2, 1), [1, 0]); assert.deepEqual(exampleOrder({ examples: ['a', 'b'] }, 2, 2), [1, 0], 'deux phrases : la seconde, tant que le mot ne retombe pas');
+  // Les exercices suivent cet ordre en séance (vary) : phrase à trous, phrase à dire, phrase à remettre en ordre.
+  const texts = ['The cow gives us milk.', 'We have a cow on our farm.', 'Cows live on farms.', 'Where is my cow?'];
+  const act = (box, turn, force) => buildActivity(deck, cow, box, Math.random, { force, vary: true, turn, audio: true });
+  for (const turn of [0, 1, 2, 3]) assert.equal(act(1, turn, 'cloze-type').cloze.text, texts[0], 'boîte 1 : la phrase d’ancrage');
+  assert.deepEqual([1, 2, 3, 4].map(turn => act(3, turn, 'cloze-type').cloze.text), [texts[1], texts[2], texts[3], texts[1]], 'boîte 3 : les autres phrases tournent');
+  assert.deepEqual([1, 2, 3, 4].map(turn => act(4, turn, 'speak').model), [texts[1], texts[2], texts[3], texts[1]]);
+  assert.deepEqual([1, 2, 3, 4].map(turn => act(4, turn, 'order').answer), [texts[1], texts[2], texts[3], texts[1]]);
+  assert.deepEqual(act(3, 2, 'cloze-type').rank, [2, 3, 1, 0], 'l’exercice dit son ordre au retour');
+  assert.deepEqual(act(1, 2, 'qcm').rank, [0, 1, 2, 3]);
+  // La phrase à choix garde la première phrase quand la fiche a ses propres mots pièges : ils sont écrits pour elle.
+  const own = prepare({ name: 'x (A2)', lang: 'fr', level: 'A2', cards: [
+    { word: 'Un loyer', pos: 'nom', gender: 'm', definition: 'a', examples: ['Je paie mon [loyer] demain.', 'Les [loyers] montent.'], distractors: ['bail', 'garage', 'voisin'] },
+    { word: 'Un bail', pos: 'nom', gender: 'm', definition: 'b', examples: ['Je signe un [bail].', 'Ce [bail] dure un an.'] }, { word: 'Un garage', pos: 'nom', gender: 'm', definition: 'c', examples: ['La voiture est au [garage].', 'Ce [garage] est fermé.'] },
+    { word: 'Un voisin', pos: 'nom', gender: 'm', definition: 'd', examples: ['Mon [voisin] est gentil.', 'Ce [voisin] chante.'] }] });
+  assert.equal(buildActivity(own, own.cards[0], 3, Math.random, { force: 'cloze-choice', vary: true, turn: 1 }).cloze.text, 'Je paie mon loyer demain.');
+  // Hors séance (défi, aperçu) : le départ est tiré au sort, sauf en boîte 1.
+  const seen = new Set(Array.from({ length: 60 }, () => buildActivity(deck, cow, 3, Math.random, { force: 'cloze-type' }).cloze.text));
+  assert.ok(seen.size > 1, 'hors séance, les phrases varient aussi');
+  assert.equal(buildActivity(deck, cow, 1, Math.random, { force: 'cloze-type' }).cloze.text, texts[0]);
+  // Une fiche dont une phrase n'a pas de trou (mot introuvable) : la rotation passe à la phrase suivante.
+  const gap = prepare({ name: 'y (A2)', lang: 'fr', level: 'A2', cards: [{ word: 'Un loyer', pos: 'nom', gender: 'm', definition: 'a', examples: ['Je paie mon [loyer].', 'Il faut payer chaque mois.', 'Le [loyer] est cher.'] }] });
+  assert.equal(buildActivity(gap, gap.cards[0], 3, Math.random, { force: 'cloze-type', vary: true, turn: 1 }).cloze.text, 'Le loyer est cher.');
+});
+
+t('exemples : deux phrases au moins dans le prompt, la première ancre ; le contrôle signale la phrase unique', async () => {
+  const { STR } = await import('../js/i18n.js');
+  const p = n => buildPrompts({ lang: 'fr', level: 'A2', topic: 'Le logement', count: 10, examples: n });
+  assert.ok(p(1).cards.includes('EXACTEMENT DEUX phrases'), 'une phrase demandée : le prompt en exige deux');
+  assert.ok(p(0).cards.includes('EXACTEMENT QUATRE phrases') && p(undefined).cards.includes('EXACTEMENT QUATRE phrases'), 'quatre par défaut');
+  assert.ok(p(9).cards.includes('EXACTEMENT CINQ phrases'));
+  assert.ok(p(2).cards.includes('"examples":["",""]') && p(3).cards.includes('"examples":["","",""]'));
+  for (const n of [2, 3, 4, 5]) for (const k of ['cards', 'file', 'review']) {
+    const txt = p(n)[k];
+    assert.ok(/phrase d'ancrage/.test(txt) && !/tant que le mot est nouveau/.test(txt), `${k}, ${n} phrases : la phrase d'ancrage est nommée`);
+    assert.ok(!/undefined|oneEx|\$\{/.test(txt), `${k} : aucun gabarit cassé`);
+  }
+  assert.ok(p(4).cards.includes("L'ORDRE COMPTE") && p(4).cards.includes('5. Ancrer, puis varier.'));
+  const mk = exs => prepare({ name: 'z (A2)', lang: 'fr', level: 'A2', cards: [{ word: 'Un loyer', pos: 'nom', gender: 'm', definition: 'Argent du logement.', examples: exs }] });
+  assert.equal(audit(mk(['Je paie mon [loyer].'])).find(a => a.key === 'auFewExamples').cards.length, 1, 'une seule phrase : conseil');
+  assert.ok(!audit(mk(['Je paie mon [loyer].', 'Le [loyer] est cher.'])).some(a => a.key === 'auFewExamples'), 'deux phrases : le minimum est atteint');
+  assert.ok(!audit(mk([])).some(a => a.key === 'auFewExamples'), 'aucune phrase : c’est un autre constat');
+  for (const lang of ['fr', 'en', 'es']) { assert.ok(STR[lang].bExWarn2 && STR[lang].bExHint && STR[lang].auFewExamplesDo && STR.fr.auFewExamples); assert.ok(!('bEx1' in STR[lang]) && !('bExWarn1' in STR[lang]), 'plus de choix « une phrase »'); }
 });
 
 t('phrase libre : quatre modèles, le mot repéré dans chacun, sous des formes variées', () => {
@@ -1053,13 +1115,13 @@ t('version 15a : l’orthographe exacte (accents, ç, ñ, œ) est demandée aux 
   }
   assert.ok(buildPrompts({ lang: 'es', level: 'A1' }).file.includes('« ¿ » ou « ¡ »')); assert.ok(!buildPrompts({ lang: 'en', level: 'A1' }).file.includes('accents et signes compris'));
 });
-t('version 14c : une à cinq phrases d’exemple, nombre exact, dans les trois prompts', () => {
+t('version 14c, puis lot « Exemples » : deux à cinq phrases d’exemple, nombre exact, dans les trois prompts', () => {
   for (const lang of ['fr', 'en', 'es']) {
     const words = ['', 'UNE', 'DEUX', 'TROIS', 'QUATRE', 'CINQ'];
-    for (let n = 1; n <= 5; n++) {
+    for (let n = 2; n <= 5; n++) {
       const p = buildPrompts({ lang, level: 'A2', topic: 'Le travail', count: 20, examples: n });
       for (const k of ['file', 'cards']) {
-        assert.ok(p[k].includes(`EXACTEMENT ${words[n]} phrase${n === 1 ? ' ' : 's '}`), `${lang} ${k} ${n}`);
+        assert.ok(p[k].includes(`EXACTEMENT ${words[n]} phrases `), `${lang} ${k} ${n}`);
         assert.ok(p[k].includes('"examples":[' + Array(n).fill('""').join(',') + ']'), 'modèle JSON à ' + n + ' phrase(s)');
         assert.ok(!/quatre ou cinq/i.test(p[k]) && !p[k].includes('undefined'), 'plus de nombre fixe');
       }

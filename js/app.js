@@ -2,7 +2,7 @@
 import * as store from './store.js';
 import { deckFromCSV, deckFromJSON, deckFromAnki, mergeDecks, audit, REGISTERS, safeKey, deckToJSON, looksJSON, levelIn, prepare, serialize, hash, demoDeck, MODELS, safeUrl, LEVELS, PLAN_DAYS, adviseDays } from './deck.js';
 import { summary, boxOf, dueInDays, isNew, isDue, stageOf, HERD_BOX, shiftProgress, nextDueIn } from './scheduler.js';
-import { Session, Challenge, Tour, Placement, meaning, gloss, pickNew, judge, roomFor, buildActivity, SELF, kindOf, suggestKind, genderOf, needsGender, GENDERED_LANGS } from './session.js';
+import { Session, Challenge, Tour, Placement, meaning, gloss, pickNew, judge, roomFor, buildActivity, ANCHOR_BOX, SELF, kindOf, suggestKind, genderOf, needsGender, GENDERED_LANGS } from './session.js';
 import { clozeParts, norm, noAcc, noArt, diffParts, remark, spoken, slug } from './match.js';
 import { unzip, typeOf } from './zip.js';
 import { buildPrompts, GRIDS, gridOf } from './prompts.js';
@@ -872,8 +872,8 @@ function teacherView() {
         <label>${t('bLevel')} <select data-b="level">${levels(B.level)}</select></label>
         <label>${t('bTopic')} <input data-b="topic" value="${esc(B.topic)}" placeholder="${t('bTopicPh')}" autocomplete="off"></label>
         <label>${t('bCount')} <input data-b="count" type="number" min="3" max="500" inputmode="numeric" value="${B.count}"><span class="sethint">${t('bCountHint')}</span></label>
-        <label>${t('bEx')} <select data-b="examples">${[1, 2, 3, 4, 5].map(n => opt(n, B.examples, t(n === 1 ? 'bEx1' : 'bExN', n))).join('')}</select><span class="sethint">${t('bExHint')}</span></label>
-        <p class="banner${+B.examples === 1 ? ' warn' : ''}" role="status" data-exwarn${+B.examples > 2 ? ' hidden' : ''}>${+B.examples === 1 ? t('bExWarn1') : +B.examples === 2 ? t('bExWarn2') : ''}</p>
+        <label>${t('bEx')} <select data-b="examples">${[2, 3, 4, 5].map(n => opt(n, B.examples, t('bExN', n))).join('')}</select><span class="sethint">${t('bExHint')}</span></label>
+        <p class="banner" role="status" data-exwarn${+B.examples > 2 ? ' hidden' : ''}>${+B.examples === 2 ? t('bExWarn2') : ''}</p>
         <details class="more"${B.words ? ' open' : ''}><summary>${t('bWordsSum')}</summary>
           <label>${t('bWords')} <textarea data-b="words" rows="4">${esc(B.words)}</textarea><span class="sethint">${t('bWordsHint')}</span></label></details>
       </div></section>
@@ -910,7 +910,7 @@ function teacherView() {
       <h2>${t('tCols')}</h2><div class="scroll"><table>
       <thead><tr><th>${t('colName')}</th><th>${t('colNeed')}</th><th>${t('colWhat')}</th></tr></thead><tbody>
       ${row('Word', 'yes', 'cWord')}${row('Definition', 'oneOf', 'cDef')}${row('Traduction FR<br>Traduction EN', 'oneOf', 'cTr')}
-      ${row('Example 1', 'advised', 'cEx')}${row('Example 2<br>… Example 5', 'optional', 'cEx2')}${row('Situation', 'advised', 'cSit')}${row('Distracteurs', 'advised', 'cTraps')}
+      ${row('Example 1', 'advised', 'cEx')}${row('Example 2<br>… Example 5', 'advised', 'cEx2')}${row('Situation', 'advised', 'cSit')}${row('Distracteurs', 'advised', 'cTraps')}
       ${row('Nature', 'advised', 'cPos')}${row('Genre', 'advised', 'cGender')}
       ${row('Category', 'advised', 'cCat')}${row('Famille', 'optional', 'cFam')}
       ${row('Image', 'optional', 'cImg')}${row('Audio', 'optional', 'cAudio')}${row('IPA', 'optional', 'cIpa')}
@@ -1654,7 +1654,7 @@ function feedbackView(step, lang) {
   // Réponse écrite à une lettre ou à un accent près, manquée au second essai : on montre l'endroit de l'écart dans la bonne orthographe.
   let sp = null;
   if (typeof a.answer === 'string' && fb.typed && fb.near) { const d = diffParts(a.answer.toLowerCase(), fb.typed.trim().toLowerCase()), i = d[0].length, j = i + d[1].length; sp = [a.answer.slice(0, i), a.answer.slice(i, j), a.answer.slice(j)]; }
-  const ex = a.type === 'order' ? '' : a.type === 'speak' ? a.model : card.examples.find(e => !a.cloze || e.replace(/[’`´]/g, "'") !== a.cloze.text) || card.examples[0];
+  const ex = a.type === 'order' ? '' : a.type === 'speak' ? a.model : fbExamples(card, a, fb, 1)[0] || '';
   const move = fb.retry || plc ? '' : fb.boxAfter > fb.boxBefore ? t('boxUp', fb.boxAfter) : fb.boxAfter < fb.boxBefore ? t('boxDown', fb.boxAfter) : '';
   const when = s.challenge || plc || fb.ask ? '' : fb.ok && !fb.retry ? t('nextIn', Math.max(1, fb.days)) : '';
   const wins = plc ? (fb.ok ? [t('plcJoined')] : []) : [fb.joined ? t('joined') : '', fb.tamed ? t('tamed', card.word, s.tamed.length, s.today.length) : '',
@@ -1665,8 +1665,8 @@ function feedbackView(step, lang) {
   // Ni phrase d'humour, ni recopie, ni second éléphanteau : celui de la barre réagit déjà.
   const same = sp && a.answer.toLowerCase() === String(card.word).toLowerCase(), marked = sp ? `${esc(sp[0])}<mark>${esc(sp[1])}</mark>${esc(sp[2])}` : '';
   if (!fb.ok && !plc) {
-    const flat = x => String(x).replace(/[’`´]/g, "'"), shown = a.cloze ? a.cloze.text : a.type === 'speak' ? flat(a.model || '') : '';
-    const exs = [...card.examples.filter(e => flat(e) !== shown), ...card.examples.filter(e => flat(e) === shown)].slice(0, ['A1', 'A2'].includes(s.deck.level) ? 1 : 2);      // d'abord une phrase qui n'est pas déjà à l'écran ; une seule en A1 et A2 (moins à lire), deux ensuite
+    const flat = x => String(x).replace(/[’`´]/g, "'");
+    const exs = fbExamples(card, a, fb, ['A1', 'A2'].includes(s.deck.level) ? 1 : 2);      // une seule phrase en A1 et A2 (moins à lire), deux ensuite
     const complete = !!meaning(card, help) && exs.length > 0;
     return `<div class="card feedback soft miss" role="status" aria-live="polite">
     <div class="verdict"><h3>${title}</h3>${complete ? `<p class="todo">${t('studyAgain')}</p>` : ''}
@@ -1694,6 +1694,15 @@ function feedbackView(step, lang) {
       <button class="secondary" data-action="felt" data-v="hard">${t('hesitated')}</button>${a.options ? `<button class="secondary" data-action="felt" data-v="lucky">${t('lucky')}</button>` : ''}</div>`
       : `<button class="primary" data-action="next" autofocus>${t('next')}</button>`}
   </div>`;
+}
+
+// Phrases d'un retour (« ancrer puis varier ») : tant que le mot est en boîte 1, avant ou après la réponse, la première phrase et
+// elle seule ; ensuite, dans l'ordre de cette rencontre, d'abord une phrase qui n'est pas déjà à l'écran.
+function fbExamples(card, a, fb, n) {
+  if (Math.min(fb.boxBefore || 1, fb.boxAfter || 1) <= ANCHOR_BOX) return card.examples.slice(0, 1);
+  const flat = x => String(x).replace(/[’`´]/g, "'"), shown = a.cloze ? a.cloze.text : a.type === 'speak' ? flat(a.model || '') : '';
+  const turn = (Array.isArray(a.rank) ? a.rank : []).map(i => card.examples[i]).filter(e => typeof e === 'string'), list = turn.length ? turn : card.examples;
+  return [...list.filter(e => flat(e) !== shown), ...list.filter(e => flat(e) === shown)].slice(0, n);
 }
 
 // Une bonne réponse n'est enregistrée qu'après que l'étudiant a dit comment elle est venue : « Facile », « J'ai hésité »
@@ -2194,7 +2203,7 @@ app.addEventListener('input', e => {
   if (k) { S.builder[k] = k === 'count' ? Math.min(500, Math.max(3, Math.round(+e.target.value) || 20)) : e.target.value;
     if (k === 'examples') {      // seul le message change : le reste du formulaire (fichiers choisis, texte collé) n'est pas redessiné
       const n = +S.builder.examples, w = app.querySelector('[data-exwarn]');
-      if (w) { w.hidden = n > 2; w.classList.toggle('warn', n === 1); w.textContent = n === 1 ? t('bExWarn1') : n === 2 ? t('bExWarn2') : ''; }
+      if (w) { w.hidden = n > 2; w.textContent = n === 2 ? t('bExWarn2') : ''; }
     }
     return refreshPrompts(); }
   if (e.target.dataset.input !== 'search') return;

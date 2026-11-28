@@ -439,7 +439,7 @@ export function audit(deck) {
   add('auTwins', deck.cards.filter(c => (deck.twins || []).some(p => p.includes(c.word))), true, (deck.twins || []).map(p => p.join(' / ')));
   // Doutes que l'IA (ou l'enseignant) a notés sur une fiche : à lire avant de donner le paquet aux étudiants.
   add('auDoubt', deck.cards.filter(c => c.doubt), true, deck.cards.filter(c => c.doubt).map(c => `${c.word} : ${c.doubt}`));
-  add('auFewExamples', deck.cards.filter(c => c.examples.length && c.examples.length < 3), false);
+  add('auFewExamples', deck.cards.filter(c => c.examples.length === 1), false);      // une seule phrase : rien à faire varier
   add('auNoSituation', deck.cards.filter(c => !c.situation), false);
   add('auNoTraps', deck.cards.filter(c => !(c.distractors || []).length), false);
   return out;

@@ -342,6 +342,18 @@ const hashInt = id => [...String(id)].reduce((a, ch) => (a * 31 + ch.charCodeAt(
 // Formes où l'étudiant se juge lui-même en comparant avec un modèle.
 export const SELF = ['speak', 'sentence', 'recall'];
 
+// « Ancrer puis varier » : une fiche n'a qu'UNE réserve de phrases, dans l'ordre donné par l'enseignant. Tant que le mot est en
+// boîte 1 (nouveau, ou retombé après une erreur), tous les écrans montrent la PREMIÈRE phrase : un contexte stable au tout début.
+// Ensuite les AUTRES phrases tournent, une par révision (turn = nombre de révisions déjà faites) : des contextes variés. La première
+// ne revient en tête que si le mot retombe en boîte 1. Rend les rangs des phrases, dans l'ordre où les montrer. Registre, section M.
+export const ANCHOR_BOX = 1;
+export function exampleOrder(card, box, turn = 0) {
+  const n = (card.examples || []).length, all = Array.from({ length: n }, (_, i) => i);
+  if (n < 2 || !(box > ANCHOR_BOX)) return all;      // une boîte illisible vaut la boîte 1 : on ancre
+  const m = n - 1, k = Number.isFinite(+turn) ? Math.round(+turn) - 1 : 0, start = 1 + ((k % m) + m) % m, rest = all.slice(1);
+  return [...rest.slice(start - 1), ...rest.slice(0, start - 1), 0];      // la phrase du tour, les autres, puis la première
+}
+
 // opts.force : forme imposée (rattrapage, phrase « bonus » du jour, défi, aperçu). opts.contrast : {text, id} de la
 // mauvaise réponse donnée juste avant ; le rattrapage oppose alors la bonne réponse à cette erreur précise.
 // opts.help : aide maximale à l'écriture (rattrapage). opts.gate : impose le rappel de tête (aperçu des exercices).
@@ -349,7 +361,9 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
   const mean = c => meaning(c, deck.help), L = spec(deck), lures = L.options - 1;
   const typable = c => c && !c.multi && c.n <= 3 && !!visible(c.answer), discontinuous = /…|\.\.\./.test(card.word);
   const first = card.clozes.find(c => card.examples[0] && c.text === apos(card.examples[0]));      // phrase à trous du premier exemple
-  const cl = card.clozes.length ? pick(card.clozes, rnd) : null;
+  // Ordre des phrases pour cette rencontre. En séance, il suit le nombre de révisions ; ailleurs (défi, aperçu), le départ est tiré au sort.
+  const exs = card.examples.map(apos), rank = exampleOrder(card, box, vary ? turn : card.clozes.length ? Math.floor(rnd() * exs.length) : 0);
+  const turnClozes = rank.map(i => card.clozes.find(c => c.text === exs[i])).filter(Boolean), cl = turnClozes[0] || null;
   const surface = d => (d.clozes.length ? lowerFirst(pick(d.clozes, rnd).answer, d.word) : null);
   // Forme d'un mot piège pour le trou d'une phrase. Si la réponse est le mot à sa forme de base (« embaucher », « cow »),
   // le mot piège est donné à sa forme de base lui aussi. Si la réponse est fléchie (« embauché », « cows »), il faut une
@@ -394,7 +408,7 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
     'listen-type': () => (discontinuous || !sayable ? null : (v => (v.length ? { answer: form ? form.text : card.word, accepted: v, hint: hint(v[0]), listen: true, ...asked, ask: '', gender: sex, kind } : null))(variants(form ? form.text : card.word).filter(visible))),      // la forme entendue : inutile de la nommer
     // Oral : l'étudiant dit le mot à partir de son sens, compare avec la voix, puis répète une phrase en même temps qu'elle.
     speak: () => {
-      const cloze = card.clozes.find(c => !c.multi) || null, model = cloze ? cloze.text : card.examples[0] ? apos(card.examples[0]) : '';
+      const cloze = turnClozes.find(c => !c.multi) || null, model = cloze ? cloze.text : exs[rank[0]] || '';
       return sayable && model ? { answer: card.bare, model, cloze, self: true } : null;
     },
     // Phrase libre : l'étudiant compose une phrase avec le mot, puis la compare aux phrases modèles.
@@ -414,11 +428,11 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
       const rest = distractors(deck, card, lures, rnd, d => (d.id === card.id ? answer : formFor(answer, d)), prefer, { form: true, strict: tightGap(c, deck.lang), gender: kindOf(card, deck.lang) === 'nom' && genderGap(c, deck.lang), number: kindOf(card, deck.lang) === 'nom', mixed, sense: mean }).filter(d => !own.includes(d.text));
       return choice(answer, [...mine, ...rest].slice(0, lures), { cloze: c });
     },
-    'cloze-type': () => written(pick(card.clozes.filter(typable), rnd)),
+    'cloze-type': () => written(turnClozes.find(typable)),
     'situation-type': () => (card.situation ? written(first, { situation: card.situation }) : null),
     type: () => (discontinuous || isNumber(card.definition) ? null : (v => (v.length ? { answer: form ? form.text : card.word, accepted: v, hint: hint(v[0]), ...asked, gender: sex, kind, art: wantsArticle(v) } : null))(variants(form ? form.text : card.word).filter(visible))),
     order: () => {
-      for (const text of shuffle(card.examples.map(apos), rnd)) {
+      for (const text of rank.map(i => exs[i])) {
         const raw = chunks(text, L.chunks);
         if (!raw) continue;
         // Le mot de la fiche lui-même, en tête de phrase (« Horses live on farms. »), perd sa majuscule comme les autres.
@@ -441,15 +455,15 @@ export function buildActivity(deck, card, box, rnd = Math.random, { force = null
     if (!a) continue;
     // gated : l'étudiant cherche d'abord la réponse de tête, les choix n'apparaissent qu'ensuite.
     const gated = !!a.options && type !== 'qcm' && type !== 'situation' && type !== 'listen' && (gate || (!contrast && box >= 2 && !force));
-    return { type, cardId: card.id, gated, ...a };
+    return { type, cardId: card.id, gated, rank, ...a };
   }
   // Aucune forme de l'échelle n'est possible en respectant la règle des catégories (fiche seule de sa catégorie) :
   // plutôt que de mêler les catégories, on demande d'écrire le mot (phrase à trou, sinon le mot d'après son sens).
-  if (!mixed) for (const type of ['cloze-type', 'type']) { const a = make[type]?.(); if (a) return { type, cardId: card.id, gated: false, ...a }; }
+  if (!mixed) for (const type of ['cloze-type', 'type']) { const a = make[type]?.(); if (a) return { type, cardId: card.id, gated: false, rank, ...a }; }
   // Dernier recours, quand rien ne peut être choisi ni écrit (fiche seule de sa catégorie, sans phrase, mot en deux parties) :
   // un rappel de tête. L'étudiant retrouve le mot d'après son sens, le découvre, puis se juge. Aucune catégorie n'est mêlée
   // et aucune fiche ne reste sans exercice.
-  return { type: 'recall', cardId: card.id, gated: false, answer: card.bare, self: true };
+  return { type: 'recall', cardId: card.id, gated: false, rank, answer: card.bare, self: true };
 }
 
 // Tableau d'association (mots et sens) et banque de mots : formes à plusieurs fiches, sans effet sur les boîtes.
