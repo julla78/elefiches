@@ -1308,14 +1308,14 @@ t('15b : le calendrier joué à blanc donne des durées stables et plausibles', 
 });
 
 t('15b : mesure locale de la vitesse et de la réussite', () => {
-  const m = emptyMeasure(); assert.deepEqual(rates(m), { sec: 15, ok: 0.9, timed: false, measured: false, wsec: 0, wn: 0 });
+  const m = emptyMeasure(); assert.deepEqual(rates(m), { sec: 15, ok: 0.9, timed: false, measured: false, wsec: 0, wn: 0, esec: 0, en: 0 });
   addTime(m, 500); addTime(m, 91000); addTime(m, NaN); assert.equal(m.t.length, 0, 'ni double appui, ni téléphone posé');
   for (let i = 0; i < 9; i++) addTime(m, 20000); assert.equal(rates(m).sec, 15, 'neuf mesures : pas encore'); addTime(m, 20000); assert.equal(rates(m).sec, 20);
   for (let i = 0; i < 80; i++) addTime(m, 8000); assert.equal(m.t.length, 60); assert.equal(rates(m).sec, 8, 'les soixante dernières : la médiane suit l’étudiant');
   for (let i = 0; i < 19; i++) addTry(m, i % 2 === 0); assert.equal(rates(m).ok, 0.9); addTry(m, true); assert.equal(rates(m).ok, 0.55); assert.equal(rates(m).measured, true);
   for (let i = 0; i < 400; i++) addTry(m, true); assert.ok(m.tries <= 200 && m.ok <= m.tries && rates(m).ok === 0.98, 'taux borné, anciennes réponses allégées');
   for (let i = 0; i < 400; i++) addTry(m, false); assert.equal(rates(m).ok, 0.5);
-  assert.deepEqual(cleanMeasure({ t: [5, '9', -1, 500, null, 12.345], tries: 10, ok: 99 }), { t: [5, 12.3], w: [], tries: 10, ok: 10 });
+  assert.deepEqual(cleanMeasure({ t: [5, '9', -1, 500, null, 12.345], tries: 10, ok: 99 }), { t: [5, 12.3], w: [], e: [], tries: 10, ok: 10 });
   assert.deepEqual(cleanMeasure('<script>'), emptyMeasure()); assert.deepEqual(cleanMeasure({ t: '<img>', tries: '<b>', ok: {} }), emptyMeasure());
 });
 
@@ -1681,7 +1681,7 @@ t('E1 : un mot raté est redemandé de tête, quelques mots plus tard', () => {
   const q = buildActivity(d, c, 1, () => 0.5, { force: 'qcm', gate: true }); assert.equal(q.gated, false, 'reconnaître le sens d’un mot affiché : rien à chercher de tête');
 });
 
-t('E1 : chronomètre du premier essai écrit, à part des autres étapes', () => {
+t('E1 : chronomètre du premier essai écrit, à part des autres étapes', async () => {
   const m = emptyMeasure(); assert.deepEqual(m.w, []);
   addWrite(m, 500); addWrite(m, 95000); addWrite(m, NaN); assert.equal(m.w.length, 0, 'moins d’une seconde ou plus de quatre-vingt-dix : pas une mesure');
   for (const ms of [8000, 12000, 10000]) addWrite(m, ms); assert.deepEqual(m.w, [8, 12, 10]); assert.equal(m.t.length, 0, 'la médiane des étapes n’est pas touchée');
@@ -1690,6 +1690,8 @@ t('E1 : chronomètre du premier essai écrit, à part des autres étapes', () =>
   const old = cleanMeasure({ t: [5, 6], tries: 3, ok: 2 }); assert.deepEqual(old.w, [], 'mesure d’avant E1 : acceptée'); assert.equal(rates(old).wn, 0); assert.equal(rates(old).wsec, 0);
   assert.deepEqual(cleanMeasure({ t: [], w: [3, 'x', -1, 1e9, 4.26, null, {}], tries: 0, ok: 0 }).w, [3, 4.3], 'valeurs forgées écartées');
   assert.deepEqual(cleanMeasure({ w: '<img>' }).w, []);
+  const { addStay } = await import('../js/plan.js'); const m2 = emptyMeasure(); addStay(m2, 400); addStay(m2, 2600); addStay(m2, 5400); assert.deepEqual(m2.e, [2.6, 5.4], 'temps passé sur la fiche après une erreur'); assert.equal(rates(m2).esec, 4); assert.equal(rates(m2).en, 2);
+  assert.deepEqual(cleanMeasure({ e: [2, 'x', 1e9] }).e, [2]); assert.deepEqual(cleanMeasure({ t: [5] }).e, []);
 });
 
 const { STR: STRINGS } = await import('../js/i18n.js');
@@ -1697,6 +1699,7 @@ t('E1 : règles du jeu exactes, plus de phrase d’humour après une erreur', ()
   for (const lang of ['fr', 'en', 'es']) {
     const R = STRINGS[lang].rulesText; assert.equal(R.length, 9);
     assert.ok(!/dix mots\b|ten words|diez palabras/i.test(JSON.stringify(R).replace(/dizaine de mots|about ten words|unas diez palabras/gi, '')), lang + ' : une étape ne fait pas toujours dix mots');
+    assert.ok(STRINGS[lang].studyAgain && STRINGS[lang].eMeasure.includes('{1}'));
     assert.equal(STRINGS[lang].puns, undefined); assert.ok(STRINGS[lang].no && STRINGS[lang].resetOf.includes('{0}') && STRINGS[lang].wMeasure.includes('{1}'));
     assert.ok(!STRINGS[lang].remEvent.includes('{0}'), 'le rendez-vous ne cite plus de minutes');
   }
@@ -1704,6 +1707,23 @@ t('E1 : règles du jeu exactes, plus de phrase d’humour après une erreur', ()
   // Une étape : une dizaine de mots. Le reste de 1 à 4 mots rejoint la dernière étape ; de 5 à 9, il en forme une plus courte.
   const sizes = n => { const d = { cards: Array.from({ length: n }, (_, i) => ({ id: 'c' + i })) }; return stageOf(d, {}).bounds.map(([a, b]) => b - a); };
   assert.deepEqual(sizes(15), [10, 5]); assert.deepEqual(sizes(12), [12]); assert.deepEqual(sizes(63).slice(-1), [13]); assert.deepEqual(sizes(85).slice(-1), [5]); assert.equal(sizes(85).length, 9);
+});
+
+t('rappel : jours du rappel cochés à la main, pré-cochés d’après le plan', async () => {
+  const { buildICS, WEEK, ADVISED, remDays, toggleDay } = await import('../js/remind.js');
+  assert.deepEqual(remDays('daily', true), WEEK, 'rien de choisi, avec un plan : chaque jour'); assert.deepEqual(remDays(undefined, false), ['MO', 'WE', 'FR', 'SU'], 'sans plan : un jour sur deux');
+  assert.deepEqual(remDays('weekdays', true), ['MO', 'TU', 'WE', 'TH', 'FR'], 'ancien choix gardé'); assert.deepEqual(remDays('three', false), ['MO', 'WE', 'FR']);
+  assert.deepEqual(remDays(['SU', 'MO', 'MO', '<img>', 7, null], false), ['MO', 'SU'], 'liste nettoyée, du lundi au dimanche'); assert.deepEqual(remDays([], true), WEEK, 'liste vide : la recommandation');
+  for (const forged of ['<img>', 42, {}, null, 'constructor', '__proto__']) assert.deepEqual(remDays(forged, false), ADVISED.free);
+  assert.deepEqual(toggleDay(WEEK, 'SA'), ['MO', 'TU', 'WE', 'TH', 'FR', 'SU']); assert.deepEqual(toggleDay(['MO'], 'WE'), ['MO', 'WE']);
+  assert.deepEqual(toggleDay(['MO'], 'MO'), ['MO'], 'le dernier jour ne se décoche pas'); assert.deepEqual(toggleDay(['MO'], 'XX'), ['MO']);
+  const now = new Date(2026, 10, 24, 20, 0);      // un mardi soir
+  assert.ok(buildICS({ days: WEEK, now }).includes('RRULE:FREQ=DAILY'), 'sept jours : chaque jour'); assert.ok(buildICS({ now }).includes('RRULE:FREQ=DAILY'));
+  const some = buildICS({ time: '08:00', days: ['TU', 'SA'], now }); assert.ok(some.includes('RRULE:FREQ=WEEKLY;BYDAY=TU,SA') && some.includes('DTSTART:20261128T080000'), 'premier rappel le samedi suivant');
+  assert.ok(buildICS({ days: ['SU;X-EVIL:1', 'MO\r\nBEGIN:VEVENT'], now }).includes('RRULE:FREQ=DAILY'), 'jours forgés : jamais écrits dans le fichier');
+  const { STR } = await import('../js/i18n.js');
+  for (const l of ['fr', 'en', 'es']) { assert.equal(STR[l].dayInitials.length, 7); assert.equal(STR[l].dayNames.length, 7); assert.ok(STR[l].remAdvPlan && STR[l].remAdvFree && STR[l].plcGo_1 && STR[l].plcGo_n.includes('{0}')); assert.equal(STR[l].remThree, undefined); }
+  assert.equal(STR.fr.plcSkip, 'Aucun'); assert.equal(STR.fr.plcSkipSome, 'Passer'); assert.equal(STR.fr.plcGo_n.replace(/\u00a0/g, ' '), 'Écrire ces {0} mots');      // l'espace entre le nombre et « mots » est insécable
 });
 
 await Promise.all(pending);

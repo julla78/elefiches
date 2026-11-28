@@ -53,13 +53,14 @@ export function newToday(left, days, d, missed = 0, cap = 0) {
 // Les soixante dernières durées d'étape (en secondes) et le compte des premières réponses, justes ou non. Tout reste
 // sur l'appareil. Une étape de moins d'une seconde (double appui) ou de plus de quatre-vingt-dix secondes (l'étudiant
 // a posé son téléphone) n'est pas une mesure.
-export const emptyMeasure = () => ({ t: [], w: [], tries: 0, ok: 0 });
+export const emptyMeasure = () => ({ t: [], w: [], e: [], tries: 0, ok: 0 });
 export function cleanMeasure(m) {
   if (!m || typeof m !== 'object') return emptyMeasure();
   const t = (Array.isArray(m.t) ? m.t : []).filter(x => typeof x === 'number' && Number.isFinite(x) && x >= 1 && x <= 90).slice(-60).map(x => Math.round(x * 10) / 10);
   const w = (Array.isArray(m.w) ? m.w : []).filter(x => typeof x === 'number' && Number.isFinite(x) && x >= 1 && x <= 90).slice(-60).map(x => Math.round(x * 10) / 10);
+  const e = (Array.isArray(m.e) ? m.e : []).filter(x => typeof x === 'number' && Number.isFinite(x) && x >= 1 && x <= 90).slice(-60).map(x => Math.round(x * 10) / 10);
   const tries = int(m.tries, 0, 1e6, 0);
-  return { t, w, tries, ok: int(m.ok, 0, tries, 0) };
+  return { t, w, e, tries, ok: int(m.ok, 0, tries, 0) };
 }
 export function addTime(m, ms) {
   if (!(ms >= 1000 && ms <= 90000)) return m;
@@ -70,6 +71,12 @@ export function addTime(m, ms) {
 export function addWrite(m, ms) {
   if (!(ms >= 1000 && ms <= 90000)) return m;
   (m.w ??= []).push(Math.round(ms / 100) / 10); if (m.w.length > 60) m.w.splice(0, m.w.length - 60);
+  return m;
+}
+// Après une erreur : secondes passées sur la fiche avant de toucher « Continuer ». Mêmes bornes.
+export function addStay(m, ms) {
+  if (!(ms >= 1000 && ms <= 90000)) return m;
+  (m.e ??= []).push(Math.round(ms / 100) / 10); if (m.e.length > 60) m.e.splice(0, m.e.length - 60);
   return m;
 }
 // Première réponse à une question (jamais un rattrapage). Passé deux cents réponses, les anciennes pèsent moitié
@@ -83,7 +90,7 @@ const median = a => { const s = [...a].sort((x, y) => x - y), k = s.length >> 1;
 // Valeurs utilisées par les calculs : la médiane des durées dès dix mesures, le taux de réussite dès vingt réponses.
 export function rates(m) {
   const c = cleanMeasure(m), timed = c.t.length >= 10, counted = c.tries >= 20;
-  return { sec: timed ? clamp(median(c.t), 4, 60) : DEFAULT_SEC, ok: counted ? clamp(c.ok / c.tries, 0.5, 0.98) : DEFAULT_OK, timed, measured: timed && counted, wsec: c.w.length ? median(c.w) : 0, wn: c.w.length };
+  return { sec: timed ? clamp(median(c.t), 4, 60) : DEFAULT_SEC, ok: counted ? clamp(c.ok / c.tries, 0.5, 0.98) : DEFAULT_OK, timed, measured: timed && counted, wsec: c.w.length ? median(c.w) : 0, wn: c.w.length, esec: c.e.length ? median(c.e) : 0, en: c.e.length };
 }
 export const minutes = (steps, sec = DEFAULT_SEC) => Math.max(1, Math.round(steps * sec / 60));
 

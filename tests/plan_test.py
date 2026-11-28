@@ -103,9 +103,9 @@ with sync_playwright() as p:
 
     # 2 bis. Test « déjà su » : trois mots cochés. Un seul est écrit juste du premier coup : lui seul est « déjà su ».
     page.click('.deck [data-action=place]'); page.wait_for_selector('.placelist')
-    assert page.locator('.placelist .pick').count() == n_cards and page.locator('.placego .primary').inner_text() == 'Aucun, je choisis mon pas'
+    assert page.locator('.placelist .pick').count() == n_cards and page.locator('.placego .primary').inner_text() == 'Aucun'
     for k in range(3): page.locator('.placelist .pick').nth(k).click()
-    assert page.locator('.pick[aria-pressed=true]').count() == 3 and 'Prouver ma sélection · 3' in txt('.placego') and narrow()
+    assert page.locator('.pick[aria-pressed=true]').count() == 3 and 'Écrire ces 3 mots' in txt('.placego') and 'Passer' in txt('.placego') and narrow()
     page.locator('.placelist .pick').nth(2).click(); page.locator('.placelist .pick').nth(2).click()      # décocher puis recocher : l'écran ne bouge pas
     page.screenshot(path=out + '/plan-1a-deja-su.png', full_page=True)
     # Lot 2b : le titre garde son espace insécable ; une seule consigne, dans un encart de couleur, sans point (i).

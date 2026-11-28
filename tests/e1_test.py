@@ -71,6 +71,12 @@ with sync_playwright() as p:
     total = page.evaluate(f"{S}.decks[0].cards.length")
     assert page.locator('.placelist .pick').count() == total - seen, 'positionnement : seulement les mots pas encore découverts'
     assert gap_under_title(page) >= 6
+    assert page.inner_text('.placego .primary').strip() == 'Aucun'
+    page.locator('.placelist .pick').nth(0).click(); assert [x.replace('\u00a0', ' ').strip() for x in page.locator('.placego button').all_inner_texts()] == ['Écrire ce mot', 'Passer']
+    page.locator('.placelist .pick').nth(1).click(); page.locator('.placelist .pick').nth(2).click(); assert [x.replace('\u00a0', ' ').strip() for x in page.locator('.placego button').all_inner_texts()] == ['Écrire ces 3 mots', 'Passer']
+    page.screenshot(path=f'{out}/e1_positionnement_3.png', full_page=True)
+    for i in range(3): page.locator('.placelist .pick').nth(i).click()
+    assert page.inner_text('.placego .primary').strip() == 'Aucun'
     page.screenshot(path=f'{out}/e1_positionnement.png', full_page=True)
     page.click('[data-action=place-skip]'); page.wait_for_selector('.paces')
     assert 'Ton plan' in page.inner_text('h1')
@@ -91,11 +97,13 @@ with sync_playwright() as p:
     ans = page.evaluate("window.__elefiches.step.activity.answer"); texts = page.evaluate("window.__elefiches.step.activity.options")
     t0 = time.time(); page.locator('.option').nth((texts.index(ans) + 1) % len(texts)).click(); page.wait_for_selector('.feedback.miss')
     kids = page.evaluate("[...document.querySelector('.feedback.miss').children].map(e => e.tagName.toLowerCase() + '.' + e.className.split(' ')[0])")
-    assert kids == ['div.verdict', 'p.recap', 'button.primary'], ('trois blocs : verdict, mot, « Continuer »', kids)
-    assert word in page.inner_text('.feedback .recap') and page.locator('.feedback .recap [data-action=speak]').count() == 1, 'le mot, avec sa voix'
-    assert page.locator('.feedback .recap img').count() == 1, 'et son image (niveau A1 : une image par fiche)'
-    assert not page.locator('.feedback .oopsrow, .feedback .example, .feedback .mascot, .feedback .meta').count(), 'ni phrase d’humour, ni exemple, ni second éléphanteau'
-    assert page.inner_text('.feedback h3').strip() == 'Pas encore. Regarde bien.' and page.locator('.feedback h3').bounding_box()['height'] < 40, 'verdict sur une seule ligne à 390 pixels'
+    assert kids == ['div.verdict', 'div.fiche', 'button.primary'], ('le verdict, la fiche complète, « Continuer »', kids)
+    assert page.inner_text('.feedback h3').strip() == 'Pas encore.' and page.inner_text('.feedback .todo').strip() == 'Regarde bien cette fiche.'
+    assert word in page.inner_text('.fiche .recap') and page.locator('.fiche .recap [data-action=speak]').count() == 1 and page.locator('.fiche .recap img').count() == 1, 'le mot, avec sa voix et son image'
+    meaning = page.evaluate("(c => c.definition)(window.__elefiches.step.card)"); assert meaning and meaning in page.inner_text('.fiche .fichedef'), 'le sens du mot, mis en avant'
+    assert page.locator('.fiche .example').count() == 1 and page.locator('.fiche .example b.target').count() >= 1, 'un ou deux exemples, le mot en gras : jamais un mot sans exemple'
+    assert float(page.evaluate("getComputedStyle(document.querySelector('.fiche .fichedef')).fontWeight")) >= 600
+    assert not page.locator('.feedback .oopsrow, .feedback .mascot').count(), 'ni phrase d’humour, ni second éléphanteau'
     btn = page.locator('.feedback [data-action=next]')
     assert btn.get_attribute('aria-disabled') == 'true' and 'hold' in btn.get_attribute('class')
     w = btn.bounding_box()['width']; assert w > 300, ('« Continuer » en pleine largeur', w)
@@ -106,12 +114,13 @@ with sync_playwright() as p:
     assert page.locator('.feedback.miss').count() == 1 and page.evaluate("window.__elefiches.step.card.id") == card, 'avant trois secondes, « Continuer » ne répond pas : la bonne réponse reste à l’écran'
     page.screenshot(path=f'{out}/e1_erreur_attente.png', full_page=True)
     page.wait_for_selector('.feedback [data-action=next]:not([aria-disabled])', timeout=6000); waited = time.time() - t0
-    assert 2.7 <= waited <= 4.5, ('« Continuer » actif après trois secondes', waited)
+    assert 1.7 <= waited <= 3.5, ('« Continuer » actif après deux secondes', waited)
     page.wait_for_timeout(2500); assert page.locator('.feedback.miss').count() == 1, 'la bonne réponse reste jusqu’au toucher'
     page.screenshot(path=f'{out}/e1_erreur_pret.png', full_page=True)
     assert page.evaluate(f"{S}.session.queue.findIndex(i => i.id === '{card}' && i.retry)") in (1, 2, 3, 4, 5), 'le mot est redemandé quelques mots plus tard (cinq au plus)'
     assert page.evaluate(f"(i => i.gate === true && i.help === undefined)({S}.session.queue.find(i => i.id === '{card}' && i.retry))"), 'de tête, sans aide ajoutée'
-    btn.click(); page.wait_for_function(f"window.__elefiches.step.card.id !== '{card}' || !{S}.feedback")
+    btn.click(); assert page.evaluate(f"{S}.measure.e.length") == 1 and page.evaluate(f"{S}.measure.e[0]") >= 2, 'le temps passé sur la fiche est mesuré sur l’appareil'
+    page.wait_for_function(f"window.__elefiches.step.card.id !== '{card}' || !{S}.feedback")
     assert not page.locator('.feedback').count(), 'la bonne réponse est masquée'
     back = None
     for k in range(10):      # le mot revient, sous la même forme, sans que sa réponse soit à l'écran
@@ -129,26 +138,29 @@ with sync_playwright() as p:
     page.click('details[data-k=rem] > summary'); page.wait_for_selector('details[data-k=rem][open] #remtime')
     assert page.inner_text('details[data-k=rem] [data-action=remind]').strip() == 'Ajouter à mon agenda' and page.locator('details[data-k=rem] [data-action=remind]').bounding_box()['height'] <= 52, 'bouton du rappel sur une ligne'
     assert page.evaluate("(c => c !== getComputedStyle(document.documentElement).getPropertyValue('--line').trim() && c)(getComputedStyle(document.querySelector('#remtime')).borderTopColor)") == 'rgb(133, 128, 143)', 'bord du champ à 3 de contraste au moins'
-    assert page.locator('[data-key=remindDays]').all_inner_texts() == ['Chaque jour', 'Lun. à ven.', 'Lu · Me · Ve']
-    hs = page.evaluate("[...document.querySelectorAll('[data-key=remindDays]')].map(b => Math.round(b.getBoundingClientRect().height))"); assert max(hs) - min(hs) <= 1 and max(hs) <= 52, ('les trois choix tiennent chacun sur une ligne', hs)
+    days = page.locator('.days [data-action=rem-day]')
+    assert days.all_inner_texts() == ['L', 'M', 'M', 'J', 'V', 'S', 'D'] and page.get_attribute('.days [data-v=WE]', 'aria-label') == 'Mercredi'
+    assert page.locator('.days [aria-pressed=true]').count() == 7 and 'Conseillé avec ton plan : chaque jour.' in page.inner_text('details[data-k=rem]'), 'avec un plan, tous les jours sont pré-cochés'
+    box = [days.nth(i).bounding_box() for i in range(7)]; assert max(b['y'] for b in box) - min(b['y'] for b in box) < 1 and min(b['height'] for b in box) >= 44 and min(b['width'] for b in box) >= 32, ('sept pastilles sur une ligne', box[0])
     page.fill('#remtime', '07:45'); page.dispatch_event('#remtime', 'change')
-    page.click('[data-key=remindDays][data-value=weekdays]')
+    page.click('.days [data-v=SA]')
     assert page.locator('details[data-k=rem][open]').count() == 1, '« Rappels » reste ouvert quand on change les jours'
-    assert page.get_attribute('[data-key=remindDays][data-value=weekdays]', 'aria-pressed') == 'true' and page.input_value('#remtime') == '07:45', 'le choix est pris, l’heure est gardée'
-    assert page.evaluate("document.activeElement?.dataset.value") == 'weekdays', 'la touche active reste sur le réglage touché'
-    page.click('[data-key=remindDays][data-value=three]'); assert page.locator('details[data-k=rem][open]').count() == 1
+    assert page.get_attribute('.days [data-v=SA]', 'aria-pressed') == 'false' and page.locator('.days [aria-pressed=true]').count() == 6 and page.input_value('#remtime') == '07:45', 'le jour est décoché, l’heure est gardée'
+    assert page.evaluate("document.activeElement?.dataset.v") == 'SA', 'la touche active reste sur le jour touché'
+    page.click('.days [data-v=SU]'); assert page.locator('details[data-k=rem][open]').count() == 1 and page.locator('.days [aria-pressed=true]').count() == 5
     page.click('details[data-k=set] > summary'); page.click('[data-key=sound][data-value="0"]')
     assert page.locator('details[data-k=set][open]').count() == 1 and page.locator('details[data-k=rem][open]').count() == 1, 'deux volets ouverts le restent tous les deux'
     page.click('[data-key=sound][data-value="1"]')
     page.locator('details[data-k=rem]').scroll_into_view_if_needed(); page.screenshot(path=f'{out}/e1_rappels.png', full_page=True)
     page.reload(); page.wait_for_selector('.deck')
-    assert page.evaluate(f"{S}.remind.days === 'three' && {S}.remind.time === '07:45'"), 'heure et jours du rappel sont enregistrés'
+    assert page.evaluate(f"JSON.stringify({S}.remind.days) === '[\"MO\",\"TU\",\"WE\",\"TH\",\"FR\"]' && {S}.remind.time === '07:45'"), 'heure et jours du rappel sont enregistrés'
+    page.click('details[data-k=rem] > summary'); assert page.locator('.days [aria-pressed=true]').count() == 5, 'les jours cochés sont retrouvés au rechargement'
 
     # ---- 5. Règles du jeu.
     page.click('[data-action=rules]'); page.wait_for_selector('.rulelist')
     rules = page.inner_text('#app')
     assert 'dix mots' not in rules and 'dizaine de mots' in rules and 'Quand tu les as tous découverts' in rules and 'La trompe avance à chaque réponse' in rules
-    assert 'regarde bien la bonne réponse' in rules and 'session' not in rules.lower()
+    assert 'regarde bien la fiche' in rules and 'session' not in rules.lower()
     assert gap_under_title(page) == 16, ('le titre ne touche plus le premier encart', gap_under_title(page))
     gaps = page.evaluate("[...document.querySelectorAll('.card > h2')].map(h => Math.round(h.nextElementSibling.getBoundingClientRect().top - h.getBoundingClientRect().bottom))"); assert gaps and min(gaps) >= 8, ('dans un encart, le titre ne touche pas le texte', gaps)
     assert page.evaluate("[...document.querySelectorAll('.rulelist li')].every(li => Math.round(li.getBoundingClientRect().left) === Math.round(li.closest('.card').querySelector('h2').getBoundingClientRect().left))"), 'listes des règles : même bord que le titre de l’encart'

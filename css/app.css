@@ -677,3 +677,18 @@ select, input:not([type=file]), textarea, .mysentence textarea, .remind input[ty
 /* Un titre ou un bouton sur deux lignes se partage en lignes de longueurs voisines : plus de mot seul à la ligne. */
 h1, h2, h3, .primary, .secondary { text-wrap: balance; }
 p, li { text-wrap: pretty; }
+
+/* Jours du rappel : sept pastilles rondes à cocher, du lundi au dimanche, sur toute la largeur de l'encart. */
+.days { display: flex; gap: 6px; width: 100%; }
+.days button { flex: 1 1 0; min-width: 0; min-height: 44px; padding: 0; border-radius: 999px; border: 2px solid var(--field); background: var(--card); color: var(--ink); font-weight: 700; }
+.days button[aria-pressed=true] { background: var(--brand); border-color: var(--brand); color: var(--brand-ink); }
+
+/* Retour après une erreur : la fiche complète à réétudier. Le sens est le texte le plus lisible après le mot ; les exemples suivent. */
+.feedback.miss .todo { font-weight: 600; }
+.feedback.miss .fiche { display: grid; gap: 10px; }
+.feedback.miss .fichedef { font-size: 1.2rem; font-weight: 600; line-height: 1.4; }
+.feedback.miss .example { border-left-color: var(--field); }
+/* Dans une question, le sens écrit passe avant l'image : texte plus grand et plus gras, image plus petite (une image qui domine
+   détourne l'attention du texte : Boers, Warren, He et Deconinck 2017, résumé lu). */
+.hintdef { font-size: 1.15rem; font-weight: 600; line-height: 1.4; }
+.hintimg { width: 56px; height: 56px; }

@@ -7,11 +7,11 @@ import { clozeParts, norm, noAcc, noArt, diffParts, remark, spoken, slug } from 
 import { unzip, typeOf } from './zip.js';
 import { buildPrompts, GRIDS, gridOf } from './prompts.js';
 import { openSqlite } from './sqlite.js';
-import { buildICS } from './remind.js';
+import { buildICS, WEEK, remDays, toggleDay } from './remind.js';
 import { makeBackup, readBackup, mergeProgress, cleanProgress, countReplaced, countAdded, countLate } from './backup.js';
 import { ACCESS, MIN_CODE, validAccess, makeAccess, checkAccess } from './acces.js';
 import { STR, LANG_NAMES } from './i18n.js';
-import { PACES, DAY, EXTRA_MIN, paceDays, simulate, today as planToday, outlook, startPlan, cleanMeasure, emptyMeasure, addTime, addTry, addWrite, rates, minutes, missedNow, markWorked, stepsLeft, milestone, dayEnd, dayIndex, OWN, SMALL, OFFER, staleIds, weakIds } from './plan.js';
+import { PACES, DAY, EXTRA_MIN, paceDays, simulate, today as planToday, outlook, startPlan, cleanMeasure, emptyMeasure, addTime, addTry, addWrite, addStay, rates, minutes, missedNow, markWorked, stepsLeft, milestone, dayEnd, dayIndex, OWN, SMALL, OFFER, staleIds, weakIds } from './plan.js';
 
 const app = document.getElementById('app');
 // En ligne, l'application ne s'affiche pas à l'intérieur de la page d'un autre site (protection contre le détournement de clics).
@@ -508,6 +508,8 @@ function pendingStage(d, P) {
 // jusqu'à l'extension du plan à toutes les listes. Ce réglage est rangé par paquet, sous « _new » dans sa progression :
 // un pas posé sur une carte ne vaut que pour elle. L'ancien réglage commun (« Appétit du jour ») sert de valeur de départ.
 const planned = d => !!d?.days;
+// Jours du rappel : ceux que l'étudiant a cochés ; tant qu'il n'a rien choisi, les jours conseillés (tous avec un plan, un sur deux sinon).
+const myDays = () => remDays(S.remind.days, S.decks.some(planned));
 // Une liste est commencée dès qu'une fiche a été vue ou qu'un plan existe : c'est alors seulement qu'il y a quelque chose à effacer.
 const started = id => { const P = S.progress[id] || {}; return !!P._plan || Object.keys(P).some(k => !k.startsWith('_')); };
 const resetLink = (d, label) => (S.confirmReset === d.id
@@ -592,7 +594,7 @@ function openPlace(id) {
   if (P._plan || !d.cards.some(c => isNew(P[c.id]))) return openPlan(id);
   S.placeId = id; S.placePick = new Set(); S.view = 'place'; S.notice = null; S.session = null; window.scrollTo?.(0, 0); render();
 }
-const placeGo = n => `${n ? `<button class="primary" data-action="place-go">${t('plcGo', n)}</button>` : ''}<button class="${n ? 'secondary' : 'primary'}" data-action="place-skip">${t(n ? 'plcSkipSome' : 'plcSkip')}</button>`;
+const placeGo = n => `${n ? `<button class="primary" data-action="place-go">${tn('plcGo', n)}</button>` : ''}<button class="${n ? 'secondary' : 'primary'}" data-action="place-skip">${t(n ? 'plcSkipSome' : 'plcSkip')}</button>`;
 function placeView() {
   const d = S.decks.find(x => x.id === S.placeId), P = S.progress[d.id], fresh = d.cards.filter(c => isNew(P[c.id])), pick = S.placePick || new Set();
   return `<button class="link" data-action="home">← ${t('back')}</button>
@@ -821,7 +823,8 @@ function home() {
     <details class="card settings remind" data-k="rem"><summary>${ICON.bell} ${t('remTitle')}</summary>
       <p class="sethint">${t('remIntro')}</p>
       <div class="setrow"><label for="remtime">${t('remTime')}</label><input id="remtime" type="time" data-remind="time" value="${esc(S.remind.time)}"></div>
-      ${setrow('remDays', seg('remindDays', S.remind.days, [['daily', t('remDaily')], ['weekdays', t('remWeek')], ['three', t('remThree')]]))}
+      <div class="setrow"><span id="remdays">${t('remDays')}</span><div class="days" role="group" aria-labelledby="remdays">${WEEK.map((d, i) => `<button type="button" data-action="rem-day" data-v="${d}" aria-pressed="${myDays().includes(d)}" aria-label="${esc(t('dayNames')[i])}">${t('dayInitials')[i]}</button>`).join('')}</div></div>
+      <p class="sethint">${t(S.decks.some(planned) ? 'remAdvPlan' : 'remAdvFree')}</p>
       <div class="stack"><button class="secondary" data-action="remind">${ICON.cal} ${t('remAdd')}</button></div>
       <p class="sethint">${t('remHint')}</p>
     </details>
@@ -1624,8 +1627,8 @@ function bankView(step, lang) {
 }
 
 // Après une erreur, la bonne réponse reste à l'écran jusqu'au toucher de « Continuer », qui ne répond qu'au bout de trois secondes
-// (décision du 27 novembre 2026 ; Pashler et al. 2005 affichaient la bonne réponse cinq secondes, aucune étude lue ne compare des durées).
-const HOLD_MS = 3000;
+// (Pashler et al. 2005 affichaient la bonne réponse cinq secondes ; aucune étude lue ne compare des durées en vocabulaire : choix de conception).
+const HOLD_MS = 2000;      // deux secondes (28 novembre 2026) : une garde contre le toucher réflexe ; la fiche reste jusqu'au toucher
 const holdLeft = () => { const l = (S.feedback?.holdUntil || 0) - Date.now(); return l > 0 && l <= HOLD_MS ? l : 0; };      // borné : une horloge qui recule ne bloque rien
 const held = () => holdLeft() > 0;
 let holdTimer = 0;
@@ -1656,16 +1659,26 @@ function feedbackView(step, lang) {
   const when = s.challenge || plc || fb.ask ? '' : fb.ok && !fb.retry ? t('nextIn', Math.max(1, fb.days)) : '';
   const wins = plc ? (fb.ok ? [t('plcJoined')] : []) : [fb.joined ? t('joined') : '', fb.tamed ? t('tamed', card.word, s.tamed.length, s.today.length) : '',
     fb.ok && [3, 5, 10].includes(s.stats.streak) ? t('streak', s.stats.streak) : ''].filter(Boolean);
-  // Trois blocs après une erreur : le verdict (avec ce qui a été confondu, ou la lettre qui diffère), le mot avec son image et sa
-  // voix, « Continuer ». Ni phrase d'humour, ni recopie, ni second éléphanteau : celui de la barre réagit déjà.
+  // Après une erreur, l'étudiant réétudie la fiche : le verdict (avec ce qui a été confondu, ou la lettre qui diffère), puis la fiche
+  // complète (le mot avec son image et sa voix, son sens mis en avant, un ou deux exemples où le mot est en gras), puis « Continuer ».
+  // Un mot n'est jamais montré sans son sens ni ses exemples : sans eux, il n'y aurait rien à étudier pendant l'attente.
+  // Ni phrase d'humour, ni recopie, ni second éléphanteau : celui de la barre réagit déjà.
   const same = sp && a.answer.toLowerCase() === String(card.word).toLowerCase(), marked = sp ? `${esc(sp[0])}<mark>${esc(sp[1])}</mark>${esc(sp[2])}` : '';
-  if (!fb.ok && !plc) return `<div class="card feedback soft miss" role="status" aria-live="polite">
-    <div class="verdict"><h3>${title}</h3>
+  if (!fb.ok && !plc) {
+    const flat = x => String(x).replace(/[’`´]/g, "'"), shown = a.cloze ? a.cloze.text : a.type === 'speak' ? flat(a.model || '') : '';
+    const exs = [...card.examples.filter(e => flat(e) !== shown), ...card.examples.filter(e => flat(e) === shown)].slice(0, ['A1', 'A2'].includes(s.deck.level) ? 1 : 2);      // d'abord une phrase qui n'est pas déjà à l'écran ; une seule en A1 et A2 (moins à lire), deux ensuite
+    const complete = !!meaning(card, help) && exs.length > 0;
+    return `<div class="card feedback soft miss" role="status" aria-live="polite">
+    <div class="verdict"><h3>${title}</h3>${complete ? `<p class="todo">${t('studyAgain')}</p>` : ''}
       ${explain ? `<p class="explain">${esc(explain)}</p>` : ''}${note ? `<p class="explain">${esc(note)}</p>` : ''}
       ${sp && !same ? `<p class="spelling" lang="${lang}">${marked}</p>` : ''}</div>
-    <p class="recap${same ? ' spelling' : ''}">${card.image ? `<img class="recapimg" src="${esc(card.image)}" alt="">` : ''}<b lang="${lang}">${same ? marked : esc(card.word)}</b> ${listenBtn(card)}</p>
+    <div class="fiche">
+      <p class="recap${same ? ' spelling' : ''}">${card.image ? `<img class="recapimg" src="${esc(card.image)}" alt="">` : ''}<b lang="${lang}">${same ? marked : esc(card.word)}</b> ${listenBtn(card)}</p>
+      ${meaning(card, help) ? sense(card, lang, 'def fichedef') : ''}
+      ${exs.map(e => `<p class="example">${boldIn(e, card.clozes.find(c => c.text === flat(e)), lang)}</p>`).join('')}</div>
     ${nextBtn()}
   </div>`;
+  }
   return `<div class="card feedback ${fb.ok ? 'good' : 'soft'}" role="status" aria-live="polite">
     <h3>${title}</h3>
     ${wins.length ? `<p class="win">${mascot(44, 'joy', Math.max(1, fb.boxAfter))}<span>${wins.map(esc).join('<br>')}</span></p>` : ''}
@@ -1701,7 +1714,7 @@ function commit(result, extra = {}) {
   if (s.planned && s.progress._plan && !step.activity.multi) markWorked(s.progress._plan);      // la journée est travaillée ; les jours manqués sont constatés
   const after = boxOf(st), retry = !!s.challenge || (!!step.item.retry && after === before);
   S.feedback = { ...result, ...extra, retry, boxBefore: before, boxAfter: after, days: dueInDays(st), n: s.served,
-    tamed: s.lastTamed, joined: before < HERD_BOX && after >= HERD_BOX, ...(!result.ok && !s.placement && !step.activity.multi ? { holdUntil: Date.now() + HOLD_MS } : {}) };
+    tamed: s.lastTamed, joined: before < HERD_BOX && after >= HERD_BOX, ...(!result.ok && !s.placement && !step.activity.multi ? { holdUntil: Date.now() + HOLD_MS, shownAt: Date.now() } : {}) };
   saveProgress(s.deck.id); autoSpeak();
   return S.feedback;
 }
@@ -1872,6 +1885,7 @@ function doneView() {
     ${S.session.held ? `<p class="heldline">${t('heldDone')} <button class="link" data-action="start-force" data-id="${deck.id}">${t('heldForce')}</button></p>` : ''}
     <div class="row">${more ? `<button class="secondary" data-action="start" data-id="${deck.id}">${t(T ? 'plResume' : 'again')}</button>` : ''}${T?.complete && T.weak ? `<button class="secondary" data-action="second" data-id="${deck.id}">${AGAIN} ${t('plSecond', T.weak)}</button>` : ''}${other ? `<button class="secondary" data-action="start" data-id="${other.deck.id}">${t('nextList', esc(other.deck.name), other.n)}</button>` : ''}<button class="primary" data-action="home" autofocus>${t('home')}</button></div>
     ${TEACHER && rates(S.measure).wn ? `<p class="meta measure">${t('wMeasure', rates(S.measure).wsec.toLocaleString(uiLang(), { maximumFractionDigits: 1 }), rates(S.measure).wn)}</p>` : ''}
+    ${TEACHER && rates(S.measure).en ? `<p class="meta measure">${t('eMeasure', rates(S.measure).esec.toLocaleString(uiLang(), { maximumFractionDigits: 1 }), rates(S.measure).en)}</p>` : ''}
     <button class="link" data-action="share">${t('share')}</button>
     <button class="link" data-action="remind">${ICON.bell} ${t('remDone')}</button>
   </div>`;
@@ -1993,7 +2007,8 @@ app.addEventListener('click', e => {
   else if (action === 'offer') { if ((S.view || 'home') === 'home') setSmall(id, b.dataset.v === 'yes', true); }
   else if (action === 'small') { const pl = S.progress[id]?._plan; if ((S.view || 'home') === 'home' && pl && (pl.offer || pl.small) && S.decks.some(x => x.id === id && planned(x))) setSmall(id, b.dataset.v === 'on'); }
   else if (action === 'plan-keep') keepPlan(id, b.dataset.v, +b.dataset.k);
-  else if (action === 'next') { if (held()) return; advance(); }      // après une erreur, la bonne réponse reste au moins trois secondes
+  else if (action === 'rem-day') { if ((S.view || 'home') !== 'home') return; S.remind = { ...S.remind, days: toggleDay(myDays(), b.dataset.v) }; saveSettings(); render(); app.querySelector(`[data-action=rem-day][data-v="${CSS.escape(String(b.dataset.v))}"]`)?.focus({ preventScroll: true }); }
+  else if (action === 'next') { if (held()) return; if (S.feedback?.shownAt && S.session && !S.session.challenge) addStay(S.measure, Date.now() - S.feedback.shownAt); advance(); }      // après une erreur, la bonne réponse reste au moins trois secondes
   else if (action === 'home' || action === 'quit') { stopRace(); dropRecording(); if (S.session) { saveProgress(S.session.deck.id); if (!S.session.challenge) saveMeasure(); } S.stepAt = 0; S.view = 'home'; S.session = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'teacher') { if (!TEACHER) return; if (S.session) S.session = null; S.view = 'teacher'; S.notice = null; S.confirmDel = null; window.scrollTo?.(0, 0); render(); }
   else if (action === 'set') applySetting(b.dataset.key, b.dataset.value);
@@ -2028,7 +2043,7 @@ app.addEventListener('click', e => {
   }
   else if (action === 'skip' && !S.feedback) { commit({ ok: false }, { typed: '', chosen: null }); sfx('steps'); render(); }
   else if (action === 'reveal') { S.gate = true; render(); }
-  else if (action === 'remind') { download('elefiches-rappel.ics', buildICS({ ...S.remind, url: siteBase(), title: plainSp(t('remEvent')), note: plainSp(t('remNote')) }), false); toast(t('remOk')); }
+  else if (action === 'remind') { download('elefiches-rappel.ics', buildICS({ ...S.remind, days: myDays(), url: siteBase(), title: plainSp(t('remEvent')), note: plainSp(t('remNote')) }), false); toast(t('remOk')); }
   else if (action === 'race') startRace(id);
   else if (action === 'friendly') startFriendly(id);
   else if (action === 'backup') saveBackup();
@@ -2150,9 +2165,8 @@ app.addEventListener('submit', e => {
   else if (kind === 'typed' && !S.feedback) submitTyped(e.target.answer.value);
 });
 function applySetting(k, v) {
-  if (!['lang', 'help', 'minutes', 'sound', 'voice', 'remindDays'].includes(k)) return;          // seuls les réglages connus se modifient
-  if (k === 'remindDays') S.remind = { ...S.remind, days: v };
-  else S[k] = k === 'minutes' ? +v : k === 'sound' || k === 'voice' ? v === '1' : v;
+  if (!['lang', 'help', 'minutes', 'sound', 'voice'].includes(k)) return;          // seuls les réglages connus se modifient
+  S[k] = k === 'minutes' ? +v : k === 'sound' || k === 'voice' ? v === '1' : v;
   saveSettings(); render();
   app.querySelector(`[data-action=set][data-key="${k}"][data-value="${CSS.escape(String(v))}"]`)?.focus({ preventScroll: true });      // le réglage touché garde la touche active
   if (k === 'sound' && S.sound) sfx('pop');
